@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Install build and runtime tools for the Forever server on Ubuntu 24.04 LTS.
 # Run as root:  sudo bash install-tools.sh
+#
+# NOT deprecated: this stays the tool installer. install-forever.sh v2 plans to
+# shell out to it rather than duplicate the package list.
 # Idempotent: safe to run again.
 #
 # The package list is a starting point. The Phase 2 clean build is the test:

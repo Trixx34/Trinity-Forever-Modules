@@ -2,6 +2,10 @@
 # Install the Forever prod and sim worldserver systemd units.
 # Run as root:  sudo bash install-services.sh [--check]
 #
+# DEPRECATED: planned for absorption into install-forever.sh (v2). Still live:
+# apply-pending.sh invokes it for both the sim-service and prod-services steps.
+# Do not delete it; v2 must call or replace it, not orphan it.
+#
 # What it does:
 #   1. checks the users, groups, credential files, binaries and configs the units need
 #   2. creates the log folders (owned by the service users) if they are missing

@@ -2,6 +2,10 @@
 # Set up the Forever directory tree, users, groups and access rights, as in layout.md.
 # Run as root:  sudo bash setup-directories.sh [--check] [--admin <login>]
 #
+# DEPRECATED: planned for absorption into install-forever.sh (v2). Still live and
+# still the thing to run today: forever-sim-db points here, and apply-pending.sh
+# invokes it. Do not delete it; v2 must call or replace it, not orphan it.
+#
 #   --check          report what differs from the layout, change nothing
 #   --admin <login>  add a login to forever-ops (admins run service actions through sudo)
 #

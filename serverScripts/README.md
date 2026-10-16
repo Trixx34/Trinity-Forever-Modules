@@ -3,6 +3,26 @@
 Setup scripts for the Forever prod and sim servers on Ubuntu 26.04. Run them in the order below.
 The layout they create is described in the Forever Linux migration plan (Phase 4).
 
+## Install planner (`install-forever.sh`)
+
+`install-forever.sh` asks every question a fresh machine needs (prod or sim, modules,
+database, credentials, users, units, ports) and prints the plan of what an install would
+do. **Version 1 is a planner only: it executes nothing and writes no file.** Every prompt
+reads the controlling terminal on fd 3, never stdin, so it works piped:
+
+```
+curl -fsSL <github-raw-url>/serverScripts/install-forever.sh | sudo bash
+```
+
+It never starts or enables a service: the units are planned, not run, because the
+worldserver needs the client/DBC data in `data/` first and no script can produce it. The
+run ends by printing the exact directories to fill and the `systemctl enable --now`
+commands to run afterwards. It never asks for, prints or writes a secret value -- paths
+and environment variable names only.
+
+The question set, with the reason for each one and the action each one feeds, is in
+[`install-forever.md`](install-forever.md).
+
 ## Order
 
 | # | Script | Run as | What it does |
