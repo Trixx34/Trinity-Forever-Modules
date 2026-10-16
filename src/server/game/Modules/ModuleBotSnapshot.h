@@ -40,6 +40,10 @@ struct BotSnapshotWatch
     uint32 LostReason = 0;     // why it went: 0 none or not told, 1 killed, 2 leashed, 3 despawned, 4 another player
 };
 
+// Frees the nearest-vendor lookup cache entry for a bot that has logged out. Without this the cache grows
+// to one entry per ever-created bot; calling this on logout keeps it bounded to currently-online bots.
+void ClearVendorLookup(uint64 botCounter);
+
 // The snapshot entry for one bot, with up to `maxNearby` units near it. Creatures come first, closest first, and at most
 // kNearbyPlayerSlots players are listed ahead of them. When refreshNearby is false the nearby units are the last ones
 // stored in cachedNearby, so the range query runs for only some of the bots on each tick. `watch` carries the state of
