@@ -158,8 +158,10 @@ ensure_dir forever-prod forever-prod 0750 "$ROOT/prod" "$ROOT/prod/conf" "$ROOT/
 ensure_dir forever-sim  forever-sim  0750 "$ROOT/sim"  "$ROOT/sim/conf"  "$ROOT/sim/bin" \
   "$ROOT/sim/bin/scripts" "$ROOT/sim/lib" "$ROOT/sim/modules_runtime" \
   "$ROOT/sim/conf/worldserver.conf.d" "$ROOT/sim/conf/worldserver.conf.d/modules.d"
-# Sim working folder: the worldserver writes its temp SQL here and reads the TDB base files from here.
+# Working folders: the worldserver writes its temp SQL here and reads the TDB base files from here. Both are the
+# units' WorkingDirectory, so a base dump (a few hundred MB) never lands in a log folder.
 ensure_dir forever-sim  forever-sim  0750 "$ROOT/sim/run"
+ensure_dir forever-prod forever-prod 0750 "$ROOT/prod/run"
 
 # Backups: written by forever-backup, admins read through forever-ops.
 ensure_dir forever-backup forever-ops 0750 "$ROOT/backups" "$ROOT/backups/db" \

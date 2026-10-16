@@ -113,9 +113,9 @@ What protocol 6 and 7 added on Tier 1, and what the core has:
 | Added in | Surface | In this core |
 |----------|---------|--------------|
 | 6 | `BuyItemAction` (actions.proto field 18) | no |
-| 6 | `AuctionHouseAction` (actions.proto field 19) | no |
-| 7 | `ActionReply.copper_spent` (9), `item_entry` (10), `auction_guid` (11) | no |
-| 7 | `AuctionListingEvent` via `PlayerScript.OnAuctionResult` (events.proto field 17) | no |
+| 6 | `AuctionHouseAction` (actions.proto field 19) | yes, see `ModuleActions.cpp` (browse/list/cancel/bid/buyout via core handlers; bid/buyout need an acting player not in current schema) |
+| 7 | `ActionReply.copper_spent` (9), `item_entry` (10), `auction_guid` (11) | yes, encoded in `ModuleWire.cpp` |
+| 7 | `AuctionListingEvent` via `PlayerScript.OnAuctionResult` (events.proto field 17) | yes, `PlayerScript.OnAuctionResult` added to supported hooks |
 
 The core's version string was left at 5 on purpose: declaring 7 without that surface would let a protocol-7 module
 attach to a core that silently refuses the actions protocol 7 promises, which is a worse failure than a refused

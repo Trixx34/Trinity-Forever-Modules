@@ -898,6 +898,7 @@ void WorldSession::HandleAuctionSellItem(WorldPackets::AuctionHouse::AuctionSell
     }
 
     uint32 auctionId = sObjectMgr->GenerateAuctionID();
+    ModuleLastAuctionId = auctionId;
 
     AuctionPosting auction;
     auction.Id = auctionId;

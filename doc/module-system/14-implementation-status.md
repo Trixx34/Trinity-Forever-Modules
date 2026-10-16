@@ -49,7 +49,10 @@ the code is the reference and the difference is listed.
 - Core unit tests for the action and snapshot code need a build; only syntax checks have run for them.
 - `kCraft` (20) and `kGather` (21) are inside the layout but refused with a reason: crafting and gathering are not
   implemented in the core. `kPetCommand` (22) is implemented (doc 20).
-- Tier 1 `BuyItem`, `AuctionHouse`, the extra `ActionReply` fields and `AuctionListingEvent` are missing, which is what
-  keeps `kModuleProtocolVersion` at 5. See doc 20.
+- Tier 1 `BuyItem` and `AuctionHouse` are now dispatched through `ModuleActions.cpp`, using the core's vendor and
+  auction-house handlers; `ActionReply.copper_spent/item_entry/auction_guid` and `PlayerScript.OnAuctionResult`
+  (`AuctionListingEvent`) are implemented. `kModuleProtocolVersion` is 7. Limitations: AH bid/buyout still need an
+  acting player in the `AuctionHouseAction` schema; vendor `BuyItem` needs a buyer too; existing hunters get no starter
+  ammo (only newly created non-alt hunters get one stack). See doc 20.
 - Run on a dedicated sim worldserver with up to 1000 bots (spawn, login, the ramp, the safety valves, telemetry); sustained combat, levelling, looting, vendor and hub walks and parties are not yet verified there. See doc 13.
 - The core builds on Windows only here: the changes since the first sim runs (layouts 5 to 7, the loot and share actions, PR 80) have been checked by reading, not compiled.

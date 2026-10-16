@@ -11,6 +11,13 @@
 #include "ModuleStore.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
+#include "AuctionHouseMgr.h"
+#include "Server/Packets/AuctionHousePackets.h"
+#include "Server/Packets/ItemPackets.h"
+#include "ModuleMgr.h"
+#include "MapManager.h"
+#include "CharacterCache.h"
+#include "CreatureData.h"
 #include "Player.h"
 #include "WorldSession.h"
 
@@ -188,6 +195,372 @@ void ExecuteStoreAction(std::string const& moduleName, ModuleWire::ActionRequest
 
 } // namespace
 
+namespace
+{
+
+static uint32 AuctionFactionTemplate(ObjectGuid auctioneer)
+{
+    if (CreatureTemplate const* ct = sObjectMgr->GetCreatureTemplate(auctioneer.GetEntry()))
+        return ct->faction;
+    return 0;
+}
+
+static Creature* ResolveAuctioneerCreature(uint64 ref)
+{
+    if (forever_module::UnitRefType(ref) != uint8(HighGuid::Creature))
+        return nullptr;
+    uint32 const entry = forever_module::UnitRefEntry(ref);
+    uint32 const counter = static_cast<uint32>(forever_module::UnitRefCounter(ref));
+    Creature* found = nullptr;
+    sMapMgr->DoForAllMaps([&](Map* map)
+    {
+        if (found)
+            return;
+        ObjectGuid const guid = ObjectGuid::Create<HighGuid::Creature>(0, map->GetId(), entry, counter);
+        Creature* creature = map->GetCreature(guid);
+        if (creature)
+            found = creature;
+    });
+    return found;
+}
+
+void BuyItemAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply)
+{
+    Player* player = primaryPlayer;
+    if (!player && request.PlayerGuid)
+        player = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(request.PlayerGuid));
+    if (!player)
+    {
+        // BuyItem has no player in the schema; try to find one owning nothing specific: none.
+        reply.Reason = "BuyItem requires an acting player, but the action schema does not identify one; add a player/buyer guid to BuyItemAction";
+        return;
+    }
+
+    Creature* vendor = ResolveAuctioneerCreature(request.AuctioneerGuid);
+    if (!vendor)
+    {
+        // Allow the module to pass an ObjectGuid-style raw vendor reference by interacting as with an NPC in range.
+        // Fall back to nearest vendor? Refuse rather than guessing.
+        reply.Reason = "vendor not found on any map";
+        return;
+    }
+
+    Creature* creature = player->GetNPCIfCanInteractWith(vendor->GetGUID(), UNIT_NPC_FLAG_VENDOR, UNIT_NPC_FLAG_2_NONE);
+    if (!creature)
+    {
+        reply.Reason = "vendor not found or cannot interact with it";
+        return;
+    }
+
+    VendorItemData const* vendorItems = creature->GetVendorItems();
+    if (!vendorItems)
+    {
+        reply.Reason = "vendor has no items to sell";
+        return;
+    }
+    int32 slot = -1;
+    for (uint32 i = 0; i < vendorItems->GetItemCount(); ++i)
+    {
+        if (VendorItem const* vi = vendorItems->GetItem(i))
+            if (vi->Type == ITEM_VENDOR_TYPE_ITEM && vi->item == request.ItemEntry)
+            {
+                slot = static_cast<int32>(i);
+                break;
+            }
+    }
+    if (slot < 0)
+    {
+        reply.Reason = "item is not on the vendor's sell list";
+        return;
+    }
+
+    // check money roughly
+    uint64 price = 0;
+    if (VendorItem const* vi = vendorItems->GetItem(static_cast<uint32>(slot)))
+    {
+        ItemTemplate const* proto = sObjectMgr->GetItemTemplate(vi->item);
+        uint32 const buyPrice = proto ? proto->GetBuyPrice() : 0;
+        price = uint64(buyPrice) * (request.Count ? request.Count : 1u);
+    }
+    if (price && !player->HasEnoughMoney(price))
+    {
+        reply.Reason = "not enough money";
+        return;
+    }
+
+    auto const quantity = request.Count ? request.Count : 1u;
+    WorldPackets::Item::BuyItem packet{ WorldPacket(CMSG_BUY_ITEM) };
+    packet.Muid = slot + 1; // handler decrements
+    packet.ItemType = ITEM_VENDOR_TYPE_ITEM;
+    packet.VendorGUID = creature->GetGUID();
+    packet.ContainerGUID = player->GetGUID(); // default backpack
+    packet.Quantity = quantity;
+    packet.Item.ItemID = request.ItemEntry;
+    packet.Slot = -1;
+
+    uint64 before = player->GetMoney();
+    player->GetSession()->HandleBuyItemOpcode(packet);
+    uint64 after = player->GetMoney();
+    reply.CopperSpent = before > after ? before - after : price;
+    reply.ItemEntry = request.ItemEntry;
+    reply.Success = true;
+}
+
+void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply)
+{
+    switch (request.AuctionOp)
+    {
+        case 0: // kBrowse
+        {
+            Creature* auctioneer = ResolveAuctioneerCreature(request.AuctioneerGuid);
+            if (!auctioneer)
+            {
+                reply.Reason = "auctioneer not found on any map";
+                return;
+            }
+            AuctionHouseObject* ah = sAuctionMgr->GetAuctionsMap(auctioneer->GetCreatureTemplate()->faction);
+
+            Player* anyPlayer = nullptr;
+            for (auto const& [guid, player] : ObjectAccessor::GetPlayers())
+            {
+                anyPlayer = player;
+                break;
+            }
+            if (!anyPlayer)
+            {
+                reply.Reason = "no online player to establish an auction house locale";
+                return;
+            }
+
+            WorldPackets::AuctionHouse::AuctionListItemsResult result;
+            ah->BuildListAuctionItems(result, anyPlayer, request.ItemEntry, 0, std::span<WorldPackets::AuctionHouse::AuctionSortDef const>{});
+
+            uint32 total = result.TotalCount;
+            for (WorldPackets::AuctionHouse::AuctionItem const& ai : result.Items)
+            {
+                ModuleWire::AuctionListingEvent event;
+                event.AuctionGuid = static_cast<uint64>(ai.AuctionID);
+                event.ItemEntry = (ai.Item && ai.Item->ItemID) ? static_cast<uint32>(ai.Item->ItemID) : request.ItemEntry;
+                if (!event.ItemEntry)
+                    event.ItemEntry = request.ItemEntry;
+                event.Count = static_cast<uint32>(ai.Count);
+                event.Bid = ai.BidAmount.value_or(0);
+                if (ai.BuyoutPrice.has_value())
+                    event.Buyout = ai.BuyoutPrice.value();
+                else if (ai.UnitPrice.has_value())
+                    event.Buyout = ai.UnitPrice.value() * (event.Count ? event.Count : 1u);
+                event.TimeLeftMin = ai.DurationLeft / 60000u;
+                std::string sellerName;
+                sCharacterCache->GetCharacterNameByGuid(ai.Owner, sellerName);
+                event.Seller = sellerName;
+                event.QueryItem = request.ItemEntry;
+                event.TotalMatches = total;
+                ModuleMgr::instance()->DispatchAuctionListing("PlayerScript.OnAuctionResult", event);
+            }
+
+            reply.Success = true;
+            TC_LOG_DEBUG("modules.actions", "browsed auctions for item {} ({} listing(s), {} matches)", request.ItemEntry,
+                         result.Items.size(), total);
+            return;
+        }
+
+        case 1: // kBid
+        case 2: // kBuyout
+        {
+            Player* player = primaryPlayer;
+            if (!player && request.PlayerGuid)
+                player = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(request.PlayerGuid));
+            if (!player)
+            {
+                reply.Reason = "AuctionHouse bid/buyout has no acting player in the action schema; add a player/buyer guid to AuctionHouseAction";
+                return;
+            }
+
+            Creature* auctioneer = ResolveAuctioneerCreature(request.AuctioneerGuid);
+            if (!auctioneer)
+            {
+                reply.Reason = "auctioneer not found on any map";
+                return;
+            }
+            Creature* creature = player->GetNPCIfCanInteractWith(auctioneer->GetGUID(), UNIT_NPC_FLAG_AUCTIONEER, UNIT_NPC_FLAG_2_NONE);
+            if (!creature)
+            {
+                reply.Reason = "auctioneer not found or cannot interact with it";
+                return;
+            }
+            AuctionHouseObject* ah = sAuctionMgr->GetAuctionsMap(creature->GetFaction());
+            AuctionPosting* auction = ah->GetAuction(static_cast<uint32>(request.AuctionGuid));
+            if (!auction)
+            {
+                reply.Reason = "auction not found";
+                return;
+            }
+            if (auction->Owner == player->GetGUID() || auction->OwnerAccount == player->GetSession()->GetAccountGUID())
+            {
+                reply.Reason = "cannot bid on your own auction";
+                return;
+            }
+
+            WorldPackets::AuctionHouse::AuctionPlaceBid placeBid{ WorldPacket(CMSG_AUCTION_PLACE_BID) };
+            placeBid.Auctioneer = auctioneer->GetGUID();
+            placeBid.AuctionID = static_cast<int32>(request.AuctionGuid);
+            uint32 const amount = request.AuctionOp == 2
+                                      ? (request.Buyout ? request.Buyout : request.Bid)
+                                      : request.Bid;
+            placeBid.BidAmount = amount;
+
+            uint64 before = player->GetMoney();
+            player->GetSession()->HandleAuctionPlaceBid(placeBid);
+            uint64 after = player->GetMoney();
+            reply.CopperSpent = before > after ? before - after : 0;
+            reply.Success = true;
+            reply.AuctionGuid = request.AuctionGuid;
+            return;
+        }
+
+        case 3: // kList
+        {
+            Player* player = primaryPlayer;
+            if (!player)
+            {
+                ObjectGuid itemGuid = ObjectGuid::Create<HighGuid::Item>(request.ItemGuid);
+                for (auto const& [guid, p] : ObjectAccessor::GetPlayers())
+                    if (p && p->GetItemByGuid(itemGuid))
+                    {
+                        player = p;
+                        break;
+                    }
+            }
+            if (!player)
+                player = request.PlayerGuid ? ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(request.PlayerGuid)) : nullptr;
+            if (!player)
+            {
+                reply.Reason = "no online player owns the listed item";
+                return;
+            }
+
+            ObjectGuid itemGuid = ObjectGuid::Create<HighGuid::Item>(request.ItemGuid);
+            Item* item = player->GetItemByGuid(itemGuid);
+            if (!item)
+            {
+                reply.Reason = "item is no longer in the player's bags";
+                return;
+            }
+            if (item->GetEntry() != request.ItemEntry && request.ItemEntry != 0)
+            {
+                reply.Reason = "item entry does not match the request";
+                return;
+            }
+
+            Creature* auctioneer = ResolveAuctioneerCreature(request.AuctioneerGuid);
+            if (!auctioneer)
+            {
+                reply.Reason = "auctioneer not found on any map";
+                return;
+            }
+            Creature* creature = player->GetNPCIfCanInteractWith(auctioneer->GetGUID(), UNIT_NPC_FLAG_AUCTIONEER, UNIT_NPC_FLAG_2_NONE);
+            if (!creature)
+            {
+                reply.Reason = "auctioneer not found or cannot interact with it";
+                return;
+            }
+            AuctionHouseEntry const* entry = AuctionHouseMgr::GetAuctionHouseEntry(creature->GetFaction(), nullptr);
+            if (!entry)
+            {
+                reply.Reason = "auctioneer has no auction house";
+                return;
+            }
+
+            uint32 deposit = static_cast<uint32>(AuctionHouseMgr::GetItemAuctionDeposit(player, item, Minutes(120), entry->DepositRate));
+            if (!player->HasEnoughMoney(static_cast<uint64>(deposit)))
+            {
+                reply.Reason = "not enough money for the deposit";
+                return;
+            }
+
+            WorldPackets::AuctionHouse::AuctionSellItem sellItem{ WorldPacket(CMSG_AUCTION_SELL_ITEM) };
+            sellItem.Auctioneer = auctioneer->GetGUID();
+            sellItem.MinBid = request.Bid ? request.Bid : 1;
+            sellItem.BuyoutPrice = request.Buyout;
+            sellItem.RunTime = 120;
+            sellItem.Items.push_back({ itemGuid, 1 });
+
+            auto const beforeAuctionId = player->GetSession()->ModuleLastAuctionId;
+            (void)beforeAuctionId;
+            player->GetSession()->ModuleLastAuctionId = 0;
+
+            uint64 moneyBefore = player->GetMoney();
+            player->GetSession()->HandleAuctionSellItem(sellItem);
+            uint32 generated = player->GetSession()->ModuleLastAuctionId;
+
+            uint64 moneyAfter = player->GetMoney();
+            reply.CopperSpent = moneyBefore > moneyAfter ? moneyBefore - moneyAfter : deposit;
+            reply.ItemEntry = item->GetEntry();
+            if (generated)
+                reply.AuctionGuid = generated;
+            reply.Success = true;
+            return;
+        }
+
+        case 4: // kCancel
+        {
+            Player* player = primaryPlayer;
+            if (!player)
+            {
+                Creature* auc = ResolveAuctioneerCreature(request.AuctioneerGuid);
+                if (auc)
+                {
+                    AuctionHouseObject* ah = sAuctionMgr->GetAuctionsMap(auc->GetCreatureTemplate()->faction);
+                    AuctionPosting* auction = ah->GetAuction(static_cast<uint32>(request.AuctionGuid));
+                    if (auction)
+                        player = ObjectAccessor::FindConnectedPlayer(auction->Owner);
+                }
+            }
+            if (!player)
+            {
+                reply.Reason = "no online player owns the auction";
+                return;
+            }
+
+            Creature* auctioneer = ResolveAuctioneerCreature(request.AuctioneerGuid);
+            if (!auctioneer)
+            {
+                reply.Reason = "auctioneer not found on any map";
+                return;
+            }
+            Creature* creature = player->GetNPCIfCanInteractWith(auctioneer->GetGUID(), UNIT_NPC_FLAG_AUCTIONEER, UNIT_NPC_FLAG_2_NONE);
+            if (!creature)
+            {
+                reply.Reason = "auctioneer not found or cannot interact with it";
+                return;
+            }
+            AuctionHouseObject* ah = sAuctionMgr->GetAuctionsMap(creature->GetFaction());
+            AuctionPosting* auction = ah->GetAuction(static_cast<uint32>(request.AuctionGuid));
+            if (!auction || auction->Owner != player->GetGUID())
+            {
+                reply.Reason = "auction not found or not owned by the player";
+                return;
+            }
+
+            WorldPackets::AuctionHouse::AuctionRemoveItem removeItem{ WorldPacket(CMSG_AUCTION_REMOVE_ITEM) };
+            removeItem.Auctioneer = auctioneer->GetGUID();
+            removeItem.AuctionID = static_cast<int32>(request.AuctionGuid);
+
+            uint64 before = player->GetMoney();
+            player->GetSession()->HandleAuctionRemoveItem(removeItem);
+            uint64 after = player->GetMoney();
+            reply.CopperSpent = before > after ? before - after : 0;
+            reply.Success = true;
+            reply.AuctionGuid = request.AuctionGuid;
+            return;
+        }
+    }
+
+    reply.Reason = "unknown auction operation";
+}
+
+} // namespace
+
 void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, std::string const& moduleName)
 {
     reply.MessageId = request.MessageId;
@@ -202,6 +575,14 @@ void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire
                 reply.Reason = "module is no longer loaded";
             else
                 ExecuteStoreAction(moduleName, request, reply);
+            return;
+
+        case ModuleWire::ActionKind::BuyItem:
+            BuyItemAction(nullptr, request, reply);
+            return;
+
+        case ModuleWire::ActionKind::AuctionHouse:
+            AuctionHouseAction(nullptr, request, reply);
             return;
 
         case ModuleWire::ActionKind::Log:

@@ -290,6 +290,41 @@ uint32 GiveBags(Player& bot)
     return given;
 }
 
+// One stack of starting ammunition for a newly created hunter (never repeated on login). Arrows for a bow or crossbow, bullets for a gun; nothing
+// when there is no ammo-using ranged weapon. Item entry is chosen at runtime from the world's ItemTemplate data, not hardcoded. The
+// amount is one maximum-size stack (default 200), not a full bag.
+uint32 GiveStarterAmmo(Player& bot)
+{
+    if (!bot.NeedsAmmo())
+        return 0;
+
+    static uint32 const stacks = uint32(std::clamp<int64>(sConfigMgr->GetIntDefault("Bot.Hunter.StartAmmo.Stacks", 1), 1, 10));
+    ItemTemplate const* chosen = nullptr;
+    for (auto const& [entry, proto] : sObjectMgr->GetItemTemplateStore())
+    {
+        if (proto.GetClass() != ITEM_CLASS_PROJECTILE || !bot.IsAmmoUsableWithRangedWeapon(&proto) || bot.CanUseItem(&proto) != EQUIP_ERR_OK)
+            continue;
+        if (!chosen || proto.GetBaseRequiredLevel() < chosen->GetBaseRequiredLevel() ||
+            (proto.GetBaseRequiredLevel() == chosen->GetBaseRequiredLevel() && entry < chosen->GetId()))
+            chosen = &proto;
+    }
+    if (!chosen)
+        return 0;
+
+    uint32 const count = chosen->GetMaxStackSize() * stacks;
+    ItemPosCountVec destination;
+    if (bot.CanStoreNewItem(NULL_BAG, NULL_SLOT, destination, chosen->GetId(), count) != EQUIP_ERR_OK)
+        return 0;
+    Item* item = bot.StoreNewItem(destination, chosen->GetId(), true);
+    if (!item)
+        return 0;
+
+    bot.SetAmmo(chosen->GetId());
+    TC_LOG_INFO("server.worldserver", "BotMgr: bot {} (hunter) was given {} x item {} (max-stack starter ammo) for its ranged weapon.", bot.GetName(), count, chosen->GetId());
+    return count;
+}
+
+
 // Logs the spells a new character of this race and class has at each level, as the core itself grants them: a Player::Create, then
 // GiveLevel up through the levels, then the free trainer spells (the same calls CreateBot and OnBotLevelChanged make for a bot), on an
 // unsaved player that is never in the world. Each line lists the spells gained at that level, with their names, so it shows what a bot can use. Only for finding out
@@ -419,6 +454,8 @@ uint64 BotMgr::CreateBot(uint8 raceId, uint8 classId, uint8 level, std::string& 
     if (level > 1)
         player->GiveLevel(level);
     GiveBags(*player);
+    if (player->GetClass() == CLASS_HUNTER)
+        GiveStarterAmmo(*player);
 
     player->setCinematic(1);
     player->SetAtLoginFlag(AT_LOGIN_FIRST);

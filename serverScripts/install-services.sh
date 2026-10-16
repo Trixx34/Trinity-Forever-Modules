@@ -84,6 +84,20 @@ done
 # Game data must be there for both servers.
 [[ -d "$ROOT/data/dbc" ]] && ok "$ROOT/data/dbc" || warn "$ROOT/data/dbc missing"
 
+# Each unit's WorkingDirectory. It is not fatal when missing (step 2 creates it), but it has to be the service
+# user's own directory: the worldserver writes its temp SQL there and reads the TDB base dump from there.
+for svc in prod sim; do
+  dir="$ROOT/$svc/run"
+  if [[ ! -d "$dir" ]]; then
+    warn "$dir missing (the unit's WorkingDirectory; created in step 2)"
+  else
+    cur="$(stat -c '%U:%G %a' "$dir")"
+    [[ "$cur" == "forever-$svc:forever-$svc 750" ]] \
+      && ok "$dir ($cur)" \
+      || warn "$dir is $cur, expected forever-$svc:forever-$svc 750"
+  fi
+done
+
 # Prod Battle.net: binary, config, and the certificate pair from create-bnet-certs.sh.
 for f in bin/bnetserver conf/bnetserver.conf conf/bnetserver.fullchain.pem conf/bnetserver.key.pem; do
   if [[ -e "$ROOT/prod/$f" ]]; then
@@ -104,10 +118,20 @@ if (( CHECK_ONLY )); then
   exit $(( problems > 0 ))
 fi
 
-# --- 2. log folders ---------------------------------------------------------
+# --- 2. log folders and working folders --------------------------------------
 
 for svc in prod sim; do
   dir="/var/log/forever/$svc"
+  install -d -o "forever-$svc" -g "forever-$svc" -m 0750 "$dir"
+  ok "$dir (forever-$svc, 0750)"
+done
+
+# Working directories. setup-directories.sh owns the tree, but a unit whose WorkingDirectory is missing does not
+# fail here -- systemd starts it and the worldserver cannot read the world base dump it expects to find in it
+# (DBUpdater.cpp:369-381 resolves the LOCATION_DOWNLOAD base file against the working directory). Created here too
+# so installing the units on their own is enough, with the same owner and mode as the sim's has always had.
+for svc in prod sim; do
+  dir="$ROOT/$svc/run"
   install -d -o "forever-$svc" -g "forever-$svc" -m 0750 "$dir"
   ok "$dir (forever-$svc, 0750)"
 done

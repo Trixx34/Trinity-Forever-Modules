@@ -276,7 +276,7 @@ esac
 section "Q7 -- Create all folders"
 say "Mirrors setup-directories.sh exactly (same owners, groups, modes):"
 say "  data tree (forever-build:forever-data 2750), src+build (forever-build 2775),"
-say "  prod tree (forever-prod 0750)$( [[ "$SIM_OK" == y ]] && echo ", sim tree (forever-sim 0750) + sim/run" ),"
+say "  prod tree + prod/run (forever-prod 0750)$( [[ "$SIM_OK" == y ]] && echo ", sim tree + sim/run (forever-sim 0750)" ),"
 say "  backups (forever-backup:forever-ops 0750), /var/log/forever{,/prod$( [[ "$SIM_OK" == y ]] && echo ",/sim" )},"
 say "  /etc/forever{,/credentials} (root 0700/0750)."
 yesno FOLDERS_OK "Plan folder creation with this scope?" y
@@ -435,12 +435,11 @@ say "  DBUpdater.cpp:189,248  world and hotfix are LOCATION_DOWNLOAD"
 say "  DBUpdater.cpp:369-381  resolved against boost::filesystem::current_path()"
 say "It downloads nothing. The file has to be there before the server starts."
 say
-say "Working directories, read from the unit files:"
-say "  prod  /var/log/forever/prod   (forever-prod.service:14 -- that IS the log folder)"
+say "Working directories, read from the unit files. Each server has a folder"
+say "of its own, so the dump does not sit in a log folder:"
+say "  prod  $INSTALL_ROOT/prod/run   (forever-prod.service:18; setup-directories.sh:164)"
 if [[ "$SIM_OK" == y ]]; then
-  say "  sim   $INSTALL_ROOT/sim/run     (forever-sim.service:14; setup-directories.sh:157"
-  say "                                  calls sim/run the folder it 'reads the TDB base"
-  say "                                  files from')"
+  say "  sim   $INSTALL_ROOT/sim/run   (forever-sim.service:14; setup-directories.sh:163)"
 fi
 say
 say "This machine already has a dump, for reference:"
@@ -452,18 +451,17 @@ say
 if [[ "$SIM_OK" == y ]]; then
   choose DUMP_WHERE "Which working directory gets the dump?" 1 \
     "sim only  -- $INSTALL_ROOT/sim/run (default: the test world, and the folder built for it)" \
-    "prod only -- /var/log/forever/prod (a v2 change to the prod unit's WorkingDirectory" \
-    "             would be cleaner than keeping a dump in the log folder)" \
+    "prod only -- $INSTALL_ROOT/prod/run (the prod working directory, its own folder)" \
     "both      -- one in each, so whichever server starts first can import it"
   case "$DUMP_WHERE" in
     1) DUMP_DIRS="$INSTALL_ROOT/sim/run" ;;
-    2) DUMP_DIRS="/var/log/forever/prod" ;;
-    3) DUMP_DIRS="$INSTALL_ROOT/sim/run /var/log/forever/prod" ;;
+    2) DUMP_DIRS="$INSTALL_ROOT/prod/run" ;;
+    3) DUMP_DIRS="$INSTALL_ROOT/sim/run $INSTALL_ROOT/prod/run" ;;
   esac
 else
-  DUMP_DIRS="/var/log/forever/prod"
+  DUMP_DIRS="$INSTALL_ROOT/prod/run"
   say "No sim in this install, so the dump goes to the prod working directory:"
-  say "  $DUMP_DIRS   (the log folder -- see forever-prod.service:14)"
+  say "  $DUMP_DIRS   (see forever-prod.service:18)"
 fi
 ask DUMP_PATH "The dump (.sql, or the .7z to unpack first); empty if you have none yet" "" y
 yesno DUMP_OK "v2 will place it in: $DUMP_DIRS -- and the core imports it on first start. Confirm?" y
@@ -627,7 +625,8 @@ if [[ "${FOLDERS_OK:-y}" == y ]]; then
   plan_dir "$INSTALL_ROOT/build" forever-build:forever-build 2775
   for d in "$INSTALL_ROOT/prod" "$INSTALL_ROOT/prod/conf" "$INSTALL_ROOT/prod/bin" \
            "$INSTALL_ROOT/prod/bin/scripts" "$INSTALL_ROOT/prod/lib" "$INSTALL_ROOT/prod/modules_runtime" \
-           "$INSTALL_ROOT/prod/conf/worldserver.conf.d" "$INSTALL_ROOT/prod/conf/worldserver.conf.d/modules.d"; do
+           "$INSTALL_ROOT/prod/conf/worldserver.conf.d" "$INSTALL_ROOT/prod/conf/worldserver.conf.d/modules.d" \
+           "$INSTALL_ROOT/prod/run"; do
     plan_dir "$d" forever-prod:forever-prod 0750
   done
   if [[ "$SIM_OK" == y ]]; then

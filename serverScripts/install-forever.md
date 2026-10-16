@@ -56,7 +56,7 @@ setting.
 | Q11b | *(only with a `.7z` dump)* Add `p7zip-full`? | The plan prints `7z x …` to unpack the archive. A user with a plain `.sql` dump is never asked about a tool they do not need, so this is asked at Q12c, where the dump path is known, and the package joins the same install list in `[1]`. | `[1]` |
 | Q12a | Local or remote database? If local, install MySQL? If remote, host and port. | The sim unit wants `mysql.service`; a remote DB changes the firewall plan and the credential files. MySQL 8.4 from the MySQL APT repo is the `install-tools.sh` convention. | `[6]` |
 | Q12b | **v2 creates the schema.** Confirm. | One of the two SQL writes the installer performs, and the only unavoidable one: with no schema there is nothing to start against. It is a confirmation, not a choice of who does it. The plan prints the exact `mysql` commands so you can do it by hand. | `[6]` (1)-(3) |
-| Q12c | Which **working directory** gets the dump (derived from the unit files, correctable), the dump file itself (`.sql` or `.7z`), and **v2 places it for the core to import**. Confirm. | World and hotfix are the two databases v2 does *not* import. The core looks for the file in its working directory and imports it on first start (`DBUpdater.cpp:189,248`, resolved at `:369-381`). The known dump on this machine is `/srv/forever/build/test-run/tdb/`; on a fresh one you supply your own. v1 prints the placement commands, never runs them. | `[6]` (4) |
+| Q12c | Which **working directory** gets the dump (derived from the unit files, correctable), the dump file itself (`.sql` or `.7z`), and **v2 places it for the core to import**. Confirm. | World and hotfix are the two databases v2 does *not* import. The core looks for the file in its working directory and imports it on first start (`DBUpdater.cpp:189,248`, resolved at `:369-381`). Both services have a working directory of their own (`<root>/sim/run`, `<root>/prod/run`), so the dump never lands in a log folder. The known dump on this machine is `/srv/forever/build/test-run/tdb/`; on a fresh one you supply your own. v1 prints the placement commands, never runs them. | `[6]` (4) |
 | Q13 | Confirm the credential plan | Records the three file paths, their groups and modes, and the `TC_<KEY>` names. v2 creates empty placeholders only where no file exists and never overwrites one. | `[7]` |
 | Q14 | Create the service users? Which admin login goes into `forever-ops`? | The six groups and four users, plus the one admin membership, are exactly `setup-directories.sh`. An admin is a real local login, so the script verifies it exists. | `[2]` |
 | Q15 | Is the Battle.net login server in scope? (default **off**) Install the units? *(with sim)* derive `MemoryMax` from RAM, or set it? | The unit exists in the repo and `install-services.sh` installs it, but it needs a certificate pair made by `create-bnet-certs.sh` **run as your own login**, so it defaults to off. `MemoryMax` (default `9G`) plus `OOMScoreAdjust=500` is what stops a bot run starving prod on the same box; you can have the default derived from detected RAM instead (60%, floor 2G), because a fixed 9G is wrong on a small machine. | `[9]` |
@@ -135,13 +135,14 @@ Working directories, read from the units themselves:
 
 | Service | Working directory | Source |
 |---|---|---|
-| sim | `<install root>/sim/run` | `forever-sim.service:14`, and `setup-directories.sh:157` calls it the folder that "reads the TDB base files from here" |
-| prod | `/var/log/forever/prod` | `forever-prod.service:14` -- **it is the log folder** |
+| sim | `<install root>/sim/run` | `forever-sim.service:14`, and `setup-directories.sh:163` creates it with the comment that it "reads the TDB base files from here" |
+| prod | `<install root>/prod/run` | `forever-prod.service:18`, created by `setup-directories.sh:164` |
 
-The prod value deserves a second look: keeping a 600 MB SQL dump in the log
-folder works, but changing the prod unit's `WorkingDirectory` would be
-cleaner. That is a v2 decision, so Q12c prints the derived value and lets
-you correct it rather than assuming.
+Both are a folder of their own, `0750` owned by the service user, and both
+are in their unit's `ReadWritePaths`. Prod used to point at
+`/var/log/forever/prod`, which meant a ~600 MB dump sat in the folder the
+server writes its logs to; the dedicated folder removes that. Q12c prints
+the derived values and still lets you correct them rather than assuming.
 
 **Is re-application guarded?** Yes -- by emptiness, not by a hash.
 `DBUpdater<T>::Populate()` runs `SHOW TABLES` and returns immediately if the

@@ -11,7 +11,11 @@ Type=simple
 User=forever-prod
 Group=forever-prod
 UMask=0027
-WorkingDirectory=/var/log/forever/prod
+# Working directory: the server's own files, kept out of the log folder. The world and hotfix base SQL dumps are
+# LOCATION_DOWNLOAD (DBUpdater.cpp:189,248) and the base file name is resolved against the working directory
+# (DBUpdater.cpp:369-381), so this is where a ~600 MB dump belongs -- not among the server's log files.
+# setup-directories.sh creates it with the same owner, group and mode as the sim's /srv/forever/sim/run.
+WorkingDirectory=/srv/forever/prod/run
 # DB strings (TC_LOGIN_/TC_WORLD_/TC_CHARACTER_/TC_HOTFIX_DATABASE_INFO) come from here; the core reads them as environment overrides.
 EnvironmentFile=/etc/forever/credentials/prod-db.env
 ExecStartPre=/bin/sh -c 'test -r /srv/forever/prod/conf/worldserver.conf'
@@ -29,7 +33,9 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=forever-prod
 
-# Hardening. Data, binaries and config are read-only; the server writes only its log folder.
+# Hardening. Data, binaries and config are read-only; the server writes only its log folder, its working
+# directory, its module tree and its conf folder. Every one of those has to be in ReadWritePaths below, or the
+# service cannot write there and only fails at runtime.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
@@ -40,7 +46,7 @@ RestrictSUIDSGID=yes
 ReadOnlyPaths=/srv/forever/data
 # The module system saves its approvals as conf/approved_modules.json, next to worldserver.conf (the path is fixed in the core),
 # so the conf folder must be writable. Without it `.module approve` cannot save and no module ever starts.
-ReadWritePaths=/var/log/forever/prod /srv/forever/prod/modules_runtime /srv/forever/prod/conf
+ReadWritePaths=/var/log/forever/prod /srv/forever/prod/run /srv/forever/prod/modules_runtime /srv/forever/prod/conf
 LimitNOFILE=65536
 
 # If the machine runs out of memory, the kernel should pick the sim or anything else before the live realm.

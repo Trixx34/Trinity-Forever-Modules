@@ -120,6 +120,7 @@ enum class NotifyKind : uint32
     AccountLogin = 14,
     PlayerItemLooted = 15,
     PlayerChat = 16,
+    PlayerAuctionResult = 17,
 };
 
 // Body of an EventNotify. `value` is the player GUID for player events, the account id for AccountLogin,
@@ -156,6 +157,24 @@ struct ChatEvent
 
 std::string EncodeEventNotifyChat(std::string_view hookName, ChatEvent const& event);
 
+// AuctionListingEvent (events.proto field 17): one auction listing from a browse, delivered per listing.
+struct AuctionListingEvent
+{
+    uint64 AuctionGuid = 0;
+    uint32 ItemEntry = 0;
+    uint32 Count = 0;
+    uint64 Bid = 0;        // current bid, copper
+    uint64 Buyout = 0;     // buyout price, copper (0 = no buyout)
+    uint32 TimeLeftMin = 0;
+    std::string Seller;
+    uint32 QueryItem = 0;
+    uint32 TotalMatches = 0;
+    uint64 PlayerGuid = 0; // requesting bot's raw character GUID; 0 for real-player-originated results
+    uint64 RequestId = 0;  // ActionRequest.message_id that initiated this browse; 0 for unsolicited results
+};
+
+std::string EncodeEventNotifyAuctionListing(std::string_view hookName, AuctionListingEvent const& event);
+
 // Body of an EventRequest carrying a CommandRequestPayload.
 std::string EncodeEventRequestCommand(uint64 messageId, std::string_view hookName, std::string_view commandText,
                                       uint64 issuerGuid);
@@ -184,6 +203,8 @@ enum class ActionKind : uint8
     StoreList = 6,
     ShareQuestItem = 7,
     Log = 8,
+    AuctionHouse = 9,
+    BuyItem = 10,
 };
 
 struct ActionRequestMsg
@@ -197,6 +218,12 @@ struct ActionRequestMsg
     uint32 Count = 0;
     // ShareQuestItem: how far from the looter a party member may be (0 = the default)
     uint32 RangeYards = 0;
+    // AuctionHouseAction (actions.proto field 19)
+    uint32 AuctionOp = 0;
+    uint64 AuctioneerGuid = 0;
+    uint64 AuctionGuid = 0;
+    uint32 Bid = 0;
+    uint32 Buyout = 0;
     // SendPlayerMessage, and Log's text
     std::string Text;
     // Log: 0 info, 1 warning, 2 error
@@ -215,6 +242,9 @@ struct ActionReplyMsg
     uint64 CopperGained = 0;
     // ShareQuestItem: how many party members were given the item
     uint32 Recipients = 0;
+    uint64 CopperSpent = 0;
+    uint32 ItemEntry = 0;   // AuctionHouse kList / BuyItem result correlation
+    uint64 AuctionGuid = 0; // AuctionHouse kList
     // Store
     bool Found = false;
     std::string Value;

@@ -14,6 +14,6 @@
 // moduleName is the requesting module's name; store actions only reach that module's rows. Empty means the module
 // is no longer loaded, and the action is refused.
 void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply,
-                         std::string const& moduleName);
+                         std::string const& moduleName, uint32 module);
 
 #endif // TRINITYCORE_MODULE_ACTIONS_H

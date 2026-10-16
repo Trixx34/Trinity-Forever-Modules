@@ -166,6 +166,13 @@ bool ModuleSession::NotifyItemLooted(std::string_view hook, ModuleWire::ItemLoot
     return Enqueue(ModuleWire::Frame(ModuleWire::EncodeEnvelope(ModuleWire::PayloadKind::EventNotify,
                                                                 ModuleWire::EncodeEventNotifyItemLooted(hook, event))));
 }
+bool ModuleSession::NotifyAuctionListing(std::string_view hook, ModuleWire::AuctionListingEvent const& event)
+{
+    if (!Subscribes(hook))
+        return false;
+    return Enqueue(ModuleWire::Frame(ModuleWire::EncodeEnvelope(ModuleWire::PayloadKind::EventNotify,
+                                                                ModuleWire::EncodeEventNotifyAuctionListing(hook, event))));
+}
 
 bool ModuleSession::NotifyChat(std::string_view hook, ModuleWire::ChatEvent const& event)
 {

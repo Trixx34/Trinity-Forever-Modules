@@ -41,6 +41,7 @@ Start services by hand with `systemctl start`. Prod stays off until the owner ap
 ## Systemd units (`systemd/`)
 
 - `forever-prod.service`: prod worldserver. `Restart=no` until the owner approves an auto-restart policy.
+- Each unit's `WorkingDirectory` is its own `<root>/<svc>/run` folder (created by `setup-directories.sh`, and listed in the unit's `ReadWritePaths`). The worldserver writes its temp SQL there and looks there for the world/hotfix base SQL dump, which is why the dump is placed in that folder and not in the log folder.
 - `forever-prod-bnet.service`: prod Battle.net login server. Runs as `forever-prod`. Starts after the prod worldserver.
 - `forever-sim.service`: sim worldserver, bot test world. Uses the system MySQL on 127.0.0.1:3306.
 - `deferred/`: not installed. `forever-sim-mysql.service` is a separate MySQL 8.4 instance on port 3307. Kept for later.
