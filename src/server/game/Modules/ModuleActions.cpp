@@ -561,7 +561,8 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
 
 } // namespace
 
-void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, std::string const& moduleName)
+void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, std::string const& moduleName,
+                         uint32 module)
 {
     reply.MessageId = request.MessageId;
 
