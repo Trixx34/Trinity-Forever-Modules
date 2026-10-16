@@ -13,6 +13,7 @@
 #include "ModuleApproval.h"
 #include "ModuleBotBackend.h"
 #include "ModuleBotOwnership.h"
+#include "ModuleBotSnapshot.h"
 #include "ModuleSession.h"
 #include "ModuleTier2Layout.h"
 
@@ -230,6 +231,9 @@ class TC_GAME_API ModuleMgr
         std::unordered_map<uint64, ActionResult> _actionResults;
         // The last nearby units of each controlled bot (world thread only), reused between refreshes.
         std::unordered_map<uint64, std::vector<forever_module::NearbyUnit>> _nearbyCache;
+        // Per bot, the state a snapshot needs from the previous tick (layout 13's last_target_lost_reason). Pruned with
+        // the nearby cache above.
+        std::unordered_map<uint64, BotSnapshotWatch> _snapshotWatch;
         void RecordActionResult(uint64 botGuid, forever_module::BotAction const& action, forever_module::BotActionStatus status);
         void LoadApprovalStore(); // called with _mutex held, or before any module threads exist
         std::string ApprovalStorePath() const;

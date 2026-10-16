@@ -703,6 +703,9 @@ class TC_GAME_API Spell
         WorldObject* GetCaster() const { return m_caster; }
         ObjectGuid GetOriginalCasterGUID() const { return m_originalCasterGUID; }
         Unit* GetOriginalCaster() const { return m_originalCaster; }
+        // The unit this cast is aimed at: the first unit target the cast picked, or an empty guid when it aims at none (a cast
+        // on the caster itself carries the caster's guid). The module system reads it for the snapshot's casting_target.
+        ObjectGuid GetUnitTargetGUID() const;
         SpellInfo const* GetSpellInfo() const { return m_spellInfo; }
         Difficulty GetCastDifficulty() const;
         std::vector<SpellPowerCost> const& GetPowerCost() const { return m_powerCost; }

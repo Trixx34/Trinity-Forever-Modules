@@ -14,8 +14,8 @@ the code is the reference and the difference is listed.
 | Module actions | `SellItem`, `SendPlayerMessage`, `ShareQuestItem` (gives a looted quest item to the party members who need it; the core finds who, within range, with a quest that needs it and room in the bags) | `ModuleActions.cpp` |
 | Module config | `Module.<name>.<Key>` from `modules.d/<name>.conf`, sent in `ModuleConfig` after accept | `ModuleMgr::LoadModuleConfig` |
 | Tier 2 region | Shared-memory region per module, double-buffered | `ModuleTier2.*`, `ModuleTier2Layout.h` (copy of the SDK header) |
-| Tier 2 snapshots | Owned, online bots: position, map, health, power, level, combat target, the result of the last action, cooldowns, party state, the nearest vendor on the bot's map, and nearby units (creatures first; hostile means the bot may fight it) | `ModuleBotSnapshot.*`, `ModuleTier2::PublishSnapshot` |
-| Tier 2 actions | `stop`, `move`, `follow` (players and creatures), `attack`, `cast` (spells the bot knows), `rest`, `vendor` (sell grey, repair, equip), `train`, `group` (invite, accept, leave), `loot` (a corpse, through the bot's own loot handlers) | `ModuleBotActions.*`, `ModuleTier2::ReadNewActions` |
+| Tier 2 snapshots | Owned, online bots: position, map, health, power, level, combat target, the result of the last action, cooldowns, party state, the nearest vendor on the bot's map, and nearby units (creatures first; hostile means the bot may fight it). Layout 13 adds the bot's auras, the target of the cast in progress, the pet, the vendor/repair/auctioneer references, the money and free bag slots, why the bot lost its target, and a nearby unit's aura count and summary mask (doc 20) | `ModuleBotSnapshot.*`, `ModuleTier2::PublishSnapshot` |
+| Tier 2 actions | `stop`, `move` (reporting `kNoRoute` when the navmesh has no full route), `follow` (players and creatures), `attack`, `cast` (spells the bot knows), `rest`, `vendor` (sell grey, repair, equip), `train`, `group` (invite, accept, leave), `loot` (a corpse, through the bot's own loot handlers), `pet command` (layout 13) | `ModuleBotActions.*`, `ModuleTier2::ReadNewActions` |
 | Unit references | Type, entry and 32-bit counter in one 64-bit value | SDK `tier2_layout.h` (`MakeUnitRef`) |
 | Bot control | `RequestControl`, `ReleaseControl`, `ControlRevoked`; one owner per bot; `max_bots` | `ModuleBotOwnership.*`, `ModuleMgr::ExecuteControlRequest` |
 | Bot lifecycle | Create, log in and out through a queue, relogin delay; at shutdown, logins in flight are finished (bounded by the login timeout) before logout | `src/server/game/Bots/BotMgr.*` |
@@ -36,7 +36,7 @@ the code is the reference and the difference is listed.
 - **Team.** `SpawnParams.team`: 0 takes the race's faction; 1 is Alliance; 2 is Horde. Any other value, or a team that
   disagrees with the race, is refused before any account is created.
 - **Spell cooldowns.** Each cooldown carries its spell id (`SpellCooldown`), so the module knows which spell it is.
-- **Protocol and layout.** Protocol is 4 and the Tier 2 layout is 7. Each layout change is breaking: a module built against another layout is refused at region attach. The changes are listed in the SDK's `CHANGELOG.md`. Adding an action type or a Tier 1 action does not change the layout.
+- **Protocol and layout.** The Tier 2 layout is **13** (the core's `ModuleTier2Layout.h` is a byte-identical copy of the SDK header; doc 20 lists what the core fills for it). The Tier 1 `kModuleProtocolVersion` is **5** while the SDK declares **7**: a manifest declaring 7 is refused at load time, before the process is spawned. Doc 20 lists the exact Tier 1 surface that is missing and why the version string was not raised without it. Each layout change is breaking: a module built against another layout is refused at region attach.
 - **Revocation and state.** A `ControlRevoked` does not remove a bot from the module's state file, because the core
   revokes all bots at shutdown. Only a `character not found` reply removes a guid.
 - **Action timing.** A module publishes at most one action set per snapshot tick. The core applies the newest set it
@@ -47,5 +47,9 @@ the code is the reference and the difference is listed.
 - Config is sent once, after accept. A reload does not re-send it (design 03 says it should).
 - Resource limits (`Modules.ResourceLimits.*`) are declared but not enforced.
 - Core unit tests for the action and snapshot code need a build; only syntax checks have run for them.
+- `kCraft` (20) and `kGather` (21) are inside the layout but refused with a reason: crafting and gathering are not
+  implemented in the core. `kPetCommand` (22) is implemented (doc 20).
+- Tier 1 `BuyItem`, `AuctionHouse`, the extra `ActionReply` fields and `AuctionListingEvent` are missing, which is what
+  keeps `kModuleProtocolVersion` at 5. See doc 20.
 - Run on a dedicated sim worldserver with up to 1000 bots (spawn, login, the ramp, the safety valves, telemetry); sustained combat, levelling, looting, vendor and hub walks and parties are not yet verified there. See doc 13.
 - The core builds on Windows only here: the changes since the first sim runs (layouts 5 to 7, the loot and share actions, PR 80) have been checked by reading, not compiled.

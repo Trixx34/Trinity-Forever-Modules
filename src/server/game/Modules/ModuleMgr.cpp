@@ -921,7 +921,8 @@ void ModuleMgr::OnWorldTick(uint64 tick)
 
                 // Staggered by guid: each bot refreshes on one tick in refreshEvery, so the cost is spread over the ticks.
                 bool const refresh = refreshEvery <= 1 || (tick + guid) % refreshEvery == 0;
-                ModuleSnapshotBot entry = BuildSnapshotBot(*bot, region->GetBounds().MaxNearbyUnits, refresh, _nearbyCache[guid]);
+                ModuleSnapshotBot entry = BuildSnapshotBot(*bot, region->GetBounds().MaxNearbyUnits, refresh,
+                                                            _nearbyCache[guid], _snapshotWatch[guid]);
                 if (auto result = _actionResults.find(guid); result != _actionResults.end())
                 {
                     entry.Bot.last_action_type = result->second.Type;
@@ -936,6 +937,9 @@ void ModuleMgr::OnWorldTick(uint64 tick)
             std::unordered_set<uint64> const ownedSet(owned.begin(), owned.end());
             for (auto it = _nearbyCache.begin(); it != _nearbyCache.end();)
                 it = ownedSet.contains(it->first) ? std::next(it) : _nearbyCache.erase(it);
+            // And the same for what the last snapshot remembered about the target a bot had (layout 13).
+            for (auto it = _snapshotWatch.begin(); it != _snapshotWatch.end();)
+                it = ownedSet.contains(it->first) ? std::next(it) : _snapshotWatch.erase(it);
 
             region->PublishSnapshot(tick, bots);
         }

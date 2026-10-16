@@ -10,6 +10,7 @@
 #include "DB2Stores.h"
 #include "Item.h"
 #include "Log.h"
+#include "Pet.h"
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
 #include "ObjectGuid.h"
@@ -19,6 +20,8 @@
 #include "SpawnData.h"
 #include "SharedDefines.h"
 #include "Spell.h"
+#include "SpellAuraDefines.h"
+#include "SpellAuras.h"
 #include "SpellHistory.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
@@ -153,9 +156,23 @@ struct VendorSpot
     float X;
     float Y;
     float Z;
+    uint32 Entry;                          // the creature template: the entry field of a unit reference
+    uint64 SpawnId;                        // the spawn's low guid: the counter field of a unit reference
     bool Repair;                           // the creature repairs gear (UNIT_NPC_FLAG_REPAIR)
+    bool Auctioneer;                       // the creature runs an auction house (UNIT_NPC_FLAG_AUCTIONEER)
     FactionTemplateEntry const* Faction;   // the creature's faction, so a bot does not walk to a town that kills it
 };
+
+// The NPC behind a layout-6/9 position as a unit reference a module can name in an action (layout 13). It is built from the
+// spawn, not from a live creature: a module sends it as BotAction::target_guid, and the core resolves it the same way it
+// resolves any other creature reference (ModuleBotActions::ResolveUnit finds it once the creature is loaded on the bot's
+// map, which is what an action at that NPC needs anyway).
+uint64 VendorSpotRef(VendorSpot const& spot)
+{
+    if (spot.Entry > forever_module::kUnitRefEntryMask || spot.SpawnId > forever_module::kUnitRefCounterMask)
+        return 0;
+    return forever_module::MakeUnitRef(uint8(HighGuid::Creature), spot.Entry, spot.SpawnId);
+}
 
 std::unordered_map<uint32, std::vector<VendorSpot>> const& VendorsByMap()
 {
@@ -171,11 +188,13 @@ std::unordered_map<uint32, std::vector<VendorSpot>> const& VendorsByMap()
             CreatureData const& spawn = spawnEntry.second;
             ++spawns;
             CreatureTemplate const* templ = sObjectMgr->GetCreatureTemplate(spawn.id);
-            if (!templ || (templ->npcflag & (UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR)) == 0)
+            if (!templ || (templ->npcflag & (UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR | UNIT_NPC_FLAG_AUCTIONEER)) == 0)
                 continue;
             uint32 const factionId = templ->faction;
             vendors[spawn.mapId].push_back({ spawn.spawnPoint.GetPositionX(), spawn.spawnPoint.GetPositionY(),
-                                             spawn.spawnPoint.GetPositionZ(), (templ->npcflag & UNIT_NPC_FLAG_REPAIR) != 0,
+                                             spawn.spawnPoint.GetPositionZ(), spawn.id, spawn.spawnId,
+                                             (templ->npcflag & UNIT_NPC_FLAG_REPAIR) != 0,
+                                             (templ->npcflag & UNIT_NPC_FLAG_AUCTIONEER) != 0,
                                              sFactionTemplateStore.LookupEntry(factionId) });
         }
 
@@ -203,9 +222,12 @@ struct VendorLookup
     VendorSpot Vendor{};
     bool FoundRepair = false;   // ... and a repairman
     VendorSpot Repairman{};
+    bool FoundAuctioneer = false;   // ... and an auctioneer
+    VendorSpot Auctioneer{};
 };
 
-// Fills the nearest-vendor fields (layout 6, M6) and the nearest-repairman fields (layout 9). The position is 2D for the distance:
+// Fills the nearest-vendor fields (layout 6, M6), the nearest-repairman fields (layout 9) and the guids of all three NPCs
+// (layout 13: vendor_guid, repair_guid, auctioneer_guid). The position is 2D for the distance:
 // vendors sit at different heights in the same town, and the walk is on the ground. Only vendors the bot's faction is not hostile to
 // count: a Horde bot must not be sent to Stormwind.
 void FillNearestVendor(Player& bot, BotSnapshot& entry)
@@ -233,6 +255,7 @@ void FillNearestVendor(Player& bot, BotSnapshot& entry)
         {
             float bestVendorSq = std::numeric_limits<float>::max();
             float bestRepairSq = std::numeric_limits<float>::max();
+            float bestAuctionSq = std::numeric_limits<float>::max();
             for (VendorSpot const& spot : onMap->second)
             {
                 if (mine && spot.Faction && mine->IsHostileTo(spot.Faction))
@@ -252,6 +275,12 @@ void FillNearestVendor(Player& bot, BotSnapshot& entry)
                     last.Repairman = spot;
                     last.FoundRepair = true;
                 }
+                if (spot.Auctioneer && distSq < bestAuctionSq)
+                {
+                    bestAuctionSq = distSq;
+                    last.Auctioneer = spot;
+                    last.FoundAuctioneer = true;
+                }
             }
         }
     }
@@ -269,7 +298,13 @@ void FillNearestVendor(Player& bot, BotSnapshot& entry)
         entry.repair_y = last.Repairman.Y;
         entry.repair_z = last.Repairman.Z;
         entry.repair_valid = 1;
+        entry.repair_guid = VendorSpotRef(last.Repairman);
     }
+    // Layout 13: the NPCs as unit references, so a vendor action can name one instead of the core picking the nearest.
+    if (last.FoundVendor)
+        entry.vendor_guid = VendorSpotRef(last.Vendor);
+    if (last.FoundAuctioneer)
+        entry.auctioneer_guid = VendorSpotRef(last.Auctioneer);
 }
 
 // The lowest durability among the equipped items that wear out, in percent (100 when none does).
@@ -348,6 +383,224 @@ void FillLifeState(Player& bot, BotSnapshot& entry)
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Layout 13: auras, pets, guids, money and why the bot lost its target. See doc/module-system/20-layout13-reference.md.
+// ---------------------------------------------------------------------------------------------------------------
+
+// AuraEntry::remaining_ms for an aura with no duration (a passive stance, a permanent buff). The module only tests it
+// against 0 ("is the aura running?"), so the exact sentinel does not matter as long as it is not 0.
+constexpr uint32 InfiniteAuraMs = std::numeric_limits<uint32>::max();
+
+// NearbyUnit::aura_mask. The layout calls the bits "core-defined and fixed per layout" and the SDK does not publish them,
+// so this is the core's assignment, frozen with layout 13: a later layout may add bits, but must not move or repurpose
+// one. A module that hard-codes these has to check the layout version before it trusts them.
+enum AuraMaskBit : uint32
+{
+    kAuraMaskPeriodicDamage = 0x00000001,   // a DOT: SPELL_AURA_PERIODIC_DAMAGE
+    kAuraMaskPeriodicHeal   = 0x00000002,   // SPELL_AURA_PERIODIC_HEAL
+    kAuraMaskPoison         = 0x00000004,   // a poison or a disease (Dispel is DISPEL_POISON or DISPEL_DISEASE)
+    kAuraMaskCrowdControl   = 0x00000008,   // stun, fear or confusion
+    kAuraMaskRoot           = 0x00000010,   // rooted or snared
+    kAuraMaskSlow           = 0x00000020,   // SPELL_AURA_MOD_DECREASE_SPEED
+    kAuraMaskInvisibility   = 0x00000040,   // SPELL_AURA_MOD_INVISIBILITY
+    kAuraMaskAbsorb         = 0x00000080,   // a damage shield or an absorb
+};
+
+// What an aura tells a module about its holder: the spell, the time left and the summary bits. A Dot, a poison or a stun is
+// what a module acts on, so an aura with bits is preferred over one without when the snapshot has no room for both.
+struct AuraFact
+{
+    uint32 SpellId;
+    uint32 RemainingMs;
+    uint32 Stacks;
+    uint32 Mask;
+};
+
+// The summary bits of a spell. Read from the spell's own effects, so it costs the same whatever the aura is of.
+uint32 AuraMaskOf(SpellInfo const* info)
+{
+    if (!info)
+        return 0;
+
+    uint32 mask = 0;
+    if (info->HasAura(SPELL_AURA_PERIODIC_DAMAGE))
+        mask |= kAuraMaskPeriodicDamage;
+    if (info->HasAura(SPELL_AURA_PERIODIC_HEAL))
+        mask |= kAuraMaskPeriodicHeal;
+    if (info->Dispel == DISPEL_POISON || info->Dispel == DISPEL_DISEASE)
+        mask |= kAuraMaskPoison;
+    if (info->HasAura(SPELL_AURA_MOD_STUN) || info->HasAura(SPELL_AURA_MOD_FEAR) || info->HasAura(SPELL_AURA_MOD_CONFUSE))
+        mask |= kAuraMaskCrowdControl;
+    if (info->Mechanic == MECHANIC_ROOT || info->Mechanic == MECHANIC_SNARE)
+        mask |= kAuraMaskRoot;
+    if (info->HasAura(SPELL_AURA_MOD_DECREASE_SPEED))
+        mask |= kAuraMaskSlow;
+    if (info->HasAura(SPELL_AURA_MOD_INVISIBILITY))
+        mask |= kAuraMaskInvisibility;
+    if (info->HasAura(SPELL_AURA_SCHOOL_ABSORB) || info->HasAura(SPELL_AURA_DAMAGE_SHIELD))
+        mask |= kAuraMaskAbsorb;
+    return mask;
+}
+
+// The auras a unit carries, at most `capacity` of them, in the order the snapshot reports them. Returns how many were
+// written. Two passes over the same container: the auras with summary bits first, so a unit carrying more auras than the
+// snapshot has slots for still reports the ones a module acts on. A spell applied by more than one caster is one entry
+// with the longest time left (the aura container is keyed by spell id, so a repeat is next to the first). Auras that have
+// already run out are left out: an aura the unit does not carry is not "about to expire".
+uint32 CollectAuras(Unit const& unit, AuraFact* out, uint32 capacity)
+{
+    uint32 count = 0;
+    for (uint32 pass = 0; pass < 2; ++pass)
+    {
+        bool const wantMasked = pass == 0;
+        for (auto const& [spellId, application] : unit.GetAppliedAuras())
+        {
+            Aura const* aura = application->GetBase();
+            if (!aura)
+                continue;
+
+            bool const permanent = aura->IsPermanent();
+            int32 const left = aura->GetDuration();
+            if (!permanent && left <= 0)
+                continue;
+
+            uint32 const mask = AuraMaskOf(aura->GetSpellInfo());
+            if (wantMasked != (mask != 0))
+                continue;
+
+            uint32 const remaining = permanent ? InfiniteAuraMs : uint32(left);
+            uint32 const stacks = std::max<uint32>(1, aura->GetStackAmount());
+
+            // The same spell again (another caster): keep the longer one, and never a second entry for it.
+            uint32 slot = count;
+            while (slot > 0 && out[slot - 1].SpellId == spellId)
+                --slot;
+            if (slot != count)
+            {
+                if (remaining <= out[slot].RemainingMs)
+                    continue;
+                out[slot].RemainingMs = remaining;
+                out[slot].Stacks = std::max(out[slot].Stacks, stacks);
+                continue;
+            }
+            if (count >= capacity)
+                continue;
+
+            out[count] = { spellId, remaining, stacks, mask };
+            ++count;
+        }
+    }
+    return count;
+}
+
+// The bot's own auras (layout 13): the first aura_count entries of auras[]. This replaces what a module had to infer from
+// its own timers, so it is filled on every snapshot tick for every bot: the walk is over the aura container the unit
+// already keeps, with no lookup of its own, and the entries are written straight into shared memory.
+void FillAuras(Player& bot, BotSnapshot& entry)
+{
+    AuraFact facts[forever_module::kMaxAuras];
+    uint32 const count = CollectAuras(bot, facts, forever_module::kMaxAuras);
+    entry.aura_count = count;
+    for (uint32 i = 0; i < count; ++i)
+        entry.auras[i] = { facts[i].SpellId, facts[i].RemainingMs, facts[i].Stacks };
+}
+
+// A nearby unit's aura summary (layout 13): how many auras it carries and what they are, coarsely. A nearby unit gets no
+// aura array, so only the two numbers are built and nothing is kept -- the walk is the only cost, and the nearby list is
+// rebuilt for one bot in refreshEvery ticks (ModuleMgr), not for every bot on every tick.
+void FillNearbyAuras(Unit const& unit, NearbyUnit& near)
+{
+    uint32 count = 0;
+    uint32 mask = 0;
+    for (auto const& [spellId, application] : unit.GetAppliedAuras())
+    {
+        (void)spellId;
+        Aura const* aura = application->GetBase();
+        if (!aura || (!aura->IsPermanent() && aura->GetDuration() <= 0))
+            continue;
+        ++count;
+        mask |= AuraMaskOf(aura->GetSpellInfo());
+    }
+    near.aura_count = count;
+    near.aura_mask = mask;
+}
+
+// The bot's own pet (layout 13), as fact instead of what refused casts imply: pet_state 0 none, 1 alive, 2 dead.
+void FillPet(Player& bot, BotSnapshot& entry)
+{
+    Pet* pet = bot.GetPet();
+    if (!pet || !pet->IsInWorld())
+        return; // pet_state stays 0: the bot has no pet out
+
+    uint64 ref = 0;
+    if (EncodeUnitRef(*pet, ref))
+        entry.pet_guid = ref;
+    entry.pet_health = ClampToUint32(pet->GetHealth());
+    entry.pet_max_health = ClampToUint32(pet->GetMaxHealth());
+    entry.pet_state = pet->IsAlive() ? 1 : 2;
+}
+
+// The bot's money and the room in its bags (layout 13), for a module's buy and hand-in pre-checks. Every inventory slot
+// with nothing in it counts: the four backpack slots and every slot of every bag the bot carries. A slot holding a stack
+// that is not full is not counted -- the core does not report how much room is in a stack, and a module that needs the
+// exact number has the Tier 1 item actions.
+void FillMoneyAndBags(Player& bot, BotSnapshot& entry)
+{
+    entry.copper = bot.GetMoney();
+
+    uint32 freeSlots = 0;
+    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_BAG_START; ++slot)
+        if (!bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+            ++freeSlots;
+    for (uint8 slot = INVENTORY_SLOT_BAG_START; slot < INVENTORY_SLOT_BAG_END; ++slot)
+    {
+        Bag* bag = bot.GetBagByPos(slot);
+        if (!bag)
+            continue;
+        for (uint32 i = 0; i < GetBagSize(bag); ++i)
+            if (!GetItemInBag(bag, i))
+                ++freeSlots;
+    }
+    entry.bag_free_slots = freeSlots;
+}
+
+// Why the bot lost the target of the previous tick (layout 13): 0 none, 1 killed, 2 leashed, 3 despawned, 4 another
+// player. A loss the core cannot pin down reports 0, and the module then reads it as a plain target_gone and does not
+// avoid the unit -- the one safe direction, since every other code tells a module to leave that unit alone for a while.
+// Only checked when the victim actually went away, and kept until the bot picks a new one, so the module reads it on the
+// snapshot tick that carries target_gone.
+uint32 ClassifyTargetLoss(Player& bot, ObjectGuid const& victim)
+{
+    if (victim.IsEmpty())
+        return 0;
+
+    // A dead creature is a Corpse, not a Unit, so both have to be looked for before anything can be told.
+    Unit* lost = ObjectAccessor::GetUnit(bot, victim);
+    if (!lost)
+    {
+        if (ObjectAccessor::GetCorpse(bot, victim))
+            return 1; // killed: the corpse is still there
+        return 3;    // despawned: nothing of it is in the world any more
+    }
+    if (!lost->IsAlive())
+        return 1; // killed
+
+    // Still standing. Another player took it (the bot is not what it is fighting), or a leashed creature went home.
+    if (Unit* itsVictim = lost->GetVictim())
+        if (itsVictim != &bot && itsVictim->IsPlayer())
+            return 4;
+    if (lost->IsCreature())
+    {
+        Creature const* creature = lost->ToCreature();
+        CreatureData const* data = creature->GetCreatureData();
+        // Back at its spawn point and out of combat is how a leashed creature resets.
+        if (!creature->IsInCombat() && data &&
+            creature->GetExactDist2d(data->spawnPoint.GetPositionX(), data->spawnPoint.GetPositionY()) <= 1.0f)
+            return 2;
+    }
+    return 0;
+}
+
 } // namespace
 
 bool EncodeUnitRef(Unit const& unit, uint64& ref)
@@ -363,10 +616,13 @@ bool EncodeUnitRef(Unit const& unit, uint64& ref)
             ref = forever_module::MakeUnitRef(uint8(HighGuid::Player), 0, counter);
             return true;
 
+        // A pet's guid is its own type but packs like a creature's (map, entry, counter), so the same reference shape
+        // names either -- see ResolveUnit in ModuleBotActions.cpp, which looks a HighGuid::Pet reference up again.
+        case HighGuid::Pet:
         case HighGuid::Creature:
             if (guid.GetEntry() > forever_module::kUnitRefEntryMask)
                 return false;
-            ref = forever_module::MakeUnitRef(uint8(HighGuid::Creature), guid.GetEntry(), counter);
+            ref = forever_module::MakeUnitRef(uint8(guid.GetHigh()), guid.GetEntry(), counter);
             return true;
 
         default:
@@ -374,7 +630,8 @@ bool EncodeUnitRef(Unit const& unit, uint64& ref)
     }
 }
 
-ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNearby, std::vector<NearbyUnit>& cachedNearby)
+ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNearby, std::vector<NearbyUnit>& cachedNearby,
+                                   BotSnapshotWatch& watch)
 {
     ModuleSnapshotBot result;
 
@@ -407,6 +664,11 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
                 continue;
             entry.casting_spell = spell->GetSpellInfo()->Id;
             entry.cast_remaining_ms = uint32(std::max<int32>(0, spell->GetTimer()));
+            // Layout 13: the unit this cast is aimed at, so a module does not have to guess what a heal or an assist is for.
+            // A cast on the bot itself reports 0, which the layout documents as self.
+            if (ObjectGuid const castTarget = spell->GetUnitTargetGUID(); !castTarget.IsEmpty() && castTarget != bot.GetGUID())
+                if (Unit const* aimed = ObjectAccessor::GetUnit(bot, castTarget))
+                    EncodeUnitRef(*aimed, entry.casting_target);
             break;
         }
     }
@@ -423,6 +685,25 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
     FillLifeState(bot, entry);
     FillNearestVendor(bot, entry);
     entry.durability_pct = LowestDurabilityPct(bot);
+
+    FillAuras(bot, entry);
+    FillPet(bot, entry);
+    FillMoneyAndBags(bot, entry);
+
+    // Layout 13: why the bot lost the target it had on the previous tick. The reason is worked out once, on the tick the
+    // victim goes away, and kept until the bot picks a new one, so the module reads it on the tick that carries
+    // threat_target_guid == 0. A bot that still has its victim clears it.
+    if (Unit* victim = bot.GetVictim())
+    {
+        watch.LastVictim = victim->GetGUID();
+        watch.LostReason = 0;
+    }
+    else if (!watch.LastVictim.IsEmpty())
+    {
+        watch.LostReason = ClassifyTargetLoss(bot, watch.LastVictim);
+        watch.LastVictim = ObjectGuid::Empty;
+    }
+    entry.last_target_lost_reason = watch.LostReason;
 
     if (maxNearby == 0)
         return result;
@@ -509,6 +790,7 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
         near.level = unit->GetLevel();
         near.elite = unit->IsCreature() && unit->ToCreature()->IsElite() ? 1 : 0;
         near.casting = unit->IsNonMeleeSpellCast(false) ? 1 : 0;
+        FillNearbyAuras(*unit, near); // layout 13
         result.Nearby.push_back(near);
     }
 

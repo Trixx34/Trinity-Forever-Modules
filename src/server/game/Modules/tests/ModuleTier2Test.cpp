@@ -9,6 +9,7 @@
 #include <boost/interprocess/mapped_region.hpp>
 #include <boost/interprocess/shared_memory_object.hpp>
 
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -33,6 +34,28 @@ int g_failures = 0;
 
 int main()
 {
+    // The core writes kTier2LayoutVersion into the region and the module refuses to attach on any other value, so the
+    // number is pinned here as well as compared below: a silent bump of the core's copy would otherwise only show up as a
+    // module that refuses to attach.
+    CHECK(forever_module::kTier2LayoutVersion == 13);
+    CHECK(static_cast<int>(forever_module::BotActionStatus::kNoRoute) == 13);
+    CHECK(static_cast<int>(forever_module::ActionType::kCraft) == 20);
+    CHECK(static_cast<int>(forever_module::ActionType::kGather) == 21);
+    CHECK(static_cast<int>(forever_module::ActionType::kPetCommand) == 22);
+    CHECK(static_cast<int>(forever_module::ActionType::kLastActionType) ==
+          static_cast<int>(forever_module::ActionType::kPetCommand));
+    CHECK(forever_module::kMaxAuras == 16);
+
+    // The shared region is mapped by two processes built separately, so a shape that changes without a layout bump is
+    // memory corruption that nothing else would catch. These sizes are what the SDK's header gives on the same platform.
+    CHECK(sizeof(forever_module::AuraEntry) == 12);
+    CHECK(sizeof(forever_module::BotSnapshot) == 648);
+    CHECK(sizeof(forever_module::NearbyUnit) == 48);
+    CHECK(offsetof(forever_module::BotSnapshot, aura_count) == 376);
+    CHECK(offsetof(forever_module::BotSnapshot, auras) == 380);
+    CHECK(offsetof(forever_module::NearbyUnit, aura_count) == 40);
+    CHECK(offsetof(forever_module::NearbyUnit, aura_mask) == 44);
+
     std::string const name = "trinity_module_test_" + std::to_string(::getpid()) + "_tier2";
 
     std::string error;
@@ -143,7 +166,30 @@ int main()
         CHECK(actions.Actions[1].type == forever_module::ActionType::kResurrect && actions.Actions[1].target_guid == forever_module::MakeUnitRef(2, 0, 7));
         CHECK(actions.Actions[2].type == forever_module::ActionType::kReclaimCorpse);
     }
-    CHECK(actions.Actions.empty());
+    // The same set is not returned twice, and reading it again leaves the last one in place. (This line used to read
+    // CHECK(actions.Actions.empty()) here, which failed on HEAD: it asserted the set empty immediately after checking it
+    // had three actions, and no read happened in between. See git log for the fix.)
+    CHECK(!region->ReadNewActions(actions));
+    CHECK(actions.Actions.size() == 3 && actions.Actions[0].type == forever_module::ActionType::kReleaseSpirit);
+
+    // The layout-12 and layout-13 action types round-trip as well. The core refuses kCraft and kGather with a reason
+    // (not implemented), but they are inside the layout, so the region has to carry them unchanged.
+    forever_module::BotAction craft; craft.bot_guid = 42; craft.type = forever_module::ActionType::kCraft; craft.spell_id = 51005;
+    forever_module::BotAction gather; gather.bot_guid = 42; gather.type = forever_module::ActionType::kGather;
+    gather.target_guid = forever_module::MakeUnitRef(8, 1731, 3);
+    forever_module::BotAction petGo; petGo.bot_guid = 42; petGo.type = forever_module::ActionType::kPetCommand;
+    petGo.spell_id = 1; petGo.target_guid = forever_module::MakeUnitRef(8, 1234, 7);
+    publishActions(10, {craft, gather, petGo}, 3);
+    CHECK(region->ReadNewActions(actions));
+    CHECK(actions.Actions.size() == 3);
+    if (actions.Actions.size() == 3)
+    {
+        CHECK(actions.Actions[0].type == forever_module::ActionType::kCraft && actions.Actions[0].spell_id == 51005);
+        CHECK(actions.Actions[1].type == forever_module::ActionType::kGather &&
+              actions.Actions[1].target_guid == forever_module::MakeUnitRef(8, 1731, 3));
+        CHECK(actions.Actions[2].type == forever_module::ActionType::kPetCommand &&
+              actions.Actions[2].target_guid == forever_module::MakeUnitRef(8, 1234, 7));
+    }
 
     // A claimed count above MaxActions is clamped to what the region holds (8 here).
     std::vector<forever_module::BotAction> full(8, stop);
@@ -177,8 +223,64 @@ int main()
     CHECK(nearbySlots[0].guid == forever_module::MakeUnitRef(8, 1234, 7));
     CHECK(nearbySlots[0].is_hostile);
 
+    // The layout-13 fields survive the trip through the region as well: a module reads the auras, the pet, the NPC
+    // references, the money and the reason the bot lost its target out of exactly these bytes.
+    withBot[0].Bot.aura_count = 2;
+    withBot[0].Bot.auras[0] = { 1459 /* Bloodthirst */, 6000, 1 };
+    withBot[0].Bot.auras[1] = { 9747, 0xFFFFFFFFu, 1 };          // an aura with no duration: the core's sentinel
+    withBot[0].Bot.auras[2] = { 0, 0, 0 };                      // past aura_count: an unused slot reads as spell_id 0
+    withBot[0].Bot.casting_target = forever_module::MakeUnitRef(8, 1234, 7);
+    withBot[0].Bot.pet_guid = forever_module::MakeUnitRef(10, 332, 9);
+    withBot[0].Bot.pet_health = 120;
+    withBot[0].Bot.pet_max_health = 400;
+    withBot[0].Bot.pet_state = 1;
+    withBot[0].Bot.vendor_guid = forever_module::MakeUnitRef(8, 4277, 21);
+    withBot[0].Bot.repair_guid = forever_module::MakeUnitRef(8, 4277, 22);
+    withBot[0].Bot.auctioneer_guid = forever_module::MakeUnitRef(8, 4277, 23);
+    withBot[0].Bot.copper = 123456;
+    withBot[0].Bot.bag_free_slots = 9;
+    withBot[0].Bot.last_target_lost_reason = 2;
+    withBot[0].Nearby[0].aura_count = 3;
+    withBot[0].Nearby[0].aura_mask = 0x00000005; // a DOT and a poison (see doc/module-system/20)
+    region->PublishSnapshot(11, withBot);
+
+    uint8_t const layout13Buffer = header->published_snapshot_buffer.load();
+    auto const* layout13Snap = reinterpret_cast<forever_module::WorldTickSnapshotHeader const*>(
+        base + forever_module::Tier2SnapshotBufferOffset(4, 2, layout13Buffer));
+    CHECK(layout13Snap->tick_number == 11);
+    auto const* read13 = reinterpret_cast<forever_module::BotSnapshot const*>(layout13Snap + 1);
+    CHECK(read13->aura_count == 2);
+    CHECK(read13->auras[0].spell_id == 1459 && read13->auras[0].remaining_ms == 6000 && read13->auras[0].stacks == 1);
+    CHECK(read13->auras[1].spell_id == 9747 && read13->auras[1].remaining_ms == 0xFFFFFFFFu);
+    CHECK(read13->auras[2].spell_id == 0);
+    CHECK(read13->casting_target == forever_module::MakeUnitRef(8, 1234, 7));
+    CHECK(read13->pet_guid == forever_module::MakeUnitRef(10, 332, 9));
+    CHECK(read13->pet_state == 1 && read13->pet_health == 120 && read13->pet_max_health == 400);
+    CHECK(read13->vendor_guid == forever_module::MakeUnitRef(8, 4277, 21));
+    CHECK(read13->repair_guid == forever_module::MakeUnitRef(8, 4277, 22));
+    CHECK(read13->auctioneer_guid == forever_module::MakeUnitRef(8, 4277, 23));
+    CHECK(read13->copper == 123456 && read13->bag_free_slots == 9);
+    CHECK(read13->last_target_lost_reason == 2);
+    auto const* read13Near = reinterpret_cast<forever_module::NearbyUnit const*>(read13 + 4);
+    CHECK(read13Near[0].aura_count == 3 && read13Near[0].aura_mask == 0x00000005);
+
+    // And back to zero: an entry written from scratch must not keep the previous tick's facts.
+    withBot[0].Bot = forever_module::BotSnapshot();
+    withBot[0].Bot.guid = 42;
+    withBot[0].Nearby[0] = forever_module::NearbyUnit();
+    withBot[0].Nearby[0].guid = forever_module::MakeUnitRef(8, 1234, 7);
+    region->PublishSnapshot(12, withBot);
+    uint8_t const zeroBuffer = header->published_snapshot_buffer.load();
+    auto const* zeroSnap = reinterpret_cast<forever_module::WorldTickSnapshotHeader const*>(
+        base + forever_module::Tier2SnapshotBufferOffset(4, 2, zeroBuffer));
+    auto const* readZero = reinterpret_cast<forever_module::BotSnapshot const*>(zeroSnap + 1);
+    CHECK(readZero->aura_count == 0);
+    CHECK(readZero->pet_state == 0);
+    CHECK(readZero->copper == 0);
+    CHECK(readZero->last_target_lost_reason == 0);
+
     std::vector<ModuleSnapshotBot> tooMany(5, withBot[0]);
-    region->PublishSnapshot(10, tooMany);
+    region->PublishSnapshot(13, tooMany);
     uint8_t const clampBuffer = header->published_snapshot_buffer.load();
     auto const* clampSnap = reinterpret_cast<forever_module::WorldTickSnapshotHeader const*>(
         base + forever_module::Tier2SnapshotBufferOffset(4, 2, clampBuffer));

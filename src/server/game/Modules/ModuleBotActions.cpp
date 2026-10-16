@@ -4,6 +4,7 @@
 #include <cmath>
 #include "BotMgr.h"
 #include "Cell.h"
+#include "CharmInfo.h"
 #include "Corpse.h"
 #include "GameTime.h"
 #include "InstanceScript.h"
@@ -12,6 +13,7 @@
 #include "Config.h"
 #include "CellImpl.h"
 #include "Creature.h"
+#include "CreatureAI.h"
 #include "DB2Structure.h"
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
@@ -27,6 +29,9 @@
 #include "Opcodes.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
+#include "PathGenerator.h"
+#include "Pet.h"
+#include "PetAI.h"
 #include "Player.h"
 #include "QuestDef.h"
 #include "SpellInfo.h"
@@ -1295,6 +1300,145 @@ BotActionStatus MountAction(Player& bot, BotAction const& action, std::string& r
     return BotActionStatus::kApplied;
 }
 
+// Whether the navmesh has a full route to (x, y, z) from where the bot stands now (layout 13, BotActionStatus::kNoRoute).
+//
+// The move itself is never refused over this: PointMovementGenerator falls back to a straight line when there is no path,
+// so the bot walks to the nearest reachable point and stops there, exactly as the status documents. Only the answer
+// changes, so a module can drop a destination it can never reach instead of walking into a wall for ever.
+//
+// Three cases read as "no route", and one deliberately does not:
+//   PATHFIND_NOPATH      - the start or the destination is not on the mesh at all.
+//   PATHFIND_INCOMPLETE  - a partial path only: the mesh runs out before the destination.
+//   PATHFIND_FARFROMPOLY - start or destination further than 7 yards from any polygon, flagged on top of the two above.
+// PATHFIND_NOT_USING_PATH is NOT a missing route: it is what PathGenerator returns when there is no navmesh to use (no
+// mmaps loaded for the map, or the unit flies, swims or falls), where a straight line is the intended movement. Reporting
+// kNoRoute there would make every destination on such a map "unreachable" and a module would stop sending moves at all.
+bool HasFullRouteTo(Player& bot, float x, float y, float z)
+{
+    PathGenerator path(&bot);
+    if (!path.CalculatePath(x, y, z, false))
+        return false; // a coordinate the map rejects outright: nothing can get there
+
+    PathType const type = path.GetPathType();
+    if (type & PATHFIND_NOT_USING_PATH)
+        return true;
+    return !((type & (PATHFIND_NOPATH | PATHFIND_INCOMPLETE)) != 0);
+}
+
+// Pet commands (layout 13, ActionType::kPetCommand). spell_id: 1 attack target_guid, 2 follow the bot, 3 stay, 4 set the
+// stance (in dest_x: 0 passive, 1 defensive, 2 aggressive). Each mirrors what the pet bar does for a player (the handlers
+// in PetHandler.cpp), so the pet AI reads the order the same way it reads one from a client.
+BotActionStatus PetCommandAction(Player& bot, BotAction const& action, std::string& reason)
+{
+    if (bot.IsInCombat())
+    {
+        reason = "bot is in combat";
+        return BotActionStatus::kRefused;
+    }
+
+    Pet* pet = bot.GetPet();
+    if (!pet || !pet->IsInWorld() || !pet->IsAlive())
+    {
+        reason = "bot has no pet out";
+        return BotActionStatus::kInvalidTarget;
+    }
+    CharmInfo* charm = pet->GetCharmInfo();
+    if (!charm)
+    {
+        reason = "the bot's pet has no command state";
+        return BotActionStatus::kRefused;
+    }
+
+    switch (action.spell_id)
+    {
+        case 1: // attack
+        {
+            Unit* target = ResolveUnit(bot, action.target_guid);
+            if (!target || target == &bot || !target->IsInWorld() || !target->IsAlive())
+            {
+                reason = "pet command target is not a live unit on this bot's map";
+                return BotActionStatus::kInvalidTarget;
+            }
+            // The same rule the pet bar applies for a player: the owner must be allowed to attack the unit, and neither
+            // the pet nor the target may be under a charm (a charmed unit attacks whoever holds it, not its master).
+            Player* owner = pet->GetOwner();
+            if (!owner || !owner->IsValidAttackTarget(target) || pet->IsCharmed() || target->IsCharmed())
+            {
+                reason = "the bot's pet may not attack that unit";
+                return BotActionStatus::kInvalidTarget;
+            }
+            // The order is read by the pet AI (PetAI reads CharmInfo), so it goes in the same way the pet bar puts it in
+            // (WorldSession::HandlePetActionHelper, COMMAND_ATTACK): through the AI, so a target switch is forced.
+            if (pet->GetVictim() != target || !charm->IsCommandAttack())
+            {
+                if (pet->GetVictim())
+                    pet->AttackStop();
+
+                charm->SetIsCommandAttack(true);
+                charm->SetIsAtStay(false);
+                charm->SetIsFollowing(false);
+                charm->SetIsCommandFollow(false);
+                charm->SetIsReturning(false);
+
+                if (CreatureAI* ai = pet->ToCreature()->AI())
+                {
+                    if (PetAI* petAI = dynamic_cast<PetAI*>(ai))
+                        petAI->_AttackStart(target); // force the target switch
+                    else
+                        ai->AttackStart(target);
+                }
+                else
+                    pet->Attack(target, true);
+            }
+            return BotActionStatus::kApplied;
+        }
+
+        case 2: // follow
+            pet->AttackStop();
+            pet->InterruptSpell(CURRENT_GENERIC_SPELL, false, false);
+            if (Spell const* channeled = pet->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
+                channeled && !channeled->GetSpellInfo()->HasAttribute(SPELL_ATTR9_CHANNEL_PERSISTS_ON_PET_FOLLOW))
+                pet->InterruptSpell(CURRENT_CHANNELED_SPELL, true, true);
+            pet->GetMotionMaster()->MoveFollow(&bot, PET_FOLLOW_DIST, pet->GetFollowAngle());
+
+            charm->SetCommandState(COMMAND_FOLLOW);
+            charm->SetIsCommandAttack(false);
+            charm->SetIsAtStay(false);
+            charm->SetIsReturning(true);
+            charm->SetIsCommandFollow(true);
+            charm->SetIsFollowing(false);
+            return BotActionStatus::kApplied;
+
+        case 3: // stay
+            pet->GetMotionMaster()->Clear(MOTION_PRIORITY_NORMAL);
+            pet->GetMotionMaster()->MoveIdle();
+
+            charm->SetCommandState(COMMAND_STAY);
+            charm->SetIsCommandAttack(false);
+            charm->SetIsAtStay(true);
+            charm->SetIsCommandFollow(false);
+            charm->SetIsFollowing(false);
+            charm->SetIsReturning(false);
+            charm->SaveStayPosition();
+            return BotActionStatus::kApplied;
+
+        case 4: // stance
+        {
+            if (action.dest_x > 2.0f)
+            {
+                reason = "unknown pet stance " + std::to_string(action.dest_x) + " (0 passive, 1 defensive, 2 aggressive)";
+                return BotActionStatus::kRefused;
+            }
+            pet->SetReactState(action.dest_x < 0.5f ? REACT_PASSIVE : action.dest_x < 1.5f ? REACT_DEFENSIVE : REACT_AGGRESSIVE);
+            return BotActionStatus::kApplied;
+        }
+
+        default:
+            reason = "unknown pet command " + std::to_string(action.spell_id);
+            return BotActionStatus::kRefused;
+    }
+}
+
 BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string& reason)
 {
     switch (action.type)
@@ -1306,9 +1450,21 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             return BotActionStatus::kApplied;
 
         case ActionType::kMoveTo:
+        {
+            // The route is asked for before the move is started, and the move is carried out either way: a bot with no full
+            // route still walks as far towards the destination as the mesh allows. kNoRoute only tells the module that its
+            // destination is out of reach, so it stops sending the bot there (layout 13, BotActionStatus::kNoRoute).
+            bool const reachable = HasFullRouteTo(bot, action.dest_x, action.dest_y, action.dest_z);
             bot.GetMotionMaster()->Clear();
             bot.GetMotionMaster()->MovePoint(0, action.dest_x, action.dest_y, action.dest_z);
+            if (!reachable)
+            {
+                reason = "no full route to (" + std::to_string(action.dest_x) + ", " + std::to_string(action.dest_y) +
+                         ", " + std::to_string(action.dest_z) + "): the bot walks to the nearest reachable point";
+                return BotActionStatus::kNoRoute;
+            }
             return BotActionStatus::kApplied;
+        }
 
         case ActionType::kFollow:
         {
@@ -1351,7 +1507,18 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             uint32 const services = action.spell_id;
             if (services & (kServiceSellBit | kServiceRepairBit))
             {
-                Creature* npc = NearestServiceNpc(bot, UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR);
+                // Layout 13: the module can name the NPC (BotSnapshot::vendor_guid / repair_guid, which is where a BuyItem
+                // action gets its vendor from). A reference the core cannot use is not an error -- the nearest NPC in
+                // interaction range is used instead, which is what a core before layout 13 relied on anyway.
+                Creature* npc = nullptr;
+                if (Unit* named = action.target_guid ? ResolveUnit(bot, action.target_guid) : nullptr)
+                    if (Creature* creature = named->ToCreature();
+                        creature && creature->IsInWorld() && creature->IsAlive() &&
+                        bot.GetNPCIfCanInteractWith(creature->GetGUID(), UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR,
+                                                    UNIT_NPC_FLAG_2_NONE))
+                        npc = creature;
+                if (!npc)
+                    npc = NearestServiceNpc(bot, UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR);
                 if (!npc)
                 {
                     reason = "no vendor or repairman within interaction range";
@@ -1426,6 +1593,19 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
 
         case ActionType::kAutoGear:
             return AutoGearAction(bot, action.spell_id, reason);
+
+        case ActionType::kPetCommand:
+            return PetCommandAction(bot, action, reason);
+
+        // Layout 12: crafting and gathering. kLastActionType admits them, so the switch must answer for them: they are
+        // refused with a reason a module can log rather than falling through to "unknown action type" below.
+        case ActionType::kCraft:
+            reason = "crafting is not implemented in this core";
+            return BotActionStatus::kRefused;
+
+        case ActionType::kGather:
+            reason = "gathering is not implemented in this core";
+            return BotActionStatus::kRefused;
 
         case ActionType::kGroup:
         {

@@ -8527,6 +8527,15 @@ bool Spell::CanReleaseEmpowerSpell() const
     return passedTime >= m_empower->MinHoldTime;
 }
 
+ObjectGuid Spell::GetUnitTargetGUID() const
+{
+    for (TargetInfo const& target : m_UniqueTargetInfo)
+        if (!target.TargetGUID.IsEmpty())
+            return target.TargetGUID;
+
+    return ObjectGuid::Empty;
+}
+
 bool Spell::IsNeedSendToClient() const
 {
     return m_SpellVisual.SpellXSpellVisualID || m_SpellVisual.ScriptVisualID
