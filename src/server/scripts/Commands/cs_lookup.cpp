@@ -44,6 +44,16 @@ EndScriptData */
 
 using namespace Trinity::ChatCommands;
 
+// The player's content tuning flags for the lookup's level. A command can come from a session with no player in the world (the
+// Battle.net club chat has been seen to), so there are no flags then, instead of a null read.
+static std::span<uint32 const> ConditionalFlagsOf(ChatHandler* handler)
+{
+    if (WorldSession* session = handler->GetSession())
+        if (Player* player = session->GetPlayer())
+            return player->m_playerData->CtrOptions->ConditionalFlags;
+    return {};
+}
+
 class lookup_commandscript : public CommandScript
 {
 public:
@@ -685,7 +695,7 @@ public:
                         {
                             int32 maxLevel = 0;
                             if (Optional<ContentTuningLevels> questLevels = sDB2Manager.GetContentTuningData(questTemplatePair.second->GetContentTuningId(),
-                                handler->GetSession()->GetPlayer()->m_playerData->CtrOptions->ConditionalFlags))
+                                ConditionalFlagsOf(handler)))
                                 maxLevel = questLevels->MaxLevel;
 
                             int32 scalingFactionGroup = 0;
@@ -745,7 +755,7 @@ public:
                 {
                     int32 maxLevel = 0;
                     if (Optional<ContentTuningLevels> questLevels = sDB2Manager.GetContentTuningData(questTemplatePair.second->GetContentTuningId(),
-                        handler->GetSession()->GetPlayer()->m_playerData->CtrOptions->ConditionalFlags))
+                        ConditionalFlagsOf(handler)))
                         maxLevel = questLevels->MaxLevel;
 
                     int32 scalingFactionGroup = 0;
@@ -815,7 +825,7 @@ public:
             {
                 int32 maxLevel = 0;
                 if (Optional<ContentTuningLevels> questLevels = sDB2Manager.GetContentTuningData(quest->GetContentTuningId(),
-                    handler->GetSession()->GetPlayer()->m_playerData->CtrOptions->ConditionalFlags))
+                    ConditionalFlagsOf(handler)))
                     maxLevel = questLevels->MaxLevel;
 
                 int32 scalingFactionGroup = 0;
