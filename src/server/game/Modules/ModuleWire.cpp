@@ -274,6 +274,28 @@ std::string EncodeEventNotifyAuctionListing(std::string_view hookName, AuctionLi
     return out;
 }
 
+std::string EncodeEventNotifyBotTrade(std::string_view hookName, BotTradeEvent const& event)
+{
+    std::string payload;
+    AppendVarintField(payload, 1, event.BotGuid);
+    AppendVarintField(payload, 2, event.PartnerGuid);
+    AppendVarintField(payload, 3, event.Status);
+    AppendVarintField(payload, 4, event.PartnerCopper);
+    for (BotTradeOffered const& offered : event.Offered)
+    {
+        std::string item;
+        AppendVarintField(item, 1, offered.Slot);
+        AppendVarintField(item, 2, offered.Entry);
+        AppendVarintField(item, 3, offered.Count);
+        AppendBytesField(payload, 5, item);
+    }
+
+    std::string out;
+    AppendBytesField(out, 1, hookName);
+    AppendBytesField(out, static_cast<uint32>(NotifyKind::BotTrade), payload);
+    return out;
+}
+
 std::string EncodeEventRequestCommand(uint64 messageId, std::string_view hookName, std::string_view commandText,
                                       uint64 issuerGuid)
 {
@@ -734,6 +756,57 @@ bool Decode(std::string_view bytes, ActionRequestMsg& out)
                     return false;
             }
         }
+        else if ((field == 20 || field == 21) && wire == WireLengthDelimited)
+        {
+            // BotSpeakAction (20): bot_guid=1, kind=2, player_guid=3, text=4.
+            // BotTradeAction (21): op=1, bot_guid=2, slot=3, item_guid=4, copper=5.
+            std::string_view actionBytes;
+            if (!r.ReadBytes(actionBytes))
+                return false;
+            out.Kind = field == 20 ? ActionKind::BotSpeak : ActionKind::BotTrade;
+
+            Reader a(actionBytes);
+            while (!a.AtEnd())
+            {
+                uint32 af = 0, aw = 0;
+                if (!a.ReadTag(af, aw))
+                    return false;
+                uint64 value = 0;
+                if (aw == WireVarint && af >= 1 && af <= 5)
+                {
+                    if (!a.ReadVarint(value))
+                        return false;
+                    if (field == 20)
+                    {
+                        if (af == 1)
+                            out.BotGuid = value;
+                        else if (af == 2)
+                            out.SpeakKind = static_cast<uint32>(value);
+                        else if (af == 3)
+                            out.PlayerGuid = value;
+                    }
+                    else if (af == 1)
+                        out.TradeOp = static_cast<uint32>(value);
+                    else if (af == 2)
+                        out.BotGuid = value;
+                    else if (af == 3)
+                        out.TradeSlot = static_cast<uint32>(value);
+                    else if (af == 4)
+                        out.ItemGuid = value;
+                    else
+                        out.Copper = value;
+                }
+                else if (field == 20 && af == 4 && aw == WireLengthDelimited)
+                {
+                    std::string_view text;
+                    if (!a.ReadBytes(text))
+                        return false;
+                    out.Text.assign(text);
+                }
+                else if (!a.Skip(aw))
+                    return false;
+            }
+        }
         else if (!r.Skip(wire))
             return false;
     }
@@ -876,6 +949,16 @@ std::string Encode(ActionReplyMsg const& msg)
         AppendVarintField(out, 10, msg.ItemEntry);
     if (msg.AuctionGuid)
         AppendVarintField(out, 11, msg.AuctionGuid);
+    for (TradeBagItemMsg const& item : msg.BagItems)
+    {
+        std::string body;
+        AppendVarintField(body, 1, item.ItemGuid);
+        AppendVarintField(body, 2, item.Entry);
+        AppendVarintField(body, 3, item.Count);
+        if (!item.Name.empty())
+            AppendBytesField(body, 4, item.Name);
+        AppendBytesField(out, 12, body);
+    }
     return out;
 }
 

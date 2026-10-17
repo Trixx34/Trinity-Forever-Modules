@@ -41,7 +41,7 @@ struct ModuleActionSet;
 // Wire protocol this core speaks (Tier 1 schema + Tier 2 layout). Must equal kProtocolVersion in
 // forever-module-sdk's include/forever_module/protocol_version.h. Exact match only, no compat
 // shims in v1 (doc/module-system/02-phase0-decisions.md §3, doc/module-system/11-sdk-scope.md).
-inline constexpr char const* kModuleProtocolVersion = "8";
+inline constexpr char const* kModuleProtocolVersion = "9";
 
 enum class ModuleStatus : uint8
 {
@@ -160,6 +160,10 @@ class TC_GAME_API ModuleMgr
 
         void DispatchItemLooted(std::string_view hook, ModuleWire::ItemLootedEvent const& event);
         void DispatchAuctionListing(std::string_view hook, ModuleWire::AuctionListingEvent const& event);
+        // A trade of a bot changed: told to the module that controls the bot, and to no other. Returns false when no module controls it.
+        bool DispatchBotTrade(std::string_view hook, ModuleWire::BotTradeEvent const& event);
+        // Whether `module` is the module that controls the bot (raw character GUID counter).
+        bool ControlsBot(uint64 botGuid, uint32 module);
 
         // True when a running module subscribes to `hook` (lets a caller skip building an event nobody wants).
         bool HasSubscriber(std::string_view hook);

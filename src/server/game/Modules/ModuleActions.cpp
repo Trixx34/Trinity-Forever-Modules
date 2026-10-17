@@ -3,6 +3,7 @@
  */
 
 #include "ModuleActions.h"
+#include "ModuleBotTrade.h"
 #include "Chat.h"
 #include "Group.h"
 #include "Item.h"
@@ -586,6 +587,14 @@ void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire
             AuctionHouseAction(nullptr, request, reply);
             return;
 
+        case ModuleWire::ActionKind::BotSpeak:
+            ModuleBotTrade::ExecuteSpeak(request, reply, module);
+            return;
+
+        case ModuleWire::ActionKind::BotTrade:
+            ModuleBotTrade::ExecuteTrade(request, reply, module);
+            return;
+
         case ModuleWire::ActionKind::Log:
             if (request.Text.empty() || request.Text.size() > MaxMessageBytes)
             {
@@ -633,6 +642,8 @@ void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire
             return;
 
         case ModuleWire::ActionKind::Log:
+        case ModuleWire::ActionKind::BotSpeak:
+        case ModuleWire::ActionKind::BotTrade:
         case ModuleWire::ActionKind::None:
             break;
     }

@@ -30,6 +30,7 @@
 #include "Spell.h"
 #include "SpellMgr.h"
 #include "TradeData.h"
+#include "ModuleBotTrade.h"
 #include "TradePackets.h"
 #include "World.h"
 
@@ -559,11 +560,13 @@ void WorldSession::HandleAcceptTradeOpcode(WorldPackets::Trade::AcceptTrade& acc
         SendTradeStatus(info);
 
         RecentAllies::OnTrade(_player, trader);
+        ModuleBotTrade::NotifyCompleted(_player, trader);
     }
     else
     {
         info.Status = TRADE_STATUS_ACCEPTED;
         trader->GetSession()->SendTradeStatus(info);
+        ModuleBotTrade::Notify(_player, ModuleBotTrade::PartnerAccepted);
     }
 }
 
@@ -602,7 +605,10 @@ void WorldSession::HandleCancelTradeOpcode(WorldPackets::Trade::CancelTrade& /*c
 {
     // sent also after LOGOUT COMPLETE
     if (_player)                                             // needed because STATUS_LOGGEDIN_OR_RECENTLY_LOGGOUT
+    {
+        ModuleBotTrade::Notify(_player, ModuleBotTrade::Cancelled);
         _player->TradeCancel(true);
+    }
 }
 
 void WorldSession::HandleInitiateTradeOpcode(WorldPackets::Trade::InitiateTrade& initiateTrade)
@@ -731,6 +737,9 @@ void WorldSession::HandleInitiateTradeOpcode(WorldPackets::Trade::InitiateTrade&
     info.Partner = pOther->GetGUID();
     info.PartnerAccount = pOther->GetSession()->GetBattlenetAccountGUID();
     SendTradeStatus(info);
+
+    // a bot has no client to answer the proposal: the module that controls it is told
+    ModuleBotTrade::Notify(_player, ModuleBotTrade::Requested);
 }
 
 void WorldSession::HandleSetTradeGoldOpcode(WorldPackets::Trade::SetTradeGold& setTradeGold)
@@ -741,6 +750,7 @@ void WorldSession::HandleSetTradeGoldOpcode(WorldPackets::Trade::SetTradeGold& s
 
     my_trade->UpdateClientStateIndex();
     my_trade->SetMoney(setTradeGold.Coinage);
+    ModuleBotTrade::Notify(_player, ModuleBotTrade::Changed);
 }
 
 void WorldSession::HandleSetTradeItemOpcode(WorldPackets::Trade::SetTradeItem& setTradeItem)
@@ -789,6 +799,7 @@ void WorldSession::HandleSetTradeItemOpcode(WorldPackets::Trade::SetTradeItem& s
     }
 
     my_trade->SetItem(TradeSlots(setTradeItem.TradeSlot), item);
+    ModuleBotTrade::Notify(_player, ModuleBotTrade::Changed);
 }
 
 void WorldSession::HandleClearTradeItemOpcode(WorldPackets::Trade::ClearTradeItem& clearTradeItem)
@@ -804,6 +815,7 @@ void WorldSession::HandleClearTradeItemOpcode(WorldPackets::Trade::ClearTradeIte
         return;
 
     my_trade->SetItem(TradeSlots(clearTradeItem.TradeSlot), nullptr);
+    ModuleBotTrade::Notify(_player, ModuleBotTrade::Changed);
 }
 
 void WorldSession::HandleSetTradeCurrencyOpcode(WorldPackets::Trade::SetTradeCurrency& /*setTradeCurrency*/)

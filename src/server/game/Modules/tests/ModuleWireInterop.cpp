@@ -518,6 +518,80 @@ int main()
         CHECK(revokedSdk.control_revoked().reason() == "bot deleted");
     }
 
+    // SDK -> core: BotSpeakAction (actions.proto field 20).
+    {
+        forever_module::ActionRequest sdk;
+        sdk.set_message_id(77);
+        forever_module::BotSpeakAction* speak = sdk.mutable_bot_speak();
+        speak->set_bot_guid(42);
+        speak->set_kind(1);
+        speak->set_player_guid(7);
+        speak->set_text("Hello there");
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+
+        ModuleWire::ActionRequestMsg core;
+        CHECK(ModuleWire::Decode(bytes, core));
+        CHECK(core.MessageId == 77 && core.Kind == ModuleWire::ActionKind::BotSpeak);
+        CHECK(core.BotGuid == 42 && core.SpeakKind == 1 && core.PlayerGuid == 7 && core.Text == "Hello there");
+    }
+
+    // SDK -> core: BotTradeAction (field 21), every operation.
+    for (int op = 0; op <= 6; ++op)
+    {
+        forever_module::ActionRequest sdk;
+        sdk.set_message_id(100 + op);
+        forever_module::BotTradeAction* trade = sdk.mutable_bot_trade();
+        trade->set_op(static_cast<forever_module::BotTradeAction_TradeOp>(op));
+        trade->set_bot_guid(42);
+        trade->set_slot(3);
+        trade->set_item_guid(123456789012ULL);
+        trade->set_copper(5000);
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+
+        ModuleWire::ActionRequestMsg core;
+        CHECK(ModuleWire::Decode(bytes, core));
+        CHECK(core.Kind == ModuleWire::ActionKind::BotTrade && core.TradeOp == uint32(op));
+        CHECK(core.BotGuid == 42 && core.TradeSlot == 3 && core.ItemGuid == 123456789012ULL && core.Copper == 5000);
+    }
+
+    // core -> SDK: an ActionReply with bag items (field 12).
+    {
+        ModuleWire::ActionReplyMsg core;
+        core.MessageId = 9;
+        core.Success = true;
+        core.BagItems.push_back({ 1001, 2589, 20, "Linen Cloth" });
+        core.BagItems.push_back({ 1002, 6948, 1, "Hearthstone" });
+        std::string bytes = ModuleWire::Encode(core);
+
+        forever_module::ActionReply sdk;
+        CHECK(sdk.ParseFromString(bytes));
+        CHECK(sdk.success() && sdk.message_id() == 9 && sdk.bag_items_size() == 2);
+        CHECK(sdk.bag_items(0).item_guid() == 1001 && sdk.bag_items(0).entry() == 2589 && sdk.bag_items(0).count() == 20);
+        CHECK(sdk.bag_items(0).name() == "Linen Cloth" && sdk.bag_items(1).name() == "Hearthstone");
+    }
+
+    // core -> SDK: a BotTradeEvent (events.proto field 19) in an EventNotify.
+    {
+        ModuleWire::BotTradeEvent core;
+        core.BotGuid = 42;
+        core.PartnerGuid = 7;
+        core.Status = 3;
+        core.PartnerCopper = 150;
+        core.Offered.push_back({ 0, 2589, 5 });
+        core.Offered.push_back({ 2, 6948, 1 });
+        std::string bytes = ModuleWire::EncodeEventNotifyBotTrade("PlayerScript.OnBotTrade", core);
+
+        forever_module::EventNotify sdk;
+        CHECK(sdk.ParseFromString(bytes));
+        CHECK(sdk.hook_name() == "PlayerScript.OnBotTrade" && sdk.has_bot_trade());
+        CHECK(sdk.bot_trade().bot_guid() == 42 && sdk.bot_trade().partner_guid() == 7 && sdk.bot_trade().status() == 3);
+        CHECK(sdk.bot_trade().partner_copper() == 150 && sdk.bot_trade().offered_size() == 2);
+        CHECK(sdk.bot_trade().offered(0).slot() == 0 && sdk.bot_trade().offered(0).entry() == 2589 && sdk.bot_trade().offered(0).count() == 5);
+        CHECK(sdk.bot_trade().offered(1).slot() == 2 && sdk.bot_trade().offered(1).entry() == 6948);
+    }
+
     if (g_failures == 0)
     {
         std::printf("PASS  ModuleWire interop with SDK protobuf\n");

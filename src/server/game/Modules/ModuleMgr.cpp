@@ -48,6 +48,7 @@ std::vector<std::string> const SupportedTier1Hooks = {
     "PlayerScript.OnLootItem",
     "PlayerScript.OnAuctionResult",
     "PlayerScript.OnChat",
+    "PlayerScript.OnBotTrade",
 };
 
 // How long a module gets to exit after Shutdown before it is terminated.
@@ -657,6 +658,28 @@ void ModuleMgr::DispatchAuctionListing(std::string_view hook, ModuleWire::Auctio
             TC_LOG_WARN("modules", "'{}' is not keeping up with its events; notifications are being dropped (first: {}).",
                         it->second.Name, hook);
     }
+}
+
+bool ModuleMgr::DispatchBotTrade(std::string_view hook, ModuleWire::BotTradeEvent const& event)
+{
+    std::shared_ptr<ModuleSession> session;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        uint32 owner = 0;
+        if (!_owners.Owner(event.BotGuid, owner))
+            return false;
+        for (auto const& [id, d] : _modules)
+            if (id == owner && d.Session && d.Session->Subscribes(hook))
+                session = d.Session;
+    }
+    return session && session->NotifyBotTrade(hook, event);
+}
+
+bool ModuleMgr::ControlsBot(uint64 botGuid, uint32 module)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    uint32 owner = 0;
+    return _owners.Owner(botGuid, owner) && owner == module;
 }
 
 bool ModuleMgr::HasSubscriber(std::string_view hook)

@@ -121,6 +121,7 @@ enum class NotifyKind : uint32
     PlayerItemLooted = 15,
     PlayerChat = 16,
     PlayerAuctionResult = 17,
+    BotTrade = 19, // 18 is server_stats in the SDK; the core does not send it yet
 };
 
 // Body of an EventNotify. `value` is the player GUID for player events, the account id for AccountLogin,
@@ -175,6 +176,26 @@ struct AuctionListingEvent
 
 std::string EncodeEventNotifyAuctionListing(std::string_view hookName, AuctionListingEvent const& event);
 
+// BotTradeEvent (events.proto field 19): a trade of a bot changed. Status: 0 a player asked the bot to trade, 1 the window opened, 2 the
+// partner changed its items or gold, 3 the partner pressed Accept, 4 cancelled, 5 completed.
+struct BotTradeOffered
+{
+    uint32 Slot = 0;
+    uint32 Entry = 0;
+    uint32 Count = 0;
+};
+
+struct BotTradeEvent
+{
+    uint64 BotGuid = 0;     // raw character GUID counter
+    uint64 PartnerGuid = 0; // raw character GUID counter
+    uint32 Status = 0;
+    uint64 PartnerCopper = 0;
+    std::vector<BotTradeOffered> Offered;
+};
+
+std::string EncodeEventNotifyBotTrade(std::string_view hookName, BotTradeEvent const& event);
+
 // Body of an EventRequest carrying a CommandRequestPayload.
 std::string EncodeEventRequestCommand(uint64 messageId, std::string_view hookName, std::string_view commandText,
                                       uint64 issuerGuid);
@@ -205,6 +226,8 @@ enum class ActionKind : uint8
     Log = 8,
     AuctionHouse = 9,
     BuyItem = 10,
+    BotSpeak = 11, // actions.proto field 20
+    BotTrade = 12, // actions.proto field 21
 };
 
 struct ActionRequestMsg
@@ -231,6 +254,23 @@ struct ActionRequestMsg
     // Store: Key for get, set and delete; the prefix for list; Value for set
     std::string Key;
     std::string Value;
+    // BotSpeakAction (field 20): BotGuid speaks Text; SpeakKind 0 is /say, 1 is a whisper to PlayerGuid.
+    // BotTradeAction (field 21): TradeOp (0 begin, 1 set item, 2 clear item, 3 set gold, 4 accept, 5 cancel, 6 list bags) for BotGuid,
+    // TradeSlot, ItemGuid and Copper.
+    uint64 BotGuid = 0;
+    uint32 SpeakKind = 0;
+    uint32 TradeOp = 0;
+    uint32 TradeSlot = 0;
+    uint64 Copper = 0;
+};
+
+// One item of a BotTrade kListBags reply (actions.proto TradeBagItem).
+struct TradeBagItemMsg
+{
+    uint64 ItemGuid = 0;
+    uint32 Entry = 0;
+    uint32 Count = 0;
+    std::string Name;
 };
 
 // Core -> module reply to an ActionRequest.
@@ -249,6 +289,8 @@ struct ActionReplyMsg
     bool Found = false;
     std::string Value;
     std::vector<std::string> Keys;
+    // BotTrade kListBags: the items the bot can trade now (field 12)
+    std::vector<TradeBagItemMsg> BagItems;
 };
 
 bool Decode(std::string_view bytes, ActionRequestMsg& out);

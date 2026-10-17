@@ -1838,6 +1838,23 @@ Bot.Limit.MaxDbQueue = 5000
 #        Default:     1
 #        1 = a bot resurrected by a revive order gets resurrection sickness.
 #
+#    Bot.Trade.Enabled
+#        Default:     0
+#        1 = a bot can be traded with: a module that controls the bot is told when a player proposes a trade or changes the window, and
+#            may open the window, put items and gold in it, accept and cancel (the bots module whispers its tradeable items and hands
+#            over the ones the player asks for). The trade runs through the same code a real player's trade uses. Off, trade requests
+#            to a bot do nothing.
+#
+#    Bot.Trade.Scope
+#        Default:     1
+#        0 = any player may trade with a bot.
+#        1 = only a member of the bot's group, or a character on the bot's own account (the owner of an alt). A request from anyone
+#            else is cancelled.
+#
+#    Bot.Trade.KeepConsumables
+#        Default:     1
+#        1 = food, potions, reagents and ammunition are not offered in a trade, since the bot's own play uses them.
+#
 #    Bot.Loot.Roll.Enabled
 #        Default:     1
 #        1 = a bot or alt in a group votes on a group loot roll the moment it starts: Need for a usable upgrade (an item level above what
@@ -1876,6 +1893,10 @@ Bot.Alt.MaxPerAccount = 4
 
 Bot.Chat.Orders.Enabled = 0
 Bot.Chat.Orders.ReviveSickness = 1
+
+Bot.Trade.Enabled = 0
+Bot.Trade.Scope = 1
+Bot.Trade.KeepConsumables = 1
 
 Bot.Loot.Roll.Enabled = 1
 Bot.Loot.Roll.GreedOnOther = 0

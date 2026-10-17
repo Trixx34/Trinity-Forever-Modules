@@ -174,6 +174,14 @@ bool ModuleSession::NotifyAuctionListing(std::string_view hook, ModuleWire::Auct
                                                                 ModuleWire::EncodeEventNotifyAuctionListing(hook, event))));
 }
 
+bool ModuleSession::NotifyBotTrade(std::string_view hook, ModuleWire::BotTradeEvent const& event)
+{
+    if (!Subscribes(hook))
+        return false;
+    return Enqueue(ModuleWire::Frame(ModuleWire::EncodeEnvelope(ModuleWire::PayloadKind::EventNotify,
+                                                                ModuleWire::EncodeEventNotifyBotTrade(hook, event))));
+}
+
 bool ModuleSession::NotifyChat(std::string_view hook, ModuleWire::ChatEvent const& event)
 {
     if (!Subscribes(hook))
