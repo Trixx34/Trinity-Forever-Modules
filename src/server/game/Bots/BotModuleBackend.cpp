@@ -34,7 +34,24 @@ uint64 BotModuleBackend::SpawnAlt(ModuleWire::SpawnParamsMsg const& params, std:
         reason = "the owner is not online as a player";
         return 0;
     }
-    ObjectGuid const guid = sCharacterCache->GetCharacterGuidByName(params.AltName);
+    // A character is a first name and an optional surname ("Tinky Winky"). The cache is keyed by the first name alone and by its
+    // exact spelling (first letter upper case), so the typed text is split at the first space, the first name is normalised, and
+    // the surname, when one was typed, is compared without regard to case.
+    std::string firstName = params.AltName;
+    std::string surname;
+    if (size_t const space = firstName.find(' '); space != std::string::npos)
+    {
+        surname = firstName.substr(space + 1);
+        firstName.resize(space);
+        while (!surname.empty() && surname.front() == ' ')
+            surname.erase(surname.begin());
+        while (!surname.empty() && surname.back() == ' ')
+            surname.pop_back();
+    }
+    normalizePlayerName(firstName);
+    ObjectGuid guid = sCharacterCache->GetCharacterGuidByName(firstName);
+    if (!guid.IsEmpty() && !surname.empty() && !StringEqualI(sCharacterCache->GetCharacterSurnameByGuid(guid), surname))
+        guid = ObjectGuid::Empty;
     if (guid.IsEmpty())
     {
         reason = "no character named " + params.AltName;
