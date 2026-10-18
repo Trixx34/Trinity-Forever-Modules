@@ -94,7 +94,14 @@ uint64 BotModuleBackend::SpawnAlt(ModuleWire::SpawnParamsMsg const& params, std:
 
 void BotModuleBackend::Deactivate(uint64 botGuid)
 {
-    sBotMgr->StopAlt(botGuid); // only alts: a bot a module lets go of stays in the world
+    if (sBotMgr->StopAlt(botGuid))
+        return; // an alt logs out when its module lets it go
+
+    // Any other bot a module lets go of stays in the world, unless Bot.Presence.LogoutOnRelease is on: then it logs out, and its module can take it back
+    // by its guid later (RequestControl), which logs it in again. That is how a module makes its bots come and go like players.
+    static bool const logoutOnRelease = sConfigMgr->GetBoolDefault("Bot.Presence.LogoutOnRelease", false);
+    if (logoutOnRelease)
+        sBotMgr->RequestLogout(botGuid, "released by its module");
 }
 
 bool BotModuleBackend::Describe(uint64 botGuid, uint32& race, uint32& classId) const

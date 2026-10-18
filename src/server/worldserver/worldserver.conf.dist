@@ -1817,6 +1817,12 @@ Bot.Limit.MaxDbQueue = 5000
 #            food or drink the bot may use at its level, bought until the bot carries the count the module asked for or its money or bags run
 #            out. The snapshot always tells the module what the bot carries and where the nearest vendor that sells it is.
 #
+#    Bot.Presence.LogoutOnRelease
+#        Default:     0
+#        1 = a bot that its module releases (ReleaseControl) logs out of the world; the module can take it back later by its guid, which logs it in
+#            again. Off, a released bot stays where it is. forever-bots uses this for its presence simulation (Module.forever-bots.Presence): bots come
+#            and go like players. Alts always log out when released, whatever this says.
+#
 #    Bot.Supplies.ReserveCopperPerLevel
 #        Default:     5
 #        Money a bot keeps back from every purchase except ammunition (food, drink, potions, bandages): this many copper for each level it
