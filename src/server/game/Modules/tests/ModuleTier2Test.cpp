@@ -37,22 +37,31 @@ int main()
     // The core writes kTier2LayoutVersion into the region and the module refuses to attach on any other value, so the
     // number is pinned here as well as compared below: a silent bump of the core's copy would otherwise only show up as a
     // module that refuses to attach.
-    CHECK(forever_module::kTier2LayoutVersion == 13);
+    CHECK(forever_module::kTier2LayoutVersion == 15);
     CHECK(static_cast<int>(forever_module::BotActionStatus::kNoRoute) == 13);
     CHECK(static_cast<int>(forever_module::ActionType::kCraft) == 20);
     CHECK(static_cast<int>(forever_module::ActionType::kGather) == 21);
     CHECK(static_cast<int>(forever_module::ActionType::kPetCommand) == 22);
+    CHECK(static_cast<int>(forever_module::ActionType::kConsume) == 23);
     CHECK(static_cast<int>(forever_module::ActionType::kLastActionType) ==
-          static_cast<int>(forever_module::ActionType::kPetCommand));
+          static_cast<int>(forever_module::ActionType::kConsume));
     CHECK(forever_module::kMaxAuras == 16);
 
     // The shared region is mapped by two processes built separately, so a shape that changes without a layout bump is
     // memory corruption that nothing else would catch. These sizes are what the SDK's header gives on the same platform.
     CHECK(sizeof(forever_module::AuraEntry) == 12);
-    CHECK(sizeof(forever_module::BotSnapshot) == 648);
+    CHECK(sizeof(forever_module::BotSnapshot) == 712);
     CHECK(sizeof(forever_module::NearbyUnit) == 48);
     CHECK(offsetof(forever_module::BotSnapshot, aura_count) == 376);
     CHECK(offsetof(forever_module::BotSnapshot, auras) == 380);
+    CHECK(offsetof(forever_module::BotSnapshot, ammo_count) == 652);
+    CHECK(offsetof(forever_module::BotSnapshot, food_count) == 656);
+    CHECK(offsetof(forever_module::BotSnapshot, drink_count) == 660);
+    CHECK(offsetof(forever_module::BotSnapshot, ammo_vendor_valid) == 664);
+    CHECK(offsetof(forever_module::BotSnapshot, ammo_vendor_x) == 668);
+    CHECK(offsetof(forever_module::BotSnapshot, food_vendor_x) == 680);
+    CHECK(offsetof(forever_module::BotSnapshot, ammo_vendor_guid) == 696);
+    CHECK(offsetof(forever_module::BotSnapshot, food_vendor_guid) == 704);
     CHECK(offsetof(forever_module::NearbyUnit, aura_count) == 40);
     CHECK(offsetof(forever_module::NearbyUnit, aura_mask) == 44);
 
@@ -240,6 +249,21 @@ int main()
     withBot[0].Bot.copper = 123456;
     withBot[0].Bot.bag_free_slots = 9;
     withBot[0].Bot.last_target_lost_reason = 2;
+    // Layout 15: what the bot carries and the vendors that sell what it can use.
+    withBot[0].Bot.ammo_entry = 2512;
+    withBot[0].Bot.ammo_count = 87;
+    withBot[0].Bot.food_count = 14;
+    withBot[0].Bot.drink_count = 6;
+    withBot[0].Bot.ammo_vendor_valid = 1;
+    withBot[0].Bot.ammo_vendor_x = 10.5f;
+    withBot[0].Bot.ammo_vendor_y = -20.25f;
+    withBot[0].Bot.ammo_vendor_z = 3.0f;
+    withBot[0].Bot.ammo_vendor_guid = forever_module::MakeUnitRef(8, 4553, 31);
+    withBot[0].Bot.food_vendor_valid = 1;
+    withBot[0].Bot.food_vendor_x = -7.0f;
+    withBot[0].Bot.food_vendor_y = 8.0f;
+    withBot[0].Bot.food_vendor_z = 9.5f;
+    withBot[0].Bot.food_vendor_guid = forever_module::MakeUnitRef(8, 1465, 12);
     withBot[0].Nearby[0].aura_count = 3;
     withBot[0].Nearby[0].aura_mask = 0x00000005; // a DOT and a poison (see doc/module-system/20)
     region->PublishSnapshot(11, withBot);
@@ -261,6 +285,11 @@ int main()
     CHECK(read13->auctioneer_guid == forever_module::MakeUnitRef(8, 4277, 23));
     CHECK(read13->copper == 123456 && read13->bag_free_slots == 9);
     CHECK(read13->last_target_lost_reason == 2);
+    CHECK(read13->ammo_entry == 2512 && read13->ammo_count == 87 && read13->food_count == 14 && read13->drink_count == 6);
+    CHECK(read13->ammo_vendor_valid == 1 && read13->ammo_vendor_x == 10.5f && read13->ammo_vendor_y == -20.25f && read13->ammo_vendor_z == 3.0f);
+    CHECK(read13->ammo_vendor_guid == forever_module::MakeUnitRef(8, 4553, 31));
+    CHECK(read13->food_vendor_valid == 1 && read13->food_vendor_x == -7.0f && read13->food_vendor_y == 8.0f && read13->food_vendor_z == 9.5f);
+    CHECK(read13->food_vendor_guid == forever_module::MakeUnitRef(8, 1465, 12));
     auto const* read13Near = reinterpret_cast<forever_module::NearbyUnit const*>(read13 + 4);
     CHECK(read13Near[0].aura_count == 3 && read13Near[0].aura_mask == 0x00000005);
 

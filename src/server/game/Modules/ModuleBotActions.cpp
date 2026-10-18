@@ -1,6 +1,7 @@
 #include "ModuleBotActions.h"
 #include "BotGearRules.h"
 #include "ModuleBotSnapshot.h"
+#include "ModuleBotSupplies.h"
 #include <cmath>
 #include "BotMgr.h"
 #include "Cell.h"
@@ -167,6 +168,11 @@ uint32 HighestKnownRank(Player& bot, uint32 spellId)
 constexpr uint32 kServiceSellBit = 1;   // spell_id bit: sell grey items to a vendor
 constexpr uint32 kServiceRepairBit = 2; // spell_id bit: repair at a repairman
 constexpr uint32 kServiceEquipBit = 4;  // spell_id bit: equip the best gear in the bags
+constexpr uint32 kServiceBuyAmmoBit = 8;   // spell_id bit (layout 15): buy ammunition, up to dest_x pieces carried
+constexpr uint32 kServiceBuyFoodBit = 16;  // ... food, up to dest_y
+constexpr uint32 kServiceBuyDrinkBit = 32; // ... drink, up to dest_z
+constexpr uint32 kServiceBuyMask = kServiceBuyAmmoBit | kServiceBuyFoodBit | kServiceBuyDrinkBit;
+constexpr float kMaxSupplyTarget = 2000.0f; // a sanity bound on the counts a module asks for
 constexpr uint32 kQualityPoor = 0;      // grey
 constexpr uint32 kQualityCommon = 1;    // white: the lowest quality the bot equips
 
@@ -1382,6 +1388,58 @@ bool HasFullRouteTo(Player& bot, float x, float y, float z)
     return !((type & (PATHFIND_NOPATH | PATHFIND_INCOMPLETE)) != 0);
 }
 
+// Eat or drink (layout 15, ActionType::kConsume). spell_id 1 uses the best food the bot carries, 2 the best drink. The item's own use spell is
+// cast with the item attached, so the bot sits, restores over time and uses up one piece, as it does for a player. The module stops the bot
+// and keeps it out of fights first: a spell that is interrupted by movement or combat wastes the piece.
+BotActionStatus ConsumeAction(Player& bot, BotAction const& action, std::string& reason)
+{
+    if (!ModuleBotSupplies::Enabled())
+    {
+        reason = "Bot.Actions.Supplies is off";
+        return BotActionStatus::kRefused;
+    }
+    ModuleBotSupplies::Kind kind = ModuleBotSupplies::Kind::None;
+    if (action.spell_id == 1)
+        kind = ModuleBotSupplies::Kind::Food;
+    else if (action.spell_id == 2)
+        kind = ModuleBotSupplies::Kind::Drink;
+    else
+    {
+        reason = "unknown consume kind " + std::to_string(action.spell_id);
+        return BotActionStatus::kRefused;
+    }
+    if (!bot.IsAlive() || bot.IsInCombat())
+    {
+        reason = bot.IsAlive() ? "bot is in combat" : "bot is dead";
+        return BotActionStatus::kRefused;
+    }
+    if (Spell const* current = bot.GetCurrentSpell(CURRENT_GENERIC_SPELL); current && current->getState() != SPELL_STATE_FINISHED)
+    {
+        reason = "bot is casting spell " + std::to_string(current->GetSpellInfo()->Id);
+        return BotActionStatus::kBusy;
+    }
+    if (bot.isMoving())
+    {
+        reason = "bot is moving; stop first";
+        return BotActionStatus::kMoving;
+    }
+
+    Item* item = ModuleBotSupplies::BestCarried(bot, kind);
+    if (!item || item->GetTemplate()->Effects.empty())
+    {
+        reason = kind == ModuleBotSupplies::Kind::Food ? "the bot carries no food it can eat" : "the bot carries no drink it can use";
+        return BotActionStatus::kRefused;
+    }
+
+    uint32 const spellId = uint32(item->GetTemplate()->Effects[0]->SpellID);
+    CastSpellExtraArgs args(TRIGGERED_NONE);
+    args.SetCastItem(item);
+    SpellCastResult const result = bot.CastSpell(&bot, spellId, args);
+    if (result != SPELL_CAST_OK)
+        reason = "use of item " + std::to_string(item->GetEntry()) + " (spell " + std::to_string(spellId) + ") returned result " + std::to_string(int32(result));
+    return StatusForCast(result);
+}
+
 // Pet commands (layout 13, ActionType::kPetCommand). spell_id: 1 attack target_guid, 2 follow the bot, 3 stay, 4 set the
 // stance (in dest_x: 0 passive, 1 defensive, 2 aggressive). Each mirrors what the pet bar does for a player (the handlers
 // in PetHandler.cpp), so the pet AI reads the order the same way it reads one from a client.
@@ -1562,7 +1620,8 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             }
 
             uint32 const services = action.spell_id;
-            if (services & (kServiceSellBit | kServiceRepairBit))
+            bool const buying = (services & kServiceBuyMask) != 0 && ModuleBotSupplies::Enabled();
+            if (services & (kServiceSellBit | kServiceRepairBit) || buying)
             {
                 // Layout 13: the module can name the NPC (BotSnapshot::vendor_guid / repair_guid, which is where a BuyItem
                 // action gets its vendor from). A reference the core cannot use is not an error -- the nearest NPC in
@@ -1585,6 +1644,20 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
                     SellGreyItems(bot);
                 if ((services & kServiceRepairBit) && npc->HasNpcFlag(UNIT_NPC_FLAG_REPAIR))
                     bot.DurabilityRepairAll(true, 0.0f, false);
+                // Buying comes last, from the money the sale left and the repair did not take. A vendor without the goods buys nothing and
+                // is not an error: the module sees it in the counts of the next snapshot.
+                if (buying && npc->HasNpcFlag(UNIT_NPC_FLAG_VENDOR_MASK))
+                {
+                    auto const target = [](float value) { return uint32(std::clamp(value, 0.0f, kMaxSupplyTarget)); };
+                    ModuleBotSupplies::Targets targets;
+                    if (services & kServiceBuyAmmoBit)
+                        targets.Ammo = target(action.dest_x);
+                    if (services & kServiceBuyFoodBit)
+                        targets.Food = target(action.dest_y);
+                    if (services & kServiceBuyDrinkBit)
+                        targets.Drink = target(action.dest_z);
+                    ModuleBotSupplies::Buy(bot, npc, targets);
+                }
             }
             if (services & kServiceEquipBit)
                 EquipBestGear(bot);
@@ -1653,6 +1726,9 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
 
         case ActionType::kPetCommand:
             return PetCommandAction(bot, action, reason);
+
+        case ActionType::kConsume:
+            return ConsumeAction(bot, action, reason);
 
         // Layout 12: crafting and gathering. kLastActionType admits them, so the switch must answer for them: they are
         // refused with a reason a module can log rather than falling through to "unknown action type" below.

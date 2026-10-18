@@ -1,4 +1,5 @@
 #include "ModuleBotSnapshot.h"
+#include "ModuleBotSupplies.h"
 #include "ObjectAccessor.h"
 #include "Cell.h"
 #include "Corpse.h"
@@ -161,6 +162,7 @@ struct VendorSpot
     bool Repair;                           // the creature repairs gear (UNIT_NPC_FLAG_REPAIR)
     bool Auctioneer;                       // the creature runs an auction house (UNIT_NPC_FLAG_AUCTIONEER)
     FactionTemplateEntry const* Faction;   // the creature's faction, so a bot does not walk to a town that kills it
+    ModuleBotSupplies::VendorStock Stock;  // what it sells that a bot needs (layout 15): the lowest required level of each kind
 };
 
 // The NPC behind a layout-6/9 position as a unit reference a module can name in an action (layout 13). It is built from the
@@ -183,6 +185,7 @@ std::unordered_map<uint32, std::vector<VendorSpot>> const& VendorsByMap()
         built = true;
         auto const started = std::chrono::steady_clock::now();
         size_t spawns = 0;
+        std::unordered_map<uint32, ModuleBotSupplies::VendorStock> stockOf; // per creature template: its stock is worked out once
         for (auto const& spawnEntry : sObjectMgr->GetAllCreatureData())
         {
             CreatureData const& spawn = spawnEntry.second;
@@ -191,11 +194,14 @@ std::unordered_map<uint32, std::vector<VendorSpot>> const& VendorsByMap()
             if (!templ || (templ->npcflag & (UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR | UNIT_NPC_FLAG_AUCTIONEER)) == 0)
                 continue;
             uint32 const factionId = templ->faction;
+            auto stock = stockOf.find(spawn.id);
+            if (stock == stockOf.end())
+                stock = stockOf.emplace(spawn.id, ModuleBotSupplies::StockOf(spawn.id)).first;
             vendors[spawn.mapId].push_back({ spawn.spawnPoint.GetPositionX(), spawn.spawnPoint.GetPositionY(),
                                              spawn.spawnPoint.GetPositionZ(), spawn.id, spawn.spawnId,
                                              (templ->npcflag & UNIT_NPC_FLAG_REPAIR) != 0,
                                              (templ->npcflag & UNIT_NPC_FLAG_AUCTIONEER) != 0,
-                                             sFactionTemplateStore.LookupEntry(factionId) });
+                                             sFactionTemplateStore.LookupEntry(factionId), stock->second });
         }
 
         // One scan of every creature spawn, inside the first snapshot: its cost is logged, since it is a stall of one world update.
@@ -212,6 +218,9 @@ std::unordered_map<uint32, std::vector<VendorSpot>> const& VendorsByMap()
 // The nearest vendor to a bot on its map, looked up again only when the bot has moved this far from the last lookup.
 constexpr float kVendorLookupMoveYards = 100.0f;
 
+// How often the bag counts of the supply facts are redone (milliseconds): counting walks the bags of every bot.
+constexpr uint32 kSupplyCountEveryMs = 2000;
+
 struct VendorLookup
 {
     bool Made = false;      // a lookup has been made for this bot
@@ -224,11 +233,124 @@ struct VendorLookup
     VendorSpot Repairman{};
     bool FoundAuctioneer = false;   // ... and an auctioneer
     VendorSpot Auctioneer{};
+
+    // Layout 15: the nearest vendors that sell what the bot can use, chosen for the level, the kind of ranged weapon and the mana the bot
+    // has when they were chosen (SupplyMade), and chosen again when any of those changes.
+    bool SupplyMade = false;
+    uint32 SupplyLevel = 0;
+    int32 SupplyAmmoSubclass = -1;
+    bool SupplyMana = false;
+    bool FoundAmmoVendor = false;
+    VendorSpot AmmoVendor{};
+    bool FoundFoodVendor = false;
+    VendorSpot FoodVendor{};
+    // What the bot carries, counted at most every kSupplyCountEveryMs: counting walks the bags.
+    uint64 CountedAtMs = 0;
+    uint32 AmmoEntry = 0;
+    uint32 AmmoCount = 0;
+    uint32 FoodCount = 0;
+    uint32 DrinkCount = 0;
 };
 
 // Process-lifetime cache of the nearest-vendor lookup for each bot. Keyed by character counter. Erased in
 // ClearVendorLookup on bot logout so the map never grows beyond the number of currently-online bots.
 std::unordered_map<uint64, VendorLookup> g_vendorLookups;
+
+// Layout 15: the nearest vendors, on the bot's map and friendly to it, that sell what it can use. Ammunition: of the kind its ranged weapon
+// takes, at a required level the bot has reached. Food: food at such a level, or drink for a bot with mana. Searched from where the
+// vendor lookup was made, so it follows the same refresh.
+void ChooseSupplyVendors(Player& bot, VendorLookup& last, int32 ammoSubclass, bool mana)
+{
+    last.SupplyMade = true;
+    last.SupplyLevel = bot.GetLevel();
+    last.SupplyAmmoSubclass = ammoSubclass;
+    last.SupplyMana = mana;
+    last.FoundAmmoVendor = false;
+    last.FoundFoodVendor = false;
+
+    auto const& vendors = VendorsByMap();
+    auto const onMap = vendors.find(last.MapId);
+    if (onMap == vendors.end())
+        return;
+
+    uint32 const level = bot.GetLevel();
+    FactionTemplateEntry const* mine = bot.GetFactionTemplateEntry();
+    float bestAmmoSq = std::numeric_limits<float>::max();
+    float bestFoodSq = std::numeric_limits<float>::max();
+    for (VendorSpot const& spot : onMap->second)
+    {
+        if (!spot.Stock.SellsAny() || (mine && spot.Faction && mine->IsHostileTo(spot.Faction)))
+            continue;
+        float const sx = spot.X - last.X;
+        float const sy = spot.Y - last.Y;
+        float const distSq = sx * sx + sy * sy;
+
+        if (ammoSubclass >= 0 && distSq < bestAmmoSq)
+        {
+            uint8 const stocked = spot.Stock.MinLevel[ammoSubclass == ITEM_SUBCLASS_BULLET ? ModuleBotSupplies::StockBullets : ModuleBotSupplies::StockArrows];
+            if (stocked != ModuleBotSupplies::kNoStock && stocked <= level)
+            {
+                bestAmmoSq = distSq;
+                last.AmmoVendor = spot;
+                last.FoundAmmoVendor = true;
+            }
+        }
+        if (distSq < bestFoodSq)
+        {
+            uint8 const food = spot.Stock.MinLevel[ModuleBotSupplies::StockFood];
+            uint8 const drink = spot.Stock.MinLevel[ModuleBotSupplies::StockDrink];
+            if ((food != ModuleBotSupplies::kNoStock && food <= level) || (mana && drink != ModuleBotSupplies::kNoStock && drink <= level))
+            {
+                bestFoodSq = distSq;
+                last.FoodVendor = spot;
+                last.FoundFoodVendor = true;
+            }
+        }
+    }
+}
+
+// Layout 15: what the bot carries of ammunition, food and drink, and where to buy more. Off with Bot.Actions.Supplies.
+void FillSupplies(Player& bot, BotSnapshot& entry, VendorLookup& last)
+{
+    if (!ModuleBotSupplies::Enabled())
+        return;
+
+    int32 const ammoSubclass = ModuleBotSupplies::AmmoSubclassOf(bot);
+    bool const mana = bot.GetMaxPower(POWER_MANA) > 0;
+    if (!last.SupplyMade || last.SupplyLevel != bot.GetLevel() || last.SupplyAmmoSubclass != ammoSubclass || last.SupplyMana != mana)
+        ChooseSupplyVendors(bot, last, ammoSubclass, mana);
+
+    uint32 const now = GameTime::GetGameTimeMS();
+    if (last.CountedAtMs == 0 || now - last.CountedAtMs >= kSupplyCountEveryMs)
+    {
+        last.CountedAtMs = now ? now : 1;
+        last.AmmoEntry = ModuleBotSupplies::AmmoEntryFor(bot);
+        last.AmmoCount = last.AmmoEntry ? bot.GetItemCount(last.AmmoEntry) : 0;
+        last.FoodCount = ModuleBotSupplies::CountCarried(bot, ModuleBotSupplies::Kind::Food);
+        last.DrinkCount = mana ? ModuleBotSupplies::CountCarried(bot, ModuleBotSupplies::Kind::Drink) : 0;
+    }
+    entry.ammo_entry = last.AmmoEntry;
+    entry.ammo_count = last.AmmoCount;
+    entry.food_count = last.FoodCount;
+    entry.drink_count = last.DrinkCount;
+
+    if (last.FoundAmmoVendor && ammoSubclass >= 0)
+    {
+        entry.ammo_vendor_x = last.AmmoVendor.X;
+        entry.ammo_vendor_y = last.AmmoVendor.Y;
+        entry.ammo_vendor_z = last.AmmoVendor.Z;
+        entry.ammo_vendor_valid = 1;
+        entry.ammo_vendor_guid = VendorSpotRef(last.AmmoVendor);
+    }
+    if (last.FoundFoodVendor)
+    {
+        entry.food_vendor_x = last.FoodVendor.X;
+        entry.food_vendor_y = last.FoodVendor.Y;
+        entry.food_vendor_z = last.FoodVendor.Z;
+        entry.food_vendor_valid = 1;
+        entry.food_vendor_guid = VendorSpotRef(last.FoodVendor);
+    }
+}
 
 // Fills the nearest-vendor fields (layout 6, M6), the nearest-repairman fields (layout 9) and the guids of all three NPCs
 // (layout 13: vendor_guid, repair_guid, auctioneer_guid). The position is 2D for the distance:
@@ -308,6 +430,8 @@ void FillNearestVendor(Player& bot, BotSnapshot& entry)
         entry.vendor_guid = VendorSpotRef(last.Vendor);
     if (last.FoundAuctioneer)
         entry.auctioneer_guid = VendorSpotRef(last.Auctioneer);
+
+    FillSupplies(bot, entry, last);
 }
 
 // The lowest durability among the equipped items that wear out, in percent (100 when none does).

@@ -1810,6 +1810,13 @@ Bot.Limit.MaxDbQueue = 5000
 #            bot). The bots module asks every few minutes out of combat and after a trade, so gear a player trades to a bot is worn without
 #            waiting for an auto gear pass. Not applied to alts. Independent of Bot.Actions.AutoGear.
 #
+#    Bot.Actions.Supplies
+#        Default:     1
+#        1 = a module may make a bot buy ammunition, food and drink at a vendor (kVendor with the buy bits) and eat or drink what it carries
+#            (kConsume). The core chooses the items from the vendor's stock: ammunition of the kind the bot's ranged weapon takes, and the best
+#            food or drink the bot may use at its level, bought until the bot carries the count the module asked for or its money or bags run
+#            out. The snapshot always tells the module what the bot carries and where the nearest vendor that sells it is.
+#
 #    Bot.AutoGear.MaxQuality
 #        Default:     2
 #        The highest item quality auto gear hands out: 1 common, 2 uncommon (green), 3 rare (blue).
