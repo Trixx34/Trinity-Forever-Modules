@@ -175,8 +175,9 @@ constexpr uint32 kServiceBuyDrinkBit = 32; // ... drink, up to dest_z
 constexpr uint32 kServiceBuyHealthPotionBit = 64;  // layout 16: health potions, up to Bot.Supplies.HealthPotionTarget carried
 constexpr uint32 kServiceBuyManaPotionBit = 128;   // ... mana potions (Bot.Supplies.ManaPotionTarget)
 constexpr uint32 kServiceBuyBandageBit = 256;      // ... bandages (Bot.Supplies.BandageTarget)
+constexpr uint32 kServiceBuyReagentBit = 512;      // ... the reagent the core noted a cast was missing (Bot.Supplies.ReagentTarget)
 constexpr uint32 kServiceBuyMask = kServiceBuyAmmoBit | kServiceBuyFoodBit | kServiceBuyDrinkBit | kServiceBuyHealthPotionBit |
-    kServiceBuyManaPotionBit | kServiceBuyBandageBit;
+    kServiceBuyManaPotionBit | kServiceBuyBandageBit | kServiceBuyReagentBit;
 constexpr float kMaxSupplyTarget = 2000.0f; // a sanity bound on the counts a module asks for
 constexpr uint32 kQualityPoor = 0;      // grey
 constexpr uint32 kQualityCommon = 1;    // white: the lowest quality the bot equips
@@ -1704,6 +1705,12 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
                         targets.ManaPotion = ModuleBotSupplies::ManaPotionTarget();
                     if (services & kServiceBuyBandageBit)
                         targets.Bandage = ModuleBotSupplies::BandageTarget();
+                    if (services & kServiceBuyReagentBit)
+                    {
+                        ModuleBotSupplies::MissingReagent const missing = ModuleBotSupplies::MissingReagentOf(bot);
+                        targets.ReagentEntry = missing.Entry;
+                        targets.Reagent = std::max(ModuleBotSupplies::ReagentTarget(), missing.Needed);
+                    }
                     ModuleBotSupplies::Buy(bot, npc, targets);
                 }
             }
@@ -1853,6 +1860,8 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             SpellCastResult const result = bot.CastSpell(target, castId, false);
             if (result != SPELL_CAST_OK)
                 reason = "cast of spell " + std::to_string(castId) + " returned result " + std::to_string(int32(result));
+            if (result == SPELL_FAILED_REAGENTS)
+                ModuleBotSupplies::NoteMissingReagent(bot, castId); // layout 16: the snapshot now names the item and a vendor that sells it
             return StatusForCast(result);
         }
     }

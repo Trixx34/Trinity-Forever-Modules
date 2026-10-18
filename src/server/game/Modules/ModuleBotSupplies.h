@@ -83,6 +83,18 @@ uint32 ReservePerLevel();   // Bot.Supplies.ReserveCopperPerLevel, default 5
 uint32 HealthPotionTarget(); // Bot.Supplies.HealthPotionTarget, default 3
 uint32 ManaPotionTarget();   // Bot.Supplies.ManaPotionTarget, default 3
 uint32 BandageTarget();      // Bot.Supplies.BandageTarget, default 10
+uint32 ReagentTarget();      // Bot.Supplies.ReagentTarget, default 10
+
+// Reagents. A bot is not told which reagents its spells use: when a cast is refused for lack of them the core notes the item that was missing,
+// and the snapshot names it until the bot carries enough. `Needed` is what that one cast takes.
+struct MissingReagent
+{
+    uint32 Entry = 0;
+    uint32 Needed = 0;
+};
+void NoteMissingReagent(Player& bot, uint32 spellId);
+MissingReagent MissingReagentOf(Player& bot);   // clears the note once the bot carries enough
+void ForgetReagent(uint64 botCounter);
 
 // Whether a bot with `maxMana` mana can use an item of this kind at all (a mana potion needs mana).
 constexpr bool KindFitsClass(Kind kind, bool manaUser)
@@ -132,6 +144,8 @@ struct Targets
     uint32 HealthPotion = 0;   // layout 16
     uint32 ManaPotion = 0;
     uint32 Bandage = 0;
+    uint32 ReagentEntry = 0;   // the item to buy, from the core's own note (MissingReagentOf)
+    uint32 Reagent = 0;        // up to this many carried
 };
 
 struct Bought
@@ -142,6 +156,7 @@ struct Bought
     uint32 HealthPotion = 0;
     uint32 ManaPotion = 0;
     uint32 Bandage = 0;
+    uint32 Reagent = 0;
     uint64 Copper = 0;
 };
 

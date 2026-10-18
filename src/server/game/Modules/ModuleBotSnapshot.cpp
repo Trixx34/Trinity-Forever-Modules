@@ -246,6 +246,12 @@ struct VendorLookup
     VendorSpot FoodVendor{};
     bool FoundGoodsVendor = false;   // layout 16: the nearest vendor of health potions, mana potions (a mana user) or bandages
     VendorSpot GoodsVendor{};
+    // Layout 16: the vendor of the reagent the core noted a cast was missing, chosen for that item (ReagentFor) and the place it was chosen from.
+    uint32 ReagentFor = 0;
+    bool FoundReagentVendor = false;
+    VendorSpot ReagentVendor{};
+    uint64 ReagentMadeAtMs = 0;
+    uint32 ReagentCarried = 0;
     uint64 SupplyMadeAtMs = 0;       // when the vendors were chosen: a choice that found nothing is made again after kSupplyRetryMs
     // What the bot carries, counted at most every kSupplyCountEveryMs: counting walks the bags.
     uint64 CountedAtMs = 0;
@@ -331,6 +337,50 @@ Route PickReachable(Player& bot, std::vector<Candidate> const& list, std::unorde
         }
     }
     return Route::Closed;
+}
+
+// The vendors on one map whose list has this item for money. Worked out once per item asked for (reagents are asked for rarely: a few items).
+std::vector<VendorSpot const*> const& VendorsSelling(uint32 itemEntry, uint32 mapId)
+{
+    static std::unordered_map<uint32, std::unordered_map<uint32, std::vector<VendorSpot const*>>> cache;
+    auto found = cache.find(itemEntry);
+    if (found == cache.end())
+    {
+        found = cache.emplace(itemEntry, std::unordered_map<uint32, std::vector<VendorSpot const*>>{}).first;
+        for (auto const& onMap : VendorsByMap())
+            for (VendorSpot const& spot : onMap.second)
+            {
+                VendorItemData const* items = sObjectMgr->GetNpcVendorItemList(spot.Entry);
+                if (items && items->FindItemCostPair(itemEntry, 0, ITEM_VENDOR_TYPE_ITEM))
+                    found->second[onMap.first].push_back(&spot);
+            }
+    }
+    static std::vector<VendorSpot const*> const none;
+    auto const onMap = found->second.find(mapId);
+    return onMap != found->second.end() ? onMap->second : none;
+}
+
+// Layout 16: the nearest reachable vendor of a reagent. Chosen again when the item changes, and after kSupplyRetryMs when none was found.
+void ChooseReagentVendor(Player& bot, VendorLookup& last, uint32 itemEntry)
+{
+    last.ReagentFor = itemEntry;
+    last.FoundReagentVendor = false;
+    last.ReagentMadeAtMs = GameTime::GetGameTimeMS();
+    FactionTemplateEntry const* mine = bot.GetFactionTemplateEntry();
+    std::vector<Candidate> near;
+    for (VendorSpot const* spot : VendorsSelling(itemEntry, last.MapId))
+    {
+        if (mine && spot->Faction && mine->IsHostileTo(spot->Faction))
+            continue;
+        float const sx = spot->X - last.X;
+        float const sy = spot->Y - last.Y;
+        KeepNearest(near, sx * sx + sy * sy, *spot);
+    }
+    std::unordered_map<uint64, bool> checked;
+    Route const route = PickReachable(bot, near, checked, last.ReagentVendor);
+    last.FoundReagentVendor = route == Route::Open;
+    if (route == Route::Later)
+        last.ReagentFor = 0;   // out of path checks: choose again next update
 }
 
 // Layout 15: the nearest vendors, on the bot's map and friendly to it, that sell what it can use. Ammunition: of the kind its ranged weapon
@@ -423,6 +473,22 @@ void FillSupplies(Player& bot, BotSnapshot& entry, VendorLookup& last)
     entry.ammo_count = last.AmmoCount;
     entry.food_count = last.FoodCount;
     entry.drink_count = last.DrinkCount;
+    // Reagents (layout 16): named once a cast was refused for lack of them, until the bot carries enough.
+    if (ModuleBotSupplies::MissingReagent const missing = ModuleBotSupplies::MissingReagentOf(bot); missing.Entry != 0)
+    {
+        if (last.ReagentFor != missing.Entry || (!last.FoundReagentVendor && now - uint32(last.ReagentMadeAtMs) >= kSupplyRetryMs))
+            ChooseReagentVendor(bot, last, missing.Entry);
+        entry.reagent_entry = missing.Entry;
+        entry.reagent_count = bot.GetItemCount(missing.Entry);
+        if (last.FoundReagentVendor && last.ReagentFor == missing.Entry)
+        {
+            entry.reagent_vendor_x = last.ReagentVendor.X;
+            entry.reagent_vendor_y = last.ReagentVendor.Y;
+            entry.reagent_vendor_z = last.ReagentVendor.Z;
+            entry.reagent_vendor_valid = 1;
+            entry.reagent_vendor_guid = VendorSpotRef(last.ReagentVendor);
+        }
+    }
     entry.health_potion_count = last.HealthPotionCount;
     entry.mana_potion_count = last.ManaPotionCount;
     entry.bandage_count = last.BandageCount;
@@ -1036,5 +1102,6 @@ bool BotMayFight(Player const& bot, Unit const& unit)
 // Called by BotMgr::LogoutBot after the session has been torn down.
 void ClearVendorLookup(uint64 botCounter)
 {
+    ModuleBotSupplies::ForgetReagent(botCounter);
     g_vendorLookups.erase(botCounter);
 }

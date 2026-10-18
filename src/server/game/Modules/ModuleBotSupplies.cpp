@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <map>
+#include <unordered_map>
 #include <utility>
 
 namespace ModuleBotSupplies
@@ -49,6 +50,52 @@ uint32 ManaPotionTarget()
 {
     static uint32 const value = sConfigMgr->GetIntDefault("Bot.Supplies.ManaPotionTarget", 3);
     return value;
+}
+
+uint32 ReagentTarget()
+{
+    static uint32 const value = sConfigMgr->GetIntDefault("Bot.Supplies.ReagentTarget", 10);
+    return value;
+}
+
+namespace
+{
+std::unordered_map<uint64, MissingReagent> g_missingReagents;   // by character counter; world thread only
+}
+
+void NoteMissingReagent(Player& bot, uint32 spellId)
+{
+    SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE);
+    if (!info)
+        return;
+    for (uint32 i = 0; i < MAX_SPELL_REAGENTS; ++i)
+    {
+        int32 const entry = info->Reagent[i];
+        int16 const count = info->ReagentCount[i];
+        if (entry > 0 && count > 0 && !bot.HasItemCount(uint32(entry), uint32(count)))
+        {
+            g_missingReagents[bot.GetGUID().GetCounter()] = { uint32(entry), uint32(count) };
+            return;
+        }
+    }
+}
+
+MissingReagent MissingReagentOf(Player& bot)
+{
+    auto const known = g_missingReagents.find(bot.GetGUID().GetCounter());
+    if (known == g_missingReagents.end())
+        return {};
+    if (bot.HasItemCount(known->second.Entry, known->second.Needed))
+    {
+        g_missingReagents.erase(known);
+        return {};
+    }
+    return known->second;
+}
+
+void ForgetReagent(uint64 botCounter)
+{
+    g_missingReagents.erase(botCounter);
 }
 
 uint32 BandageTarget()
@@ -482,8 +529,25 @@ Bought Buy(Player& bot, Creature* vendor, Targets const& targets)
     if (mana)
         buyKind(Want::ManaPotion, Kind::ManaPotion, targets.ManaPotion, bought.ManaPotion);
     buyKind(Want::Bandage, Kind::Bandage, targets.Bandage, bought.Bandage);
+    if (targets.ReagentEntry != 0 && targets.Reagent > 0)
+    {
+        // The one item the core noted a cast was missing, if this vendor sells it for money.
+        if (VendorItemData const* items = vendor->GetVendorItems())
+            for (uint32 slot = 0; slot < items->GetItemCount(); ++slot)
+            {
+                VendorItem const* vendorItem = items->GetItem(slot);
+                ItemTemplate const* proto = vendorItem && vendorItem->item == targets.ReagentEntry ? sObjectMgr->GetItemTemplate(vendorItem->item) : nullptr;
+                if (!proto || !BuyableWithMoney(*vendorItem, proto) ||
+                    !sConditionMgr->IsObjectMeetingVendorItemConditions(vendor->GetEntry(), vendorItem->item, &bot, vendor))
+                    continue;
+                uint32 const carried = bot.GetItemCount(proto->GetId());
+                bought.Reagent = BuyMore(bot, vendor, { vendorItem, proto, slot }, targets.Reagent > carried ? targets.Reagent - carried : 0,
+                    bought.Copper, reserve);
+                break;
+            }
+    }
 
-    if (bought.Ammo || bought.Food || bought.Drink || bought.HealthPotion || bought.ManaPotion || bought.Bandage)
+    if (bought.Ammo || bought.Food || bought.Drink || bought.HealthPotion || bought.ManaPotion || bought.Bandage || bought.Reagent)
         TC_LOG_DEBUG("server.worldserver", "Bots: {} bought {} ammunition, {} food, {} drink, {} health potions, {} mana potions and {} bandages for {} copper.",
             bot.GetName(), bought.Ammo, bought.Food, bought.Drink, bought.HealthPotion, bought.ManaPotion, bought.Bandage, bought.Copper);
     return bought;
