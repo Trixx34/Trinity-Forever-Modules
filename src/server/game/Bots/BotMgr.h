@@ -127,6 +127,7 @@ class TC_GAME_API BotMgr
         void CheckStopTime();
         void PollLogins(); // advances the logins in flight: finishes or fails them
         void PollCreates(); // runs the save callbacks of characters that finished committing
+        void CollectMail(); // takes the delivered mail of every online bot, at most every Bot.Mail.CollectEverySec seconds
         void PumpTeleports(); // answers the teleport steps a client would (suspend token, world port, teleport ack) for the bots
         void FinishCreate(uint64 guid, bool success);
         void FinishLogin(BotInfo& bot);
@@ -148,6 +149,10 @@ class TC_GAME_API BotMgr
         float _spreadMaxRadius = 200.0f;
         uint32 _loginTimeoutMs = 60000;
         uint32 _reloginDelayMs = 2000; // lets the previous logout save reach the database before the next load
+        // Mail (Bot.Mail.*): a bot never opens a mailbox, so the money and items of its delivered mail are taken for it (BotMail.cpp).
+        bool _mailCollect = true;
+        uint32 _mailCollectEveryMs = 30000;
+        uint32 _mailCollectAtMs = 0;
         bool _registryLoaded = false;
 
         // Login rate: a token bucket, one login per token, refilled at Bot.Login.MaxPerSecond.

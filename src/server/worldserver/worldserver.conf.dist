@@ -1817,6 +1817,16 @@ Bot.Limit.MaxDbQueue = 5000
 #            food or drink the bot may use at its level, bought until the bot carries the count the module asked for or its money or bags run
 #            out. The snapshot always tells the module what the bot carries and where the nearest vendor that sells it is.
 #
+#    Bot.Mail.Collect
+#        Default:     1
+#        1 = a bot (not an alt) takes the money and items of its delivered mail without a mailbox, and deletes the mail that is empty: the pay of an auction
+#            it sold, an item it bought, a listing that ran out. Cash on delivery mail is left alone. Done when the bot logs in and every
+#            Bot.Mail.CollectEverySec seconds. An auction sale reaches its seller after Mail.DeliveryDelay.
+#
+#    Bot.Mail.CollectEverySec
+#        Default:     30
+#        Between 5 and 3600.
+#
 #    Bot.Presence.LogoutOnRelease
 #        Default:     0
 #        1 = a bot that its module releases (ReleaseControl) logs out of the world; the module can take it back later by its guid, which logs it in

@@ -156,6 +156,8 @@ void BotMgr::LoadRegistry()
     _loginMaxPerTick = uint32(std::max<int32>(1, sConfigMgr->GetIntDefault("Bot.Login.MaxPerTick", 5)));
     _loginTimeoutMs = uint32(std::max<int32>(1000, sConfigMgr->GetIntDefault("Bot.Login.TimeoutMs", 60000)));
     _reloginDelayMs = uint32(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Relogin.DelayMs", 2000)));
+    _mailCollect = sConfigMgr->GetBoolDefault("Bot.Mail.Collect", true);
+    _mailCollectEveryMs = uint32(std::clamp<int32>(sConfigMgr->GetIntDefault("Bot.Mail.CollectEverySec", 30), 5, 3600)) * 1000;
     _spreadSpacing = std::max(0.0f, sConfigMgr->GetFloatDefault("Bot.Spread.SpacingYards", 3.0f));
     _spreadMaxRadius = std::max(0.0f, sConfigMgr->GetFloatDefault("Bot.Spread.MaxRadiusYards", 200.0f));
     _loginPerSecond = uint32(std::max<int32>(1, sConfigMgr->GetIntDefault("Bot.Login.MaxPerSecond", 10)));
@@ -628,6 +630,19 @@ void BotMgr::Update(uint32 diff)
     CheckStopTime();
     ProcessLogins(diff);
     PumpTeleports();
+    CollectMail();
+}
+
+// What an auction pays a bot arrives as mail (the sale of a listing, an item it bought, a listing that ran out). Nothing opens a mailbox for a bot, so
+// it is taken here, for the bots this core made; an alt is a player's own character and keeps its mail for the player.
+void BotMgr::CollectMail()
+{
+    if (!_mailCollect || _uptimeMs - _mailCollectAtMs < _mailCollectEveryMs)
+        return;
+    _mailCollectAtMs = _uptimeMs;
+    for (auto& [guid, bot] : _bots)
+        if (bot.State == BOT_ONLINE && bot.Session && !bot.Alt && bot.Session->GetPlayer())
+            bot.Session->CollectMailAsBot();
 }
 
 // A teleport to another map (or an acknowledged one on the same map) waits for the client: SMSG_SUSPEND_TOKEN is answered by
@@ -931,6 +946,8 @@ void BotMgr::FinishLogin(BotInfo& bot)
         else if (!bot.Alt)
             SpreadBot(*player);
         OnBotLevelChanged(*player);
+        if (_mailCollect && !bot.Alt)
+            bot.Session->CollectMailAsBot(); // mail that came while the bot was away
         if (!bot.Alt)       // a player's own character is not given free items
             if (uint32 bags = GiveBags(*player))
                 TC_LOG_INFO("server.worldserver", "BotMgr: bot {} was given {} bag(s).", bot.Name, bags);

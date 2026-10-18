@@ -1596,6 +1596,8 @@ class TC_GAME_API WorldSession
         void HandleMailMarkAsRead(WorldPackets::Mail::MailMarkAsRead& markAsRead);
         void HandleMailReturnToSender(WorldPackets::Mail::MailReturnToSender& returnToSender);
         void HandleMailDelete(WorldPackets::Mail::MailDelete& mailDelete);
+        // A bot takes what is in its delivered mail: money, items; empty mail is deleted (Bots/BotMail.cpp). Returns how many mails changed.
+        uint32 CollectMailAsBot();
         void HandleItemTextQuery(WorldPackets::Query::ItemTextQuery& itemTextQuery);
         void HandleMailCreateTextItem(WorldPackets::Mail::MailCreateTextItem& createTextItem);
         void HandleQueryNextMailTime(WorldPackets::Mail::MailQueryNextMailTime& queryNextMailTime);
