@@ -1817,6 +1817,18 @@ Bot.Limit.MaxDbQueue = 5000
 #            food or drink the bot may use at its level, bought until the bot carries the count the module asked for or its money or bags run
 #            out. The snapshot always tells the module what the bot carries and where the nearest vendor that sells it is.
 #
+#    Bot.Supplies.ReserveCopperPerLevel
+#        Default:     5
+#        Money a bot keeps back from every purchase except ammunition (food, drink, potions, bandages): this many copper for each level it
+#        has, so a level 60 bot keeps 3 silver for repairs and the next trip. 0 = spend everything.
+#
+#    Bot.Supplies.HealthPotionTarget
+#    Bot.Supplies.ManaPotionTarget
+#    Bot.Supplies.BandageTarget
+#        Default:     3, 3, 10
+#        How many health potions, mana potions (for a bot with mana) and bandages a supply trip buys up to. 0 = never buys that kind. The module
+#        decides whether to go (it asks with the buy bits of kVendor); these counts are the core's.
+#
 #    Bot.AutoGear.MaxQuality
 #        Default:     2
 #        The highest item quality auto gear hands out: 1 common, 2 uncommon (green), 3 rare (blue).

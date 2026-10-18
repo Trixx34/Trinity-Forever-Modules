@@ -7,8 +7,11 @@
 #include "ItemTemplate.h"
 #include "Log.h"
 #include "ObjectMgr.h"
+#include "PathGenerator.h"
 #include "Player.h"
 #include "SharedDefines.h"
+#include "SpellInfo.h"
+#include "SpellMgr.h"
 
 #include <algorithm>
 #include <map>
@@ -30,15 +33,70 @@ bool Enabled()
     return enabled;
 }
 
+uint32 ReservePerLevel()
+{
+    static uint32 const value = sConfigMgr->GetIntDefault("Bot.Supplies.ReserveCopperPerLevel", 5);
+    return value;
+}
+
+uint32 HealthPotionTarget()
+{
+    static uint32 const value = sConfigMgr->GetIntDefault("Bot.Supplies.HealthPotionTarget", 3);
+    return value;
+}
+
+uint32 ManaPotionTarget()
+{
+    static uint32 const value = sConfigMgr->GetIntDefault("Bot.Supplies.ManaPotionTarget", 3);
+    return value;
+}
+
+uint32 BandageTarget()
+{
+    static uint32 const value = sConfigMgr->GetIntDefault("Bot.Supplies.BandageTarget", 10);
+    return value;
+}
+
+namespace
+{
+// A potion by what its use spell does: a heal, or restoring mana.
+Kind PotionKind(ItemTemplate const* proto)
+{
+    if (proto->Effects.empty())
+        return Kind::None;
+    SpellInfo const* info = sSpellMgr->GetSpellInfo(uint32(proto->Effects[0]->SpellID), DIFFICULTY_NONE);
+    if (!info)
+        return Kind::None;
+    for (SpellEffectInfo const& effect : info->GetEffects())
+    {
+        if (effect.Effect == SPELL_EFFECT_HEAL || effect.Effect == SPELL_EFFECT_HEAL_PCT)
+            return Kind::HealthPotion;
+        if ((effect.Effect == SPELL_EFFECT_ENERGIZE || effect.Effect == SPELL_EFFECT_ENERGIZE_PCT) && effect.MiscValue == POWER_MANA)
+            return Kind::ManaPotion;
+    }
+    return Kind::None;
+}
+}
+
 Kind KindOf(ItemTemplate const* proto)
 {
-    if (!proto || proto->GetClass() != ITEM_CLASS_CONSUMABLE || proto->GetSubClass() != ITEM_SUBCLASS_FOOD_DRINK || proto->Effects.empty())
+    if (!proto || proto->GetClass() != ITEM_CLASS_CONSUMABLE || proto->Effects.empty())
         return Kind::None;
-    switch (proto->Effects[0]->SpellCategoryID)
+    switch (proto->GetSubClass())
     {
-        case SPELL_CATEGORY_FOOD: return Kind::Food;
-        case SPELL_CATEGORY_DRINK: return Kind::Drink;
-        default: return Kind::None;
+        case ITEM_SUBCLASS_FOOD_DRINK:
+            switch (proto->Effects[0]->SpellCategoryID)
+            {
+                case SPELL_CATEGORY_FOOD: return Kind::Food;
+                case SPELL_CATEGORY_DRINK: return Kind::Drink;
+                default: return Kind::None;
+            }
+        case ITEM_SUBCLASS_POTION:
+            return PotionKind(proto);
+        case ITEM_SUBCLASS_BANDAGE:
+            return Kind::Bandage;
+        default:
+            return Kind::None;
     }
 }
 
@@ -87,8 +145,24 @@ enum class Want : uint8
 {
     Ammo,
     Food,
-    Drink
+    Drink,
+    HealthPotion,
+    ManaPotion,
+    Bandage
 };
+
+Kind KindOfWant(Want want)
+{
+    switch (want)
+    {
+        case Want::Food: return Kind::Food;
+        case Want::Drink: return Kind::Drink;
+        case Want::HealthPotion: return Kind::HealthPotion;
+        case Want::ManaPotion: return Kind::ManaPotion;
+        case Want::Bandage: return Kind::Bandage;
+        default: return Kind::None;
+    }
+}
 
 Pick BestAt(Player& bot, Creature* vendor, Want want)
 {
@@ -115,8 +189,8 @@ Pick BestAt(Player& bot, Creature* vendor, Want want)
         }
         else
         {
-            Kind const kind = want == Want::Food ? Kind::Food : Kind::Drink;
-            if (KindOf(proto) != kind || !UsableFoodOrDrink(bot, proto, kind))
+            Kind const kind = KindOfWant(want);
+            if (KindOf(proto) != kind || !Usable(bot, proto, kind))
                 continue;
         }
         if (!sConditionMgr->IsObjectMeetingVendorItemConditions(vendor->GetEntry(), vendorItem->item, &bot, vendor) ||
@@ -140,8 +214,8 @@ Pick BestAt(Player& bot, Creature* vendor, Want want)
     return best;
 }
 
-// Buys up to `need` more of the picked item, within the bot's money and bag room. Returns how many it bought.
-uint32 BuyMore(Player& bot, Creature* vendor, Pick const& pick, uint32 need, uint64& copperSpent)
+// Buys up to `need` more of the picked item, within the bot's money (less the reserve) and bag room. Returns how many it bought.
+uint32 BuyMore(Player& bot, Creature* vendor, Pick const& pick, uint32 need, uint64& copperSpent, uint64 reserve)
 {
     if (!pick.Proto || need == 0)
         return 0;
@@ -150,7 +224,7 @@ uint32 BuyMore(Player& bot, Creature* vendor, Pick const& pick, uint32 need, uin
     uint64 const perPiece = (uint64(pick.Proto->GetBuyPrice()) + pick.Proto->GetBuyCount() - 1) / pick.Proto->GetBuyCount();
     uint32 count = need;
     if (perPiece > 0)
-        count = uint32(std::min<uint64>(count, bot.GetMoney() / perPiece));
+        count = uint32(std::min<uint64>(count, Spendable(bot.GetMoney(), reserve) / perPiece));
     count = FitCount(bot, pick.Proto->GetId(), count);
 
     // A refusal is most often the money (a discount or a rounding the estimate missed): try a smaller number a few times.
@@ -194,6 +268,12 @@ VendorStock StockOf(uint32 vendorEntry)
             index = StockFood;
         else if (kind == Kind::Drink)
             index = StockDrink;
+        else if (kind == Kind::HealthPotion)
+            index = StockHealthPotion;
+        else if (kind == Kind::ManaPotion)
+            index = StockManaPotion;
+        else if (kind == Kind::Bandage)
+            index = StockBandage;
         if (index < 0)
             continue;
         stock.MinLevel[index] = std::min(stock.MinLevel[index], ClampLevel(proto->GetBaseRequiredLevel()));
@@ -218,13 +298,18 @@ int32 AmmoSubclassOf(Player const& bot)
     }
 }
 
-bool UsableFoodOrDrink(Player const& bot, ItemTemplate const* proto, Kind kind)
+bool Usable(Player const& bot, ItemTemplate const* proto, Kind kind)
 {
-    if (!proto || KindOf(proto) != kind)
+    if (!proto || kind == Kind::None || KindOf(proto) != kind)
         return false;
     if (proto->GetBaseRequiredLevel() > int32(bot.GetLevel()) || bot.CanUseItem(proto) != EQUIP_ERR_OK)
         return false;
-    return kind != Kind::Drink || bot.GetMaxPower(POWER_MANA) > 0;
+    return KindFitsClass(kind, bot.GetMaxPower(POWER_MANA) > 0);
+}
+
+bool UsableFoodOrDrink(Player const& bot, ItemTemplate const* proto, Kind kind)
+{
+    return (kind == Kind::Food || kind == Kind::Drink) && Usable(bot, proto, kind);
 }
 
 uint32 AmmoEntryFor(Player& bot)
@@ -281,11 +366,63 @@ uint32 CountCarried(Player& bot, Kind kind)
     uint32 total = 0;
     bot.ForEachItem(ItemSearchLocation::Inventory, [&](Item* item)
     {
-        if (UsableFoodOrDrink(bot, item->GetTemplate(), kind))
+        if (Usable(bot, item->GetTemplate(), kind))
             total += item->GetCount();
         return ItemSearchCallbackResult::Continue;
     });
     return total;
+}
+
+Carried CountAllCarried(Player& bot)
+{
+    Carried carried;
+    bool const mana = bot.GetMaxPower(POWER_MANA) > 0;
+    bot.ForEachItem(ItemSearchLocation::Inventory, [&](Item* item)
+    {
+        ItemTemplate const* proto = item->GetTemplate();
+        Kind const kind = KindOf(proto);
+        if (kind == Kind::None || !Usable(bot, proto, kind))
+            return ItemSearchCallbackResult::Continue;
+        switch (kind)
+        {
+            case Kind::Food: carried.Food += item->GetCount(); break;
+            case Kind::Drink: carried.Drink += mana ? item->GetCount() : 0; break;
+            case Kind::HealthPotion: carried.HealthPotions += item->GetCount(); break;
+            case Kind::ManaPotion: carried.ManaPotions += mana ? item->GetCount() : 0; break;
+            case Kind::Bandage: carried.Bandages += item->GetCount(); break;
+            default: break;
+        }
+        return ItemSearchCallbackResult::Continue;
+    });
+    return carried;
+}
+
+bool RouteLooksOpen(Player& bot, float x, float y, float z)
+{
+    PathGenerator path(&bot);
+    if (!path.CalculatePath(x, y, z, false))
+        return false;
+    PathType const type = path.GetPathType();
+    if (type & PATHFIND_NOT_USING_PATH)
+        return true;   // no navmesh to ask (no mmaps for the map): a straight line is how the bot moves there
+    if (type & PATHFIND_NOPATH)
+        return false;
+    if (type & PATHFIND_INCOMPLETE)
+    {
+        // A partial route is normal for a long walk (the pathfinder looks a limited number of polygons ahead). It is a bad sign only for a place
+        // near enough that a whole route would fit: then the mesh really runs out (a fence, a river, a cliff).
+        float const dx = x - bot.GetPositionX();
+        float const dy = y - bot.GetPositionY();
+        constexpr float kFullRouteYards = 250.0f;
+        if (dx * dx + dy * dy > kFullRouteYards * kFullRouteYards)
+            return true;
+        G3D::Vector3 const end = path.GetActualEndPosition();
+        float const ex = x - end.x;
+        float const ey = y - end.y;
+        constexpr float kCloseEnoughYards = 25.0f;
+        return ex * ex + ey * ey <= kCloseEnoughYards * kCloseEnoughYards;
+    }
+    return true;
 }
 
 Item* BestCarried(Player& bot, Kind kind)
@@ -294,7 +431,7 @@ Item* BestCarried(Player& bot, Kind kind)
     bot.ForEachItem(ItemSearchLocation::Inventory, [&](Item* item)
     {
         ItemTemplate const* proto = item->GetTemplate();
-        if (!UsableFoodOrDrink(bot, proto, kind))
+        if (!Usable(bot, proto, kind))
             return ItemSearchCallbackResult::Continue;
         // The best is the highest required level (it restores most); a smaller stack is eaten first so the stacks do not linger.
         if (!best || proto->GetBaseRequiredLevel() > best->GetTemplate()->GetBaseRequiredLevel() ||
@@ -317,7 +454,7 @@ Bought Buy(Player& bot, Creature* vendor, Targets const& targets)
         if (pick.Proto)
         {
             uint32 const carried = bot.GetItemCount(pick.Proto->GetId());
-            bought.Ammo = BuyMore(bot, vendor, pick, targets.Ammo > carried ? targets.Ammo - carried : 0, bought.Copper);
+            bought.Ammo = BuyMore(bot, vendor, pick, targets.Ammo > carried ? targets.Ammo - carried : 0, bought.Copper, 0);
             // Ammunition the bot shoots now is replaced by the better kind it just bought; with none selected the new one is selected.
             if (bought.Ammo > 0)
             {
@@ -327,22 +464,28 @@ Bought Buy(Player& bot, Creature* vendor, Targets const& targets)
             }
         }
     }
-    if (targets.Food > 0)
+    // Everything else keeps the reserve back: money for repairs and the next trip is worth more than a few more pieces.
+    uint64 const reserve = ReserveFor(bot.GetLevel(), ReservePerLevel());
+    bool const mana = bot.GetMaxPower(POWER_MANA) > 0;
+    auto const buyKind = [&](Want want, Kind kind, uint32 target, uint32& result)
     {
-        Pick const pick = BestAt(bot, vendor, Want::Food);
-        uint32 const carried = CountCarried(bot, Kind::Food);
-        bought.Food = BuyMore(bot, vendor, pick, targets.Food > carried ? targets.Food - carried : 0, bought.Copper);
-    }
-    if (targets.Drink > 0 && bot.GetMaxPower(POWER_MANA) > 0)
-    {
-        Pick const pick = BestAt(bot, vendor, Want::Drink);
-        uint32 const carried = CountCarried(bot, Kind::Drink);
-        bought.Drink = BuyMore(bot, vendor, pick, targets.Drink > carried ? targets.Drink - carried : 0, bought.Copper);
-    }
+        if (target == 0)
+            return;
+        Pick const pick = BestAt(bot, vendor, want);
+        uint32 const carried = CountCarried(bot, kind);
+        result = BuyMore(bot, vendor, pick, target > carried ? target - carried : 0, bought.Copper, reserve);
+    };
+    buyKind(Want::Food, Kind::Food, targets.Food, bought.Food);
+    if (mana)
+        buyKind(Want::Drink, Kind::Drink, targets.Drink, bought.Drink);
+    buyKind(Want::HealthPotion, Kind::HealthPotion, targets.HealthPotion, bought.HealthPotion);
+    if (mana)
+        buyKind(Want::ManaPotion, Kind::ManaPotion, targets.ManaPotion, bought.ManaPotion);
+    buyKind(Want::Bandage, Kind::Bandage, targets.Bandage, bought.Bandage);
 
-    if (bought.Ammo || bought.Food || bought.Drink)
-        TC_LOG_DEBUG("server.worldserver", "Bots: {} bought {} ammunition, {} food and {} drink for {} copper.", bot.GetName(), bought.Ammo,
-            bought.Food, bought.Drink, bought.Copper);
+    if (bought.Ammo || bought.Food || bought.Drink || bought.HealthPotion || bought.ManaPotion || bought.Bandage)
+        TC_LOG_DEBUG("server.worldserver", "Bots: {} bought {} ammunition, {} food, {} drink, {} health potions, {} mana potions and {} bandages for {} copper.",
+            bot.GetName(), bought.Ammo, bought.Food, bought.Drink, bought.HealthPotion, bought.ManaPotion, bought.Bandage, bought.Copper);
     return bought;
 }
 }

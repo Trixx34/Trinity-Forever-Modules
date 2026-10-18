@@ -244,39 +244,123 @@ struct VendorLookup
     VendorSpot AmmoVendor{};
     bool FoundFoodVendor = false;
     VendorSpot FoodVendor{};
+    bool FoundGoodsVendor = false;   // layout 16: the nearest vendor of health potions, mana potions (a mana user) or bandages
+    VendorSpot GoodsVendor{};
+    uint64 SupplyMadeAtMs = 0;       // when the vendors were chosen: a choice that found nothing is made again after kSupplyRetryMs
     // What the bot carries, counted at most every kSupplyCountEveryMs: counting walks the bags.
     uint64 CountedAtMs = 0;
     uint32 AmmoEntry = 0;
     uint32 AmmoCount = 0;
     uint32 FoodCount = 0;
     uint32 DrinkCount = 0;
+    uint32 HealthPotionCount = 0;
+    uint32 ManaPotionCount = 0;
+    uint32 BandageCount = 0;
 };
 
 // Process-lifetime cache of the nearest-vendor lookup for each bot. Keyed by character counter. Erased in
 // ClearVendorLookup on bot logout so the map never grows beyond the number of currently-online bots.
 std::unordered_map<uint64, VendorLookup> g_vendorLookups;
 
+// Layout 16: the vendors a bot is sent to must be ones it can walk to. The nearest in a straight line is often across a river, a cliff or a
+// city wall. The few nearest candidates of each kind are checked against the navmesh, nearest first, and the first with a route is used. A path
+// calculation is not cheap, so only kSupplyPathChecksPerTick of them are made in one world update; when they run out the choice waits for the
+// next update (the bot is shown no vendor meanwhile, and so is not sent anywhere).
+constexpr uint32 kSupplyCandidates = 4;
+constexpr uint32 kSupplyPathChecksPerTick = 24;
+constexpr uint64 kSupplyRetryMs = 300000; // a choice that found no reachable vendor of a kind is made again after this long
+
+struct PathBudget
+{
+    uint32 Tick = 0;
+    uint32 Used = 0;
+    bool Take()
+    {
+        uint32 const now = GameTime::GetGameTimeMS();
+        if (now != Tick)
+        {
+            Tick = now;
+            Used = 0;
+        }
+        return Used < kSupplyPathChecksPerTick && ++Used;
+    }
+};
+PathBudget g_pathBudget;
+
+struct Candidate
+{
+    float DistSq;
+    VendorSpot const* Spot;
+};
+
+// Keeps the kSupplyCandidates nearest in `list`, nearest first.
+void KeepNearest(std::vector<Candidate>& list, float distSq, VendorSpot const& spot)
+{
+    if (list.size() == kSupplyCandidates && distSq >= list.back().DistSq)
+        return;
+    auto at = std::find_if(list.begin(), list.end(), [&](Candidate const& other) { return distSq < other.DistSq; });
+    list.insert(at, { distSq, &spot });
+    if (list.size() > kSupplyCandidates)
+        list.pop_back();
+}
+
+enum class Route : uint8
+{
+    Open,
+    Closed,
+    Later   // no path checks left in this update
+};
+
+// The first candidate with a route wins. `checked` remembers the answers already got for this choice (a vendor can be the candidate of two kinds).
+Route PickReachable(Player& bot, std::vector<Candidate> const& list, std::unordered_map<uint64, bool>& checked, VendorSpot& chosen)
+{
+    for (Candidate const& candidate : list)
+    {
+        VendorSpot const& spot = *candidate.Spot;
+        auto known = checked.find(spot.SpawnId);
+        if (known == checked.end())
+        {
+            if (!g_pathBudget.Take())
+                return Route::Later;
+            known = checked.emplace(spot.SpawnId, ModuleBotSupplies::RouteLooksOpen(bot, spot.X, spot.Y, spot.Z)).first;
+        }
+        if (known->second)
+        {
+            chosen = spot;
+            return Route::Open;
+        }
+    }
+    return Route::Closed;
+}
+
 // Layout 15: the nearest vendors, on the bot's map and friendly to it, that sell what it can use. Ammunition: of the kind its ranged weapon
-// takes, at a required level the bot has reached. Food: food at such a level, or drink for a bot with mana. Searched from where the
-// vendor lookup was made, so it follows the same refresh.
+// takes, at a required level the bot has reached. Food: food at such a level, or drink for a bot with mana. Layout 16: goods: health potions,
+// mana potions for a bot with mana, or bandages. Searched from where the vendor lookup was made, so it follows the same refresh.
 void ChooseSupplyVendors(Player& bot, VendorLookup& last, int32 ammoSubclass, bool mana)
 {
-    last.SupplyMade = true;
     last.SupplyLevel = bot.GetLevel();
     last.SupplyAmmoSubclass = ammoSubclass;
     last.SupplyMana = mana;
     last.FoundAmmoVendor = false;
     last.FoundFoodVendor = false;
+    last.FoundGoodsVendor = false;
 
     auto const& vendors = VendorsByMap();
     auto const onMap = vendors.find(last.MapId);
     if (onMap == vendors.end())
+    {
+        last.SupplyMade = true;
         return;
+    }
 
     uint32 const level = bot.GetLevel();
     FactionTemplateEntry const* mine = bot.GetFactionTemplateEntry();
-    float bestAmmoSq = std::numeric_limits<float>::max();
-    float bestFoodSq = std::numeric_limits<float>::max();
+    std::vector<Candidate> ammo, food, goods;
+    auto const sells = [&](VendorSpot const& spot, ModuleBotSupplies::StockIndex index)
+    {
+        uint8 const stocked = spot.Stock.MinLevel[index];
+        return stocked != ModuleBotSupplies::kNoStock && stocked <= level;
+    };
     for (VendorSpot const& spot : onMap->second)
     {
         if (!spot.Stock.SellsAny() || (mine && spot.Faction && mine->IsHostileTo(spot.Faction)))
@@ -285,28 +369,28 @@ void ChooseSupplyVendors(Player& bot, VendorLookup& last, int32 ammoSubclass, bo
         float const sy = spot.Y - last.Y;
         float const distSq = sx * sx + sy * sy;
 
-        if (ammoSubclass >= 0 && distSq < bestAmmoSq)
-        {
-            uint8 const stocked = spot.Stock.MinLevel[ammoSubclass == ITEM_SUBCLASS_BULLET ? ModuleBotSupplies::StockBullets : ModuleBotSupplies::StockArrows];
-            if (stocked != ModuleBotSupplies::kNoStock && stocked <= level)
-            {
-                bestAmmoSq = distSq;
-                last.AmmoVendor = spot;
-                last.FoundAmmoVendor = true;
-            }
-        }
-        if (distSq < bestFoodSq)
-        {
-            uint8 const food = spot.Stock.MinLevel[ModuleBotSupplies::StockFood];
-            uint8 const drink = spot.Stock.MinLevel[ModuleBotSupplies::StockDrink];
-            if ((food != ModuleBotSupplies::kNoStock && food <= level) || (mana && drink != ModuleBotSupplies::kNoStock && drink <= level))
-            {
-                bestFoodSq = distSq;
-                last.FoodVendor = spot;
-                last.FoundFoodVendor = true;
-            }
-        }
+        if (ammoSubclass >= 0 && sells(spot, ammoSubclass == ITEM_SUBCLASS_BULLET ? ModuleBotSupplies::StockBullets : ModuleBotSupplies::StockArrows))
+            KeepNearest(ammo, distSq, spot);
+        if (sells(spot, ModuleBotSupplies::StockFood) || (mana && sells(spot, ModuleBotSupplies::StockDrink)))
+            KeepNearest(food, distSq, spot);
+        if (sells(spot, ModuleBotSupplies::StockHealthPotion) || sells(spot, ModuleBotSupplies::StockBandage) ||
+            (mana && sells(spot, ModuleBotSupplies::StockManaPotion)))
+            KeepNearest(goods, distSq, spot);
     }
+
+    std::unordered_map<uint64, bool> checked;
+    Route const ammoRoute = PickReachable(bot, ammo, checked, last.AmmoVendor);
+    Route const foodRoute = PickReachable(bot, food, checked, last.FoodVendor);
+    Route const goodsRoute = PickReachable(bot, goods, checked, last.GoodsVendor);
+    last.FoundAmmoVendor = ammoRoute == Route::Open;
+    last.FoundFoodVendor = foodRoute == Route::Open;
+    last.FoundGoodsVendor = goodsRoute == Route::Open;
+    // Out of path checks: choose again next update (SupplyMade stays false). Otherwise the answer stands until the bot or its needs change.
+    last.SupplyMade = ammoRoute != Route::Later && foodRoute != Route::Later && goodsRoute != Route::Later;
+    last.SupplyMadeAtMs = GameTime::GetGameTimeMS();
+    if (last.SupplyMade && (ammoRoute == Route::Closed || foodRoute == Route::Closed || goodsRoute == Route::Closed))
+        TC_LOG_DEBUG("server.worldserver", "Bots: {} has no reachable vendor of some kind of supplies (ammunition {}, food {}, goods {}).",
+            bot.GetName(), ammoRoute == Route::Closed ? "no" : "ok", foodRoute == Route::Closed ? "no" : "ok", goodsRoute == Route::Closed ? "no" : "ok");
 }
 
 // Layout 15: what the bot carries of ammunition, food and drink, and where to buy more. Off with Bot.Actions.Supplies.
@@ -317,22 +401,31 @@ void FillSupplies(Player& bot, BotSnapshot& entry, VendorLookup& last)
 
     int32 const ammoSubclass = ModuleBotSupplies::AmmoSubclassOf(bot);
     bool const mana = bot.GetMaxPower(POWER_MANA) > 0;
-    if (!last.SupplyMade || last.SupplyLevel != bot.GetLevel() || last.SupplyAmmoSubclass != ammoSubclass || last.SupplyMana != mana)
+    uint32 const now = GameTime::GetGameTimeMS();
+    bool const nothingFound = !last.FoundAmmoVendor && !last.FoundFoodVendor && !last.FoundGoodsVendor;
+    if (!last.SupplyMade || last.SupplyLevel != bot.GetLevel() || last.SupplyAmmoSubclass != ammoSubclass || last.SupplyMana != mana ||
+        (nothingFound && now - uint32(last.SupplyMadeAtMs) >= kSupplyRetryMs))
         ChooseSupplyVendors(bot, last, ammoSubclass, mana);
 
-    uint32 const now = GameTime::GetGameTimeMS();
     if (last.CountedAtMs == 0 || now - last.CountedAtMs >= kSupplyCountEveryMs)
     {
         last.CountedAtMs = now ? now : 1;
         last.AmmoEntry = ModuleBotSupplies::AmmoEntryFor(bot);
         last.AmmoCount = last.AmmoEntry ? bot.GetItemCount(last.AmmoEntry) : 0;
-        last.FoodCount = ModuleBotSupplies::CountCarried(bot, ModuleBotSupplies::Kind::Food);
-        last.DrinkCount = mana ? ModuleBotSupplies::CountCarried(bot, ModuleBotSupplies::Kind::Drink) : 0;
+        ModuleBotSupplies::Carried const carried = ModuleBotSupplies::CountAllCarried(bot);
+        last.FoodCount = carried.Food;
+        last.DrinkCount = carried.Drink;
+        last.HealthPotionCount = carried.HealthPotions;
+        last.ManaPotionCount = carried.ManaPotions;
+        last.BandageCount = carried.Bandages;
     }
     entry.ammo_entry = last.AmmoEntry;
     entry.ammo_count = last.AmmoCount;
     entry.food_count = last.FoodCount;
     entry.drink_count = last.DrinkCount;
+    entry.health_potion_count = last.HealthPotionCount;
+    entry.mana_potion_count = last.ManaPotionCount;
+    entry.bandage_count = last.BandageCount;
 
     if (last.FoundAmmoVendor && ammoSubclass >= 0)
     {
@@ -349,6 +442,14 @@ void FillSupplies(Player& bot, BotSnapshot& entry, VendorLookup& last)
         entry.food_vendor_z = last.FoodVendor.Z;
         entry.food_vendor_valid = 1;
         entry.food_vendor_guid = VendorSpotRef(last.FoodVendor);
+    }
+    if (last.FoundGoodsVendor)
+    {
+        entry.goods_vendor_x = last.GoodsVendor.X;
+        entry.goods_vendor_y = last.GoodsVendor.Y;
+        entry.goods_vendor_z = last.GoodsVendor.Z;
+        entry.goods_vendor_valid = 1;
+        entry.goods_vendor_guid = VendorSpotRef(last.GoodsVendor);
     }
 }
 

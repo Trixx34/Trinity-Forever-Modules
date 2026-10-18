@@ -35,6 +35,7 @@
 #include "PetAI.h"
 #include "Player.h"
 #include "QuestDef.h"
+#include "SpellHistory.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "Trainer.h"
@@ -171,7 +172,11 @@ constexpr uint32 kServiceEquipBit = 4;  // spell_id bit: equip the best gear in 
 constexpr uint32 kServiceBuyAmmoBit = 8;   // spell_id bit (layout 15): buy ammunition, up to dest_x pieces carried
 constexpr uint32 kServiceBuyFoodBit = 16;  // ... food, up to dest_y
 constexpr uint32 kServiceBuyDrinkBit = 32; // ... drink, up to dest_z
-constexpr uint32 kServiceBuyMask = kServiceBuyAmmoBit | kServiceBuyFoodBit | kServiceBuyDrinkBit;
+constexpr uint32 kServiceBuyHealthPotionBit = 64;  // layout 16: health potions, up to Bot.Supplies.HealthPotionTarget carried
+constexpr uint32 kServiceBuyManaPotionBit = 128;   // ... mana potions (Bot.Supplies.ManaPotionTarget)
+constexpr uint32 kServiceBuyBandageBit = 256;      // ... bandages (Bot.Supplies.BandageTarget)
+constexpr uint32 kServiceBuyMask = kServiceBuyAmmoBit | kServiceBuyFoodBit | kServiceBuyDrinkBit | kServiceBuyHealthPotionBit |
+    kServiceBuyManaPotionBit | kServiceBuyBandageBit;
 constexpr float kMaxSupplyTarget = 2000.0f; // a sanity bound on the counts a module asks for
 constexpr uint32 kQualityPoor = 0;      // grey
 constexpr uint32 kQualityCommon = 1;    // white: the lowest quality the bot equips
@@ -1388,6 +1393,8 @@ bool HasFullRouteTo(Player& bot, float x, float y, float z)
     return !((type & (PATHFIND_NOPATH | PATHFIND_INCOMPLETE)) != 0);
 }
 
+// Layout 16 adds potions and bandages: spell_id 3 uses the best health potion, 4 the best mana potion (both allowed in combat and on the move,
+// as for a player; the item's cooldown applies), 5 the best bandage (out of combat, standing still).
 // Eat or drink (layout 15, ActionType::kConsume). spell_id 1 uses the best food the bot carries, 2 the best drink. The item's own use spell is
 // cast with the item attached, so the bot sits, restores over time and uses up one piece, as it does for a player. The module stops the bot
 // and keeps it out of fights first: a spell that is interrupted by movement or combat wastes the piece.
@@ -1403,15 +1410,49 @@ BotActionStatus ConsumeAction(Player& bot, BotAction const& action, std::string&
         kind = ModuleBotSupplies::Kind::Food;
     else if (action.spell_id == 2)
         kind = ModuleBotSupplies::Kind::Drink;
+    else if (action.spell_id == 3)
+        kind = ModuleBotSupplies::Kind::HealthPotion;
+    else if (action.spell_id == 4)
+        kind = ModuleBotSupplies::Kind::ManaPotion;
+    else if (action.spell_id == 5)
+        kind = ModuleBotSupplies::Kind::Bandage;
     else
     {
         reason = "unknown consume kind " + std::to_string(action.spell_id);
         return BotActionStatus::kRefused;
     }
-    if (!bot.IsAlive() || bot.IsInCombat())
+    bool const potion = kind == ModuleBotSupplies::Kind::HealthPotion || kind == ModuleBotSupplies::Kind::ManaPotion;
+    if (!bot.IsAlive() || (bot.IsInCombat() && !potion))
     {
         reason = bot.IsAlive() ? "bot is in combat" : "bot is dead";
         return BotActionStatus::kRefused;
+    }
+    if (potion)
+    {
+        // A potion is drunk at once, in a fight or on the move; only a spell in progress stops it.
+        Item* drink = ModuleBotSupplies::BestCarried(bot, kind);
+        if (!drink || drink->GetTemplate()->Effects.empty())
+        {
+            reason = kind == ModuleBotSupplies::Kind::HealthPotion ? "the bot carries no health potion it can use" : "the bot carries no mana potion it can use";
+            return BotActionStatus::kRefused;
+        }
+        if (Spell const* current = bot.GetCurrentSpell(CURRENT_GENERIC_SPELL); current && current->getState() != SPELL_STATE_FINISHED)
+        {
+            reason = "bot is casting spell " + std::to_string(current->GetSpellInfo()->Id);
+            return BotActionStatus::kBusy;
+        }
+        uint32 const potionSpell = uint32(drink->GetTemplate()->Effects[0]->SpellID);
+        if (bot.GetSpellHistory()->HasCooldown(potionSpell, drink->GetEntry()))
+        {
+            reason = "the potion is on cooldown";
+            return BotActionStatus::kRefused;
+        }
+        CastSpellExtraArgs potionArgs(TRIGGERED_NONE);
+        potionArgs.SetCastItem(drink);
+        SpellCastResult const potionResult = bot.CastSpell(&bot, potionSpell, potionArgs);
+        if (potionResult != SPELL_CAST_OK)
+            reason = "use of item " + std::to_string(drink->GetEntry()) + " returned result " + std::to_string(int32(potionResult));
+        return StatusForCast(potionResult);
     }
     if (Spell const* current = bot.GetCurrentSpell(CURRENT_GENERIC_SPELL); current && current->getState() != SPELL_STATE_FINISHED)
     {
@@ -1427,7 +1468,8 @@ BotActionStatus ConsumeAction(Player& bot, BotAction const& action, std::string&
     Item* item = ModuleBotSupplies::BestCarried(bot, kind);
     if (!item || item->GetTemplate()->Effects.empty())
     {
-        reason = kind == ModuleBotSupplies::Kind::Food ? "the bot carries no food it can eat" : "the bot carries no drink it can use";
+        reason = kind == ModuleBotSupplies::Kind::Food ? "the bot carries no food it can eat"
+            : kind == ModuleBotSupplies::Kind::Bandage ? "the bot carries no bandage it can use" : "the bot carries no drink it can use";
         return BotActionStatus::kRefused;
     }
 
@@ -1656,6 +1698,12 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
                         targets.Food = target(action.dest_y);
                     if (services & kServiceBuyDrinkBit)
                         targets.Drink = target(action.dest_z);
+                    if (services & kServiceBuyHealthPotionBit)
+                        targets.HealthPotion = ModuleBotSupplies::HealthPotionTarget();
+                    if (services & kServiceBuyManaPotionBit)
+                        targets.ManaPotion = ModuleBotSupplies::ManaPotionTarget();
+                    if (services & kServiceBuyBandageBit)
+                        targets.Bandage = ModuleBotSupplies::BandageTarget();
                     ModuleBotSupplies::Buy(bot, npc, targets);
                 }
             }

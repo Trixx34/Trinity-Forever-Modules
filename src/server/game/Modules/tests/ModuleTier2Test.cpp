@@ -37,7 +37,7 @@ int main()
     // The core writes kTier2LayoutVersion into the region and the module refuses to attach on any other value, so the
     // number is pinned here as well as compared below: a silent bump of the core's copy would otherwise only show up as a
     // module that refuses to attach.
-    CHECK(forever_module::kTier2LayoutVersion == 15);
+    CHECK(forever_module::kTier2LayoutVersion == 16);
     CHECK(static_cast<int>(forever_module::BotActionStatus::kNoRoute) == 13);
     CHECK(static_cast<int>(forever_module::ActionType::kCraft) == 20);
     CHECK(static_cast<int>(forever_module::ActionType::kGather) == 21);
@@ -264,6 +264,15 @@ int main()
     withBot[0].Bot.food_vendor_y = 8.0f;
     withBot[0].Bot.food_vendor_z = 9.5f;
     withBot[0].Bot.food_vendor_guid = forever_module::MakeUnitRef(8, 1465, 12);
+    // Layout 16: potions, bandages and the vendor that sells them.
+    withBot[0].Bot.health_potion_count = 4;
+    withBot[0].Bot.mana_potion_count = 2;
+    withBot[0].Bot.bandage_count = 11;
+    withBot[0].Bot.goods_vendor_valid = 1;
+    withBot[0].Bot.goods_vendor_x = 1.5f;
+    withBot[0].Bot.goods_vendor_y = -2.5f;
+    withBot[0].Bot.goods_vendor_z = 3.5f;
+    withBot[0].Bot.goods_vendor_guid = forever_module::MakeUnitRef(8, 5100, 41);
     withBot[0].Nearby[0].aura_count = 3;
     withBot[0].Nearby[0].aura_mask = 0x00000005; // a DOT and a poison (see doc/module-system/20)
     region->PublishSnapshot(11, withBot);
@@ -290,6 +299,9 @@ int main()
     CHECK(read13->ammo_vendor_guid == forever_module::MakeUnitRef(8, 4553, 31));
     CHECK(read13->food_vendor_valid == 1 && read13->food_vendor_x == -7.0f && read13->food_vendor_y == 8.0f && read13->food_vendor_z == 9.5f);
     CHECK(read13->food_vendor_guid == forever_module::MakeUnitRef(8, 1465, 12));
+    CHECK(read13->health_potion_count == 4 && read13->mana_potion_count == 2 && read13->bandage_count == 11);
+    CHECK(read13->goods_vendor_valid == 1 && read13->goods_vendor_x == 1.5f && read13->goods_vendor_y == -2.5f && read13->goods_vendor_z == 3.5f);
+    CHECK(read13->goods_vendor_guid == forever_module::MakeUnitRef(8, 5100, 41));
     auto const* read13Near = reinterpret_cast<forever_module::NearbyUnit const*>(read13 + 4);
     CHECK(read13Near[0].aura_count == 3 && read13Near[0].aura_mask == 0x00000005);
 
