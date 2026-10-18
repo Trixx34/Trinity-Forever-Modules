@@ -435,12 +435,61 @@ GearResult GiveAndEquip(Player& bot, ItemTemplate const& item, uint8 slot, uint3
 }
 
 // spell_id bit 1: a tank (one-hand weapon and shield).
+// Gear the bot was given or looted: an item in the bags that the bot can use and that has a higher item level than what is worn where it
+// would go is worn instead (the displaced item goes to the bags). The quality cap of the item pool does not apply: a rare that a player
+// trades to a bot is worn. The comparison is the item level, the same rule GiveAndEquip keeps a worn item by, so the two passes cannot
+// undo each other.
+uint32 EquipBagUpgrades(Player& bot)
+{
+    std::vector<Item*> candidates;
+    bot.ForEachItem(ItemSearchLocation::Inventory, [&candidates](Item* item)
+    {
+        ItemTemplate const* proto = item->GetTemplate();
+        if (proto && (proto->GetClass() == ITEM_CLASS_WEAPON || proto->GetClass() == ITEM_CLASS_ARMOR) &&
+            proto->GetInventoryType() != INVTYPE_BODY && EquipSlotFor(proto->GetInventoryType()) != NULL_SLOT)
+            candidates.push_back(item);
+        return ItemSearchCallbackResult::Continue;
+    });
+    // the best item level first
+    std::stable_sort(candidates.begin(), candidates.end(), [](Item const* a, Item const* b)
+    {
+        return a->GetTemplate()->GetBaseItemLevel() > b->GetTemplate()->GetBaseItemLevel();
+    });
+
+    uint32 equipped = 0;
+    for (Item* item : candidates)
+    {
+        ItemTemplate const* proto = item->GetTemplate();
+        if (proto->GetBaseRequiredLevel() > int32(bot.GetLevel()) || bot.CanUseItem(proto) != EQUIP_ERR_OK || ArmorTooHeavy(bot, *proto))
+            continue;
+        uint16 destination = 0;
+        if (bot.CanEquipItem(NULL_SLOT, destination, item, true) != EQUIP_ERR_OK)
+            continue;
+        uint8 const slot = uint8(destination & 255);
+        Item* worn = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+        if (worn && worn->GetTemplate()->GetBaseItemLevel() >= proto->GetBaseItemLevel())
+            continue;
+        bot.SwapItem(item->GetPos(), destination);
+        if (bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot) == item)
+        {
+            ++equipped;
+            TC_LOG_INFO("server.worldserver", "BotMgr: autogear bag upgrade bot={} slot={} item={} ilvl={}", bot.GetName(), uint32(slot), proto->GetId(),
+                proto->GetBaseItemLevel());
+        }
+    }
+    return equipped;
+}
+
 BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
 {
+    // spell_id bit 2: only wear what is better in the bags (EquipBagUpgrades), no pass over the item pool. The module asks for this on its own
+    // schedule and after a trade, so a bot wears what it was given or looted whether or not an auto gear pass is due.
+    bool const bagOnly = (flags & 2) != 0;
     static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Actions.AutoGear", true);
-    if (!allowed)
+    static bool const upgradesAllowed = sConfigMgr->GetBoolDefault("Bot.Actions.EquipUpgrades", true);
+    if (bagOnly ? !upgradesAllowed : !allowed)
     {
-        reason = "Bot.Actions.AutoGear is off";
+        reason = bagOnly ? "Bot.Actions.EquipUpgrades is off" : "Bot.Actions.AutoGear is off";
         return BotActionStatus::kRefused;
     }
     if (bot.IsInCombat())
@@ -452,6 +501,11 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
     {
         reason = "an alt is a player's own character and is not dressed";
         return BotActionStatus::kRefused;
+    }
+    if (bagOnly)
+    {
+        EquipBagUpgrades(bot);
+        return BotActionStatus::kApplied;
     }
 
     bool const tank = (flags & 1) != 0;
@@ -542,6 +596,9 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
     for (auto const& [slot, pick] : bySlot)
         if (pick.Item)
             apply(pick, slot);
+
+    // Gear the bot already carries (a trade, a loot) is worn when it beats what is worn.
+    equipped += EquipBagUpgrades(bot);
 
     // What the bot wears now, from the loaded item template store, each against the quality cap.
     uint32 const maxQuality = uint32(std::max(1, sConfigMgr->GetIntDefault("Bot.AutoGear.MaxQuality", 2)));

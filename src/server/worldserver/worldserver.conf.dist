@@ -1804,6 +1804,12 @@ Bot.Limit.MaxDbQueue = 5000
 #            common to Bot.AutoGear.MaxQuality quality, is created and equipped. The module decides when (its AutoGearing setting, or
 #            the .autogear command).
 #
+#    Bot.Actions.EquipUpgrades
+#        Default:     1
+#        1 = a module may ask a bot to wear the gear it carries when that is better than what it wears (a higher item level, usable by the
+#            bot). The bots module asks every few minutes out of combat and after a trade, so gear a player trades to a bot is worn without
+#            waiting for an auto gear pass. Not applied to alts. Independent of Bot.Actions.AutoGear.
+#
 #    Bot.AutoGear.MaxQuality
 #        Default:     2
 #        The highest item quality auto gear hands out: 1 common, 2 uncommon (green), 3 rare (blue).
@@ -1884,6 +1890,7 @@ Bot.Actions.Teleport = 0
 Bot.Actions.Grant = 0
 Bot.Actions.AutoGear = 1
 Bot.AutoGear.MaxQuality = 2
+Bot.Actions.EquipUpgrades = 1
 
 Bot.Bags.Item = 3914
 Bot.Bags.Count = 4
