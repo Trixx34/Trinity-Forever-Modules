@@ -2186,6 +2186,16 @@ void ScriptMgr::OnPlayerAddonMessageSent(Player* player, uint32 type, std::strin
     FOREACH_SCRIPT(PlayerScript)->OnAddonMessageSent(player, type, prefix, text, group);
 }
 
+void ScriptMgr::OnPlayerPingUnit(Player* player, Group* group, Unit* target, uint8 type)
+{
+    FOREACH_SCRIPT(PlayerScript)->OnPingUnit(player, group, target, type);
+}
+
+void ScriptMgr::OnPlayerPingWorldPoint(Player* player, Group* group, Position const& point, uint8 type)
+{
+    FOREACH_SCRIPT(PlayerScript)->OnPingWorldPoint(player, group, point, type);
+}
+
 void ScriptMgr::OnPlayerClearEmote(Player* player)
 {
     FOREACH_SCRIPT(PlayerScript)->OnClearEmote(player);
@@ -2443,6 +2453,11 @@ void ScriptMgr::OnGroupSubgroupChange(Group* group, ObjectGuid guid, uint8 subgr
 void ScriptMgr::OnHeal(Unit* healer, Unit* reciever, uint32& gain)
 {
     FOREACH_SCRIPT(UnitScript)->OnHeal(healer, reciever, gain);
+}
+
+void ScriptMgr::OnDamageSpell(Unit* attacker, Unit* victim, uint32 damage, SpellInfo const* spellInfo)
+{
+    FOREACH_SCRIPT(UnitScript)->OnDamageSpell(attacker, victim, damage, spellInfo);
 }
 
 void ScriptMgr::OnDamage(Unit* attacker, Unit* victim, uint32& damage)
@@ -2832,6 +2847,10 @@ void UnitScript::OnHeal(Unit* /*healer*/, Unit* /*reciever*/, uint32& /*gain*/)
 {
 }
 
+void UnitScript::OnDamageSpell(Unit* /*attacker*/, Unit* /*victim*/, uint32 /*damage*/, SpellInfo const* /*spellInfo*/)
+{
+}
+
 void UnitScript::OnDamage(Unit* /*attacker*/, Unit* /*victim*/, uint32& /*damage*/)
 {
 }
@@ -3177,6 +3196,14 @@ void PlayerScript::OnAddonMessageSent(Player* /*player*/, uint32 /*type*/, std::
 }
 
 void PlayerScript::OnAddonMessageSent(Player* /*player*/, uint32 /*type*/, std::string const& /*prefix*/, std::string const& /*text*/, Group* /*group*/)
+{
+}
+
+void PlayerScript::OnPingUnit(Player* /*player*/, Group* /*group*/, Unit* /*target*/, uint8 /*type*/)
+{
+}
+
+void PlayerScript::OnPingWorldPoint(Player* /*player*/, Group* /*group*/, Position const& /*point*/, uint8 /*type*/)
 {
 }
 
