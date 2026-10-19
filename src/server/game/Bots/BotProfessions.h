@@ -142,6 +142,10 @@ bool Enabled();
 // The profession a tradeskill trainer teaches (a SKILL_* of a primary profession), or 0 when it teaches none (cooking, first aid, fishing, riding).
 uint32 SkillOfTrainer(Trainer::Trainer const& trainer);
 
+// Whether a bot may learn every spell of this trainer, whatever its type: false as soon as one of them belongs to a primary profession the bot
+// does not have. Always true when Bot.Professions.Enabled is off. Every path that teaches a bot a trainer's spells checks this.
+bool TrainerMayTeach(Trainer::Trainer const& trainer, uint64 botGuid);
+
 // Teaches a bot its two professions: every spell of their trainers that it may learn now (the first rank at once, higher ranks as its skill allows). Returns
 // how many spells were taught. Not for alts.
 uint32 Teach(Player& bot);

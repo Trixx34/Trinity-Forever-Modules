@@ -261,7 +261,8 @@ uint32 TeachTrainerSpells(Player& bot)
     {
         uint32 learned = 0;
         for (auto const& [id, trainer] : sObjectMgr->GetTrainers())
-            if (trainer.GetType() != Trainer::Type::Tradeskill && trainer.GetType() != Trainer::Type::Pet)
+            if (trainer.GetType() != Trainer::Type::Tradeskill && trainer.GetType() != Trainer::Type::Pet
+                && BotProfessions::TrainerMayTeach(trainer, bot.GetGUID().GetCounter()))
                 learned += trainer.TeachAvailableSpellsFree(&bot);
         taught += learned;
         if (!learned)

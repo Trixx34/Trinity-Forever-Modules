@@ -53,6 +53,16 @@ uint32 SkillOfTrainer(Trainer::Trainer const& trainer)
     return skill;
 }
 
+bool TrainerMayTeach(Trainer::Trainer const& trainer, uint64 botGuid)
+{
+    if (!Enabled())
+        return true;
+    for (Trainer::Spell const& spell : trainer.Spells())
+        if (!MayLearn(botGuid, SkillOfSpell(spell.SpellId)))
+            return false;
+    return true;
+}
+
 uint32 Teach(Player& bot)
 {
     if (!Enabled())
@@ -68,7 +78,7 @@ uint32 Teach(Player& bot)
             if (trainer.GetType() != Trainer::Type::Tradeskill)
                 continue;
             uint32 const skill = SkillOfTrainer(trainer);
-            if (skill && IsOneOf(key, skill))
+            if (skill && IsOneOf(key, skill) && TrainerMayTeach(trainer, key))
                 learned += trainer.TeachAvailableSpellsFree(&bot, true);
         }
         taught += learned;
