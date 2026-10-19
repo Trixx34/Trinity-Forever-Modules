@@ -1,5 +1,7 @@
 #include "ModuleBotSnapshot.h"
 #include "ModuleBotSupplies.h"
+#include "BotMgr.h"
+#include "BotProfessions.h"
 #include "BotTaxi.h"
 #include "ObjectAccessor.h"
 #include "Cell.h"
@@ -568,6 +570,23 @@ void FillTaxi(Player& bot, BotSnapshot& entry, VendorLookup& last)
     }
 }
 
+// Layout 18: the two professions the core assigned to the bot, and its skill in each. Not for an alt, which has its player's own.
+void FillProfessions(Player& bot, BotSnapshot& entry)
+{
+    if (!BotProfessions::Enabled() || sBotMgr->IsActiveAlt(bot.GetGUID().GetCounter()))
+        return;
+    std::array<uint32, 2> const set = BotProfessions::SetFor(bot.GetGUID().GetCounter());
+    for (size_t i = 0; i < set.size(); ++i)
+    {
+        entry.profession_skill[i] = uint16(set[i]);
+        if (bot.HasSkill(set[i]))
+        {
+            entry.profession_value[i] = bot.GetPureSkillValue(set[i]);
+            entry.profession_max[i] = bot.GetPureMaxSkillValue(set[i]);
+        }
+    }
+}
+
 // Fills the nearest-vendor fields (layout 6, M6), the nearest-repairman fields (layout 9) and the guids of all three NPCs
 // (layout 13: vendor_guid, repair_guid, auctioneer_guid). The position is 2D for the distance:
 // vendors sit at different heights in the same town, and the walk is on the ground. Only vendors the bot's faction is not hostile to
@@ -651,6 +670,7 @@ void FillNearestVendor(Player& bot, BotSnapshot& entry)
 
     FillSupplies(bot, entry, last);
     FillTaxi(bot, entry, last);
+    FillProfessions(bot, entry);
 }
 
 // The lowest durability among the equipped items that wear out, in percent (100 when none does).

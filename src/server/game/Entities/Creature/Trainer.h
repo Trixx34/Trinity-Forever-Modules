@@ -77,7 +77,9 @@ namespace Trainer
 
         // Teaches the player every spell of this trainer it could learn at the trainer right now, without an NPC and without
         // payment (bots, which level up away from trainers). Skill-line (profession) spells are left out. Returns how many were taught.
-        uint32 TeachAvailableSpellsFree(Player* player) const;
+        uint32 TeachAvailableSpellsFree(Player* player) const { return TeachAvailableSpellsFree(player, false); }
+        // withSkillRanks: also the spells that need a rank in a skill (the higher ranks of a profession), when the player has it.
+        uint32 TeachAvailableSpellsFree(Player* player, bool withSkillRanks) const;
 
     private:
         Spell const* GetSpell(uint32 spellId) const;

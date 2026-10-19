@@ -3,6 +3,7 @@
  */
 
 #include "BotMgr.h"
+#include "BotProfessions.h"
 #include "AccountMgr.h"
 #include "CharacterCache.h"
 #include "CharacterPackets.h"
@@ -902,6 +903,7 @@ void BotMgr::OnBotLevelChanged(Player& bot)
     static bool const raiseSkills = sConfigMgr->GetBoolDefault("Bot.Learn.CombatSkills", true);
 
     uint32 taught = learnSpells ? TeachTrainerSpells(bot) : 0;
+    taught += BotProfessions::Teach(bot); // the bot's two professions (BotProfessions.h)
 
     uint32 raised = 0;
     if (raiseSkills)

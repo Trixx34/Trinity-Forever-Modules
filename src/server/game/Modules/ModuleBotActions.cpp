@@ -1,4 +1,5 @@
 #include "ModuleBotActions.h"
+#include "BotProfessions.h"
 #include "BotTaxi.h"
 #include "BotGearRules.h"
 #include "ModuleBotSnapshot.h"
@@ -836,6 +837,14 @@ BotActionStatus LearnFromTrainer(Player& bot, std::string& reason)
         reason = "trainer teaches nothing";
         return BotActionStatus::kRefused;
     }
+
+    // A bot has two primary professions (BotProfessions.h) and learns no others, whatever trainer it stands at. Its own come for free when it levels.
+    if (BotProfessions::Enabled() && !sBotMgr->IsActiveAlt(bot.GetGUID().GetCounter()))
+        if (uint32 const skill = BotProfessions::SkillOfTrainer(*teaches); skill && !BotProfessions::IsOneOf(bot.GetGUID().GetCounter(), skill))
+        {
+            reason = "the trainer teaches a profession that is not one of this bot's";
+            return BotActionStatus::kRefused;
+        }
 
     std::vector<Trainer::Spell> spells = teaches->Spells();
     std::stable_sort(spells.begin(), spells.end(), [](Trainer::Spell const& a, Trainer::Spell const& b)

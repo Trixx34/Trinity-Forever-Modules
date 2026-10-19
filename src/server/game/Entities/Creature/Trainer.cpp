@@ -135,12 +135,12 @@ namespace Trainer
         }
     }
 
-    uint32 Trainer::TeachAvailableSpellsFree(Player* player) const
+    uint32 Trainer::TeachAvailableSpellsFree(Player* player, bool withSkillRanks) const
     {
         uint32 learned = 0;
         for (Spell const& trainerSpell : _spells)
         {
-            if (trainerSpell.ReqSkillLine || !CanTeachSpell(player, &trainerSpell))
+            if ((trainerSpell.ReqSkillLine && !withSkillRanks) || !CanTeachSpell(player, &trainerSpell))
                 continue;
 
             if (trainerSpell.IsCastable())

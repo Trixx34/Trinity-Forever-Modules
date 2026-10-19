@@ -1817,6 +1817,14 @@ Bot.Limit.MaxDbQueue = 5000
 #            food or drink the bot may use at its level, bought until the bot carries the count the module asked for or its money or bags run
 #            out. The snapshot always tells the module what the bot carries and where the nearest vendor that sells it is.
 #
+#    Bot.Professions.Enabled
+#        Default:     1
+#        1 = every bot (not an alt) is assigned two primary professions that make sense together and is taught them for free when it logs in or levels up, like its class
+#            spells: two gathering professions (Mining, Herbalism, Skinning), or Mining + Engineering, Mining + Blacksmithing, Skinning + Leatherworking, Alchemy + Herbalism,
+#            Tailoring + Enchanting. The pair is chosen from the character guid and never changes. A profession trainer's spells are never taught to a bot for a profession
+#            outside its pair (kTrain refuses them). First Aid, Cooking, Fishing and Riding are not restricted. Higher ranks are learned as the skill allows; nothing raises
+#            the skill yet.
+#
 #    Bot.Taxi.Enabled
 #        Default:     1
 #        1 = a module may make a bot fly (kTaxi): from a flight master to the flight node nearest to a point on the bot's map. A bot knows every flight node
