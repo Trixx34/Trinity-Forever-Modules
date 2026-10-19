@@ -1817,6 +1817,20 @@ Bot.Limit.MaxDbQueue = 5000
 #            food or drink the bot may use at its level, bought until the bot carries the count the module asked for or its money or bags run
 #            out. The snapshot always tells the module what the bot carries and where the nearest vendor that sells it is.
 #
+#    Bot.Taxi.Enabled
+#        Default:     1
+#        1 = a module may make a bot fly (kTaxi): from a flight master to the flight node nearest to a point on the bot's map. A bot knows every flight node
+#            of its faction (no flight master has to be visited first). Alts are not affected.
+#
+#    Bot.Taxi.Free
+#        Default:     1
+#        1 = a bot's flight costs nothing. 0 = it is charged like a player and refused when it cannot pay.
+#
+#    Bot.Taxi.MinGainYards
+#        Default:     600
+#        A flight must land the bot at least this many yards closer to the point it wants to reach than the flight master it starts from; otherwise it is
+#        refused and the bot walks.
+#
 #    Bot.Mail.Collect
 #        Default:     1
 #        1 = a bot (not an alt) takes the money and items of its delivered mail without a mailbox, and deletes the mail that is empty: the pay of an auction

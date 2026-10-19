@@ -37,7 +37,7 @@ int main()
     // The core writes kTier2LayoutVersion into the region and the module refuses to attach on any other value, so the
     // number is pinned here as well as compared below: a silent bump of the core's copy would otherwise only show up as a
     // module that refuses to attach.
-    CHECK(forever_module::kTier2LayoutVersion == 16);
+    CHECK(forever_module::kTier2LayoutVersion == 17);
     CHECK(static_cast<int>(forever_module::BotActionStatus::kNoRoute) == 13);
     CHECK(static_cast<int>(forever_module::ActionType::kCraft) == 20);
     CHECK(static_cast<int>(forever_module::ActionType::kGather) == 21);
@@ -264,6 +264,13 @@ int main()
     withBot[0].Bot.food_vendor_y = 8.0f;
     withBot[0].Bot.food_vendor_z = 9.5f;
     withBot[0].Bot.food_vendor_guid = forever_module::MakeUnitRef(8, 1465, 12);
+    // Layout 17: the flight master and the flight.
+    withBot[0].Bot.taxi_master_valid = 1;
+    withBot[0].Bot.in_flight = 1;
+    withBot[0].Bot.taxi_master_x = 11.5f;
+    withBot[0].Bot.taxi_master_y = -12.5f;
+    withBot[0].Bot.taxi_master_z = 13.5f;
+    withBot[0].Bot.taxi_master_guid = forever_module::MakeUnitRef(8, 3838, 5);
     // Layout 16: potions, bandages and the vendor that sells them.
     withBot[0].Bot.health_potion_count = 4;
     withBot[0].Bot.mana_potion_count = 2;
@@ -302,6 +309,8 @@ int main()
     CHECK(read13->health_potion_count == 4 && read13->mana_potion_count == 2 && read13->bandage_count == 11);
     CHECK(read13->goods_vendor_valid == 1 && read13->goods_vendor_x == 1.5f && read13->goods_vendor_y == -2.5f && read13->goods_vendor_z == 3.5f);
     CHECK(read13->goods_vendor_guid == forever_module::MakeUnitRef(8, 5100, 41));
+    CHECK(read13->taxi_master_valid == 1 && read13->in_flight == 1 && read13->taxi_master_x == 11.5f && read13->taxi_master_y == -12.5f && read13->taxi_master_z == 13.5f);
+    CHECK(read13->taxi_master_guid == forever_module::MakeUnitRef(8, 3838, 5));
     auto const* read13Near = reinterpret_cast<forever_module::NearbyUnit const*>(read13 + 4);
     CHECK(read13Near[0].aura_count == 3 && read13Near[0].aura_mask == 0x00000005);
 

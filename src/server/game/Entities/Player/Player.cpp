@@ -16,6 +16,7 @@
  */
 
 #include "Player.h"
+#include "BotTaxi.h"
 #include "BotMgr.h"
 #include "CombatEnchantProc.h"
 #include "DeathRecap.h"
@@ -24136,6 +24137,10 @@ bool Player::ActivateTaxiPathTo(std::vector<uint32> const& nodes, Creature* npc 
     // Legacy perk Frequent Flier: discount on flight paths
     totalcost = uint32(ApplyClassicLegacyPriceMod(totalcost, 4));
     firstcost = uint32(ApplyClassicLegacyPriceMod(firstcost, 4));
+
+    // A bot flies free (Bot.Taxi.Free); an alt pays like the player.
+    if (BotTaxi::FliesFree(*this))
+        totalcost = firstcost = 0;
 
     if (money < totalcost)
     {

@@ -1,5 +1,6 @@
 #include "ModuleBotSnapshot.h"
 #include "ModuleBotSupplies.h"
+#include "BotTaxi.h"
 #include "ObjectAccessor.h"
 #include "Cell.h"
 #include "Corpse.h"
@@ -161,6 +162,8 @@ struct VendorSpot
     uint64 SpawnId;                        // the spawn's low guid: the counter field of a unit reference
     bool Repair;                           // the creature repairs gear (UNIT_NPC_FLAG_REPAIR)
     bool Auctioneer;                       // the creature runs an auction house (UNIT_NPC_FLAG_AUCTIONEER)
+    bool FlightMaster;                     // the creature is a flight master (layout 17)
+    bool OtherService;                     // it also vends, repairs or auctions: a pure flight master is not a vendor
     FactionTemplateEntry const* Faction;   // the creature's faction, so a bot does not walk to a town that kills it
     ModuleBotSupplies::VendorStock Stock;  // what it sells that a bot needs (layout 15): the lowest required level of each kind
 };
@@ -191,7 +194,7 @@ std::unordered_map<uint32, std::vector<VendorSpot>> const& VendorsByMap()
             CreatureData const& spawn = spawnEntry.second;
             ++spawns;
             CreatureTemplate const* templ = sObjectMgr->GetCreatureTemplate(spawn.id);
-            if (!templ || (templ->npcflag & (UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR | UNIT_NPC_FLAG_AUCTIONEER)) == 0)
+            if (!templ || (templ->npcflag & (UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR | UNIT_NPC_FLAG_AUCTIONEER | UNIT_NPC_FLAG_FLIGHTMASTER)) == 0)
                 continue;
             uint32 const factionId = templ->faction;
             auto stock = stockOf.find(spawn.id);
@@ -201,6 +204,8 @@ std::unordered_map<uint32, std::vector<VendorSpot>> const& VendorsByMap()
                                              spawn.spawnPoint.GetPositionZ(), spawn.id, spawn.spawnId,
                                              (templ->npcflag & UNIT_NPC_FLAG_REPAIR) != 0,
                                              (templ->npcflag & UNIT_NPC_FLAG_AUCTIONEER) != 0,
+                                             (templ->npcflag & UNIT_NPC_FLAG_FLIGHTMASTER) != 0,
+                                             (templ->npcflag & (UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR | UNIT_NPC_FLAG_AUCTIONEER)) != 0,
                                              sFactionTemplateStore.LookupEntry(factionId), stock->second });
         }
 
@@ -233,6 +238,9 @@ struct VendorLookup
     VendorSpot Repairman{};
     bool FoundAuctioneer = false;   // ... and an auctioneer
     VendorSpot Auctioneer{};
+    bool FoundTaxiMaster = false;   // layout 17: ... and a flight master the bot can walk to
+    VendorSpot TaxiMaster{};
+    bool TaxiChecked = false;       // the route to it was looked at (it is looked at once per lookup, and again when the lookup is)
 
     // Layout 15: the nearest vendors that sell what the bot can use, chosen for the level, the kind of ranged weapon and the mana the bot
     // has when they were chosen (SupplyMade), and chosen again when any of those changes.
@@ -519,6 +527,47 @@ void FillSupplies(Player& bot, BotSnapshot& entry, VendorLookup& last)
     }
 }
 
+// Layout 17: the nearest flight master the bot can walk to, and whether it is on a flight. The master is looked for once for each vendor lookup (the bot has
+// moved 100 yards, or changed map) among the 4 nearest of its faction's, nearest first, by the same route check the supply vendors get.
+void FillTaxi(Player& bot, BotSnapshot& entry, VendorLookup& last)
+{
+    entry.in_flight = bot.IsInFlight() ? 1 : 0;
+    if (!BotTaxi::Enabled())
+        return;
+    if (!last.TaxiChecked)
+    {
+        auto const& vendors = VendorsByMap();
+        auto const onMap = vendors.find(last.MapId);
+        if (onMap != vendors.end())
+        {
+            FactionTemplateEntry const* mine = bot.GetFactionTemplateEntry();
+            std::vector<Candidate> near;
+            for (VendorSpot const& spot : onMap->second)
+            {
+                if (!spot.FlightMaster || (mine && spot.Faction && mine->IsHostileTo(spot.Faction)))
+                    continue;
+                float const sx = spot.X - last.X;
+                float const sy = spot.Y - last.Y;
+                KeepNearest(near, sx * sx + sy * sy, spot);
+            }
+            std::unordered_map<uint64, bool> checked;
+            Route const route = PickReachable(bot, near, checked, last.TaxiMaster);
+            last.FoundTaxiMaster = route == Route::Open;
+            last.TaxiChecked = route != Route::Later; // out of path checks: looked at again next update
+        }
+        else
+            last.TaxiChecked = true;
+    }
+    if (last.FoundTaxiMaster)
+    {
+        entry.taxi_master_x = last.TaxiMaster.X;
+        entry.taxi_master_y = last.TaxiMaster.Y;
+        entry.taxi_master_z = last.TaxiMaster.Z;
+        entry.taxi_master_valid = 1;
+        entry.taxi_master_guid = VendorSpotRef(last.TaxiMaster);
+    }
+}
+
 // Fills the nearest-vendor fields (layout 6, M6), the nearest-repairman fields (layout 9) and the guids of all three NPCs
 // (layout 13: vendor_guid, repair_guid, auctioneer_guid). The position is 2D for the distance:
 // vendors sit at different heights in the same town, and the walk is on the ground. Only vendors the bot's faction is not hostile to
@@ -552,6 +601,8 @@ void FillNearestVendor(Player& bot, BotSnapshot& entry)
             {
                 if (mine && spot.Faction && mine->IsHostileTo(spot.Faction))
                     continue;
+                if (!spot.OtherService)
+                    continue; // a pure flight master is none of the three
                 float const sx = spot.X - x;
                 float const sy = spot.Y - y;
                 float const distSq = sx * sx + sy * sy;
@@ -599,6 +650,7 @@ void FillNearestVendor(Player& bot, BotSnapshot& entry)
         entry.auctioneer_guid = VendorSpotRef(last.Auctioneer);
 
     FillSupplies(bot, entry, last);
+    FillTaxi(bot, entry, last);
 }
 
 // The lowest durability among the equipped items that wear out, in percent (100 when none does).

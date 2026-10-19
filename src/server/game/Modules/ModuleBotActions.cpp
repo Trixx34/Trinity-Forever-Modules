@@ -1,4 +1,5 @@
 #include "ModuleBotActions.h"
+#include "BotTaxi.h"
 #include "BotGearRules.h"
 #include "ModuleBotSnapshot.h"
 #include "ModuleBotSupplies.h"
@@ -37,6 +38,8 @@
 #include "QuestDef.h"
 #include "SpellHistory.h"
 #include "SpellInfo.h"
+#include "DB2Stores.h"
+#include "TaxiPathGraph.h"
 #include "SpellMgr.h"
 #include "Trainer.h"
 #include "World.h"
@@ -1394,6 +1397,82 @@ bool HasFullRouteTo(Player& bot, float x, float y, float z)
     return !((type & (PATHFIND_NOPATH | PATHFIND_INCOMPLETE)) != 0);
 }
 
+// Fly (layout 17, ActionType::kTaxi). The bot stands at a flight master (target_guid names it, 0 = the nearest in reach) and wants to get near
+// (dest_x, dest_y, dest_z) on its own map (spell_id is that map). Every bot knows every flight node (the known-node check of the player's handler is
+// skipped) and flies free (Player::ActivateTaxiPathTo does not charge a bot, BotTaxi::FliesFree). The flight goes from the node at the flight master to the node
+// nearest to the point, by the shortest route of the faction's graph, and is refused when it would not bring the bot at least Bot.Taxi.MinGainYards closer.
+BotActionStatus TaxiAction(Player& bot, BotAction const& action, std::string& reason)
+{
+    if (!BotTaxi::Enabled())
+    {
+        reason = "Bot.Taxi.Enabled is off";
+        return BotActionStatus::kRefused;
+    }
+    if (!bot.IsAlive() || bot.IsInCombat() || bot.IsInFlight())
+    {
+        reason = !bot.IsAlive() ? "bot is dead" : bot.IsInCombat() ? "bot is in combat" : "bot is on a flight already";
+        return BotActionStatus::kRefused;
+    }
+    if (action.spell_id != bot.GetMapId())
+    {
+        reason = "the point is on map " + std::to_string(action.spell_id) + ", the bot is on map " + std::to_string(bot.GetMapId());
+        return BotActionStatus::kRefused;
+    }
+
+    Creature* master = nullptr;
+    if (Unit* named = action.target_guid ? ResolveUnit(bot, action.target_guid) : nullptr)
+        if (Creature* creature = named->ToCreature();
+            creature && creature->IsInWorld() && creature->IsAlive() &&
+            bot.GetNPCIfCanInteractWith(creature->GetGUID(), UNIT_NPC_FLAG_FLIGHTMASTER, UNIT_NPC_FLAG_2_NONE))
+            master = creature;
+    if (!master)
+        master = NearestServiceNpc(bot, UNIT_NPC_FLAG_FLIGHTMASTER);
+    if (!master)
+    {
+        reason = "no flight master within interaction range";
+        return BotActionStatus::kRefused;
+    }
+
+    uint32 const team = bot.GetTeam();
+    uint32 const fromId = sObjectMgr->GetNearestTaxiNode(master->GetPositionX(), master->GetPositionY(), master->GetPositionZ(), master->GetMapId(), team);
+    uint32 const toId = sObjectMgr->GetNearestTaxiNode(action.dest_x, action.dest_y, action.dest_z, action.spell_id, team);
+    TaxiNodesEntry const* from = fromId ? sTaxiNodesStore.LookupEntry(fromId) : nullptr;
+    TaxiNodesEntry const* to = toId ? sTaxiNodesStore.LookupEntry(toId) : nullptr;
+    if (!from || !to)
+    {
+        reason = "no flight node near the flight master or near the point";
+        return BotActionStatus::kRefused;
+    }
+    if (from->ID == to->ID)
+    {
+        reason = "the nearest flight node to the point is the one the bot stands at";
+        return BotActionStatus::kRefused;
+    }
+
+    // Worth it: the landing must be closer to the point than the flight master is, by at least the gain.
+    float const here = std::hypot(master->GetPositionX() - action.dest_x, master->GetPositionY() - action.dest_y);
+    float const landing = std::hypot(to->Pos.X - action.dest_x, to->Pos.Y - action.dest_y);
+    if (landing + BotTaxi::MinGainYards() > here)
+    {
+        reason = "a flight would bring the bot only " + std::to_string(int32(here - landing)) + " yards closer";
+        return BotActionStatus::kRefused;
+    }
+
+    std::vector<uint32> nodes;
+    TaxiPathGraph::GetCompleteNodeRoute(from, to, &bot, nodes);
+    if (nodes.size() < 2)
+    {
+        reason = "no flight path from node " + std::to_string(from->ID) + " to node " + std::to_string(to->ID);
+        return BotActionStatus::kRefused;
+    }
+    if (!bot.ActivateTaxiPathTo(nodes, master))
+    {
+        reason = "the flight was refused (busy, shapeshifted or casting)";
+        return BotActionStatus::kRefused;
+    }
+    return BotActionStatus::kApplied;
+}
+
 // Layout 16 adds potions and bandages: spell_id 3 uses the best health potion, 4 the best mana potion (both allowed in combat and on the move,
 // as for a player; the item's cooldown applies), 5 the best bandage (out of combat, standing still).
 // Eat or drink (layout 15, ActionType::kConsume). spell_id 1 uses the best food the bot carries, 2 the best drink. The item's own use spell is
@@ -1784,6 +1863,9 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
 
         case ActionType::kConsume:
             return ConsumeAction(bot, action, reason);
+
+        case ActionType::kTaxi:
+            return TaxiAction(bot, action, reason);
 
         // Layout 12: crafting and gathering. kLastActionType admits them, so the switch must answer for them: they are
         // refused with a reason a module can log rather than falling through to "unknown action type" below.
