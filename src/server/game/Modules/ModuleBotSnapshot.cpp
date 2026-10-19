@@ -666,7 +666,13 @@ void FillNearestVendor(Player& bot, BotSnapshot& entry)
     if (last.FoundVendor)
         entry.vendor_guid = VendorSpotRef(last.Vendor);
     if (last.FoundAuctioneer)
+    {
         entry.auctioneer_guid = VendorSpotRef(last.Auctioneer);
+        entry.auctioneer_x = last.Auctioneer.X;
+        entry.auctioneer_y = last.Auctioneer.Y;
+        entry.auctioneer_z = last.Auctioneer.Z;
+        entry.auctioneer_valid = 1;
+    }
 
     FillSupplies(bot, entry, last);
     FillTaxi(bot, entry, last);

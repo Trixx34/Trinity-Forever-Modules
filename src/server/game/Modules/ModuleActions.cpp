@@ -321,11 +321,13 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
             }
             AuctionHouseObject* ah = sAuctionMgr->GetAuctionsMap(auctioneer->GetCreatureTemplate()->faction);
 
-            Player* anyPlayer = nullptr;
+            // The locale comes from the bot searching when it is online (its own faction's house), else any online player.
+            Player* anyPlayer = request.PlayerGuid ? ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(request.PlayerGuid)) : nullptr;
             for (auto const& [guid, player] : ObjectAccessor::GetPlayers())
             {
+                if (anyPlayer)
+                    break;
                 anyPlayer = player;
-                break;
             }
             if (!anyPlayer)
             {
@@ -356,6 +358,8 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
                 event.Seller = sellerName;
                 event.QueryItem = request.ItemEntry;
                 event.TotalMatches = total;
+                event.PlayerGuid = request.PlayerGuid;
+                event.RequestId = request.MessageId;
                 ModuleMgr::instance()->DispatchAuctionListing("PlayerScript.OnAuctionResult", event);
             }
 

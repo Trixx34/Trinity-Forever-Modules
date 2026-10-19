@@ -37,14 +37,16 @@ int main()
     // The core writes kTier2LayoutVersion into the region and the module refuses to attach on any other value, so the
     // number is pinned here as well as compared below: a silent bump of the core's copy would otherwise only show up as a
     // module that refuses to attach.
-    CHECK(forever_module::kTier2LayoutVersion == 19);
+    CHECK(forever_module::kTier2LayoutVersion == 20);
     CHECK(static_cast<int>(forever_module::BotActionStatus::kNoRoute) == 13);
     CHECK(static_cast<int>(forever_module::ActionType::kCraft) == 20);
     CHECK(static_cast<int>(forever_module::ActionType::kGather) == 21);
     CHECK(static_cast<int>(forever_module::ActionType::kPetCommand) == 22);
     CHECK(static_cast<int>(forever_module::ActionType::kConsume) == 23);
+    CHECK(static_cast<int>(forever_module::ActionType::kUseObject) == 25);
+    CHECK(static_cast<int>(forever_module::ActionType::kSellToVendor) == 26);
     CHECK(static_cast<int>(forever_module::ActionType::kLastActionType) ==
-          static_cast<int>(forever_module::ActionType::kConsume));
+          static_cast<int>(forever_module::ActionType::kSellToVendor));
     CHECK(forever_module::kMaxAuras == 16);
 
     // The shared region is mapped by two processes built separately, so a shape that changes without a layout bump is

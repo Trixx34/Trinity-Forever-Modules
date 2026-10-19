@@ -5,6 +5,7 @@
 #include "ModuleBotSnapshot.h"
 #include "ModuleBotSupplies.h"
 #include <cmath>
+#include <limits>
 #include "BotMgr.h"
 #include "Cell.h"
 #include "CharmInfo.h"
@@ -227,6 +228,36 @@ uint32 SellGreyItems(Player& bot)
     for (Item* item : grey)
         if (!bot.SellItemToVendor(item, item->GetCount())) // no value means it was sold
             ++sold;
+    return sold;
+}
+
+// Sells `count` of the items of `entry` in the bags to the vendor, a stack at a time (0 = every one the bot carries of it). Returns how many
+// were sold. An item the vendor will not take (no sell price, a bag that is not empty) is kept.
+uint32 SellEntryToVendor(Player& bot, uint32 entry, uint32 count)
+{
+    std::vector<Item*> items;
+    bot.ForEachItem(ItemSearchLocation::Inventory, [&items, entry](Item* item)
+    {
+        if (item->GetEntry() == entry)
+            items.push_back(item);
+        return ItemSearchCallbackResult::Continue;
+    });
+
+    uint32 remaining = count ? count : std::numeric_limits<uint32>::max();
+    uint32 sold = 0;
+    for (Item* item : items)
+    {
+        if (remaining == 0)
+            break;
+        uint32 const amount = std::min(item->GetCount(), remaining);
+        if (bot.CanSellItemToVendor(item, amount))
+            continue;
+        if (!bot.SellItemToVendor(item, amount)) // no value means it was sold
+        {
+            sold += amount;
+            remaining -= amount;
+        }
+    }
     return sold;
 }
 
@@ -1884,6 +1915,35 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             }
             if (services & kServiceEquipBit)
                 EquipBestGear(bot);
+            return BotActionStatus::kApplied;
+        }
+
+        case ActionType::kSellToVendor:
+        {
+            if (bot.IsInCombat())
+            {
+                reason = "bot is in combat";
+                return BotActionStatus::kRefused;
+            }
+            Creature* npc = nullptr;
+            if (Unit* named = action.target_guid ? ResolveUnit(bot, action.target_guid) : nullptr)
+                if (Creature* creature = named->ToCreature();
+                    creature && creature->IsInWorld() && creature->IsAlive() &&
+                    bot.GetNPCIfCanInteractWith(creature->GetGUID(), UNIT_NPC_FLAG_VENDOR_MASK, UNIT_NPC_FLAG_2_NONE))
+                    npc = creature;
+            if (!npc)
+                npc = NearestServiceNpc(bot, UNIT_NPC_FLAG_VENDOR_MASK);
+            if (!npc)
+            {
+                reason = "no vendor within interaction range";
+                return BotActionStatus::kRefused;
+            }
+            uint32 const count = uint32(std::clamp(action.dest_x, 0.0f, kMaxSupplyTarget));
+            if (SellEntryToVendor(bot, action.spell_id, count) == 0)
+            {
+                reason = "nothing of that item to sell to this vendor";
+                return BotActionStatus::kRefused;
+            }
             return BotActionStatus::kApplied;
         }
 

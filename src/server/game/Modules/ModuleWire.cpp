@@ -267,6 +267,8 @@ std::string EncodeEventNotifyAuctionListing(std::string_view hookName, AuctionLi
         AppendBytesField(payload, 7, event.Seller);
     AppendVarintField(payload, 8, event.QueryItem);
     AppendVarintField(payload, 9, event.TotalMatches);
+    AppendVarintField(payload, 10, event.PlayerGuid);
+    AppendVarintField(payload, 11, event.RequestId);
 
     std::string out;
     AppendBytesField(out, 1, hookName);
@@ -751,6 +753,12 @@ bool Decode(std::string_view bytes, ActionRequestMsg& out)
                     if (!a.ReadVarint(value))
                         return false;
                     out.Buyout = static_cast<uint32>(value);
+                }
+                else if (af == 9 && aw == WireVarint)
+                {
+                    if (!a.ReadVarint(value))
+                        return false;
+                    out.PlayerGuid = value; // player_guid: the bot acting (a browse's searcher, a bid's buyer)
                 }
                 else if (!a.Skip(aw))
                     return false;
