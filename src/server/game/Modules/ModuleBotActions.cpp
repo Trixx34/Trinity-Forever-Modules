@@ -1484,8 +1484,9 @@ BotActionStatus UseObjectAction(Player& bot, BotAction const& action, std::strin
 }
 
 // Fly (layout 17, ActionType::kTaxi). The bot stands at a flight master (target_guid names it, 0 = the nearest in reach) and wants to get near
-// (dest_x, dest_y, dest_z) on its own map (spell_id is that map). Every bot knows every flight node (the known-node check of the player's handler is
-// skipped) and flies free (Player::ActivateTaxiPathTo does not charge a bot, BotTaxi::FliesFree). The flight goes from the node at the flight master to the node
+// (dest_x, dest_y, dest_z) on its own map (spell_id is that map). Every bot knows every flight node of its faction (BotTaxi::LearnAllNodes, also
+// done at login; the player's handler checks the mask, this path does not, so a missing node could not refuse the flight) and flies free
+// (Player::ActivateTaxiPathTo does not charge a bot, BotTaxi::FliesFree). The flight goes from the node at the flight master to the node
 // nearest to the point, by the shortest route of the faction's graph, and is refused when it would not bring the bot at least Bot.Taxi.MinGainYards closer.
 BotActionStatus TaxiAction(Player& bot, BotAction const& action, std::string& reason)
 {
@@ -1543,6 +1544,8 @@ BotActionStatus TaxiAction(Player& bot, BotAction const& action, std::string& re
         reason = "a flight would bring the bot only " + std::to_string(int32(here - landing)) + " yards closer";
         return BotActionStatus::kRefused;
     }
+
+    BotTaxi::LearnAllNodes(bot);    // again if the mask lost a node (a bot that was not set up at login, or an older save)
 
     std::vector<uint32> nodes;
     TaxiPathGraph::GetCompleteNodeRoute(from, to, &bot, nodes);

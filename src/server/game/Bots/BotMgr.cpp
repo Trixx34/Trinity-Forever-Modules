@@ -4,6 +4,7 @@
 
 #include "BotMgr.h"
 #include "BotProfessions.h"
+#include "BotTaxi.h"
 #include "AccountMgr.h"
 #include "CharacterCache.h"
 #include "CharacterPackets.h"
@@ -948,6 +949,7 @@ void BotMgr::FinishLogin(BotInfo& bot)
         else if (!bot.Alt)
             SpreadBot(*player);
         OnBotLevelChanged(*player);
+        BotTaxi::LearnAllNodes(*player);    // the faction's flight points, as a bot must know them to fly
         if (_mailCollect && !bot.Alt)
             bot.Session->CollectMailAsBot(); // mail that came while the bot was away
         if (!bot.Alt)       // a player's own character is not given free items

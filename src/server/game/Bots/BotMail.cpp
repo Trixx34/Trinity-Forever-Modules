@@ -1,8 +1,12 @@
 /*
  * Mail for bots. A bot has no client, so nothing ever opens a mailbox for it: the money of an auction it sold, the item it bought or an
- * expired listing would stay in its mail for ever. This takes what is in the bot's delivered mail, the way HandleMailTakeMoney and
- * HandleMailTakeItem do for a player but without a mailbox, and deletes the mail that is empty afterwards. BotMgr calls it for each
- * online bot every Bot.Mail.CollectEverySec seconds and when a bot logs in (mail that arrived while it was away).
+ * expired listing would stay in its mail for ever. This takes what is in the bot's delivered auction house mail, the way
+ * HandleMailTakeMoney and HandleMailTakeItem do for a player but without a mailbox, and deletes the auction mail that is empty afterwards.
+ * BotMgr calls it for each online bot every Bot.Mail.CollectEverySec seconds and when a bot logs in (mail that arrived while it was away).
+ *
+ * Only auction house mail is touched: its messageType is MAIL_AUCTION and its sender is the house (an auction house id, not a character
+ * guid; see MailSender(AuctionHouseObject const*) in Mails/Mail.cpp). Player mail, GM mail, creature and calendar mail, and any other mail
+ * a bot receives are left alone, with their letters and their items.
  *
  * Cash on delivery mail is left alone (a bot does not pay), and so is mail that is not delivered yet: the sale of an auction reaches its
  * owner after the mail delivery delay (Mail.DeliveryDelay).
@@ -28,7 +32,8 @@ uint32 WorldSession::CollectMailAsBot()
     uint32 items = 0;
     for (Mail* m : player->GetMails())
     {
-        if (m->state == MAIL_STATE_DELETED || m->deliver_time > now || m->COD > 0)
+        // Auction house mail only: a letter from a player or a GM, or any other kind of mail, is not a bot's to take.
+        if (m->messageType != MAIL_AUCTION || m->state == MAIL_STATE_DELETED || m->deliver_time > now || m->COD > 0)
             continue;
 
         bool changed = false;

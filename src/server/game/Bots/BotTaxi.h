@@ -21,4 +21,7 @@ float MinGainYards();
 
 // Whether this player's flights are free: a bot made by BotMgr (not an alt), with Bot.Taxi.Free on.
 bool FliesFree(Player const& player);
+
+// Marks every flight node of the bot's faction as known in the bot's taxi mask (idempotent). Called when a bot logs in and before a bot flies.
+void LearnAllNodes(Player& bot);
 }
