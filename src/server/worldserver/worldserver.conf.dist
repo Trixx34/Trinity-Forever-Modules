@@ -1825,6 +1825,11 @@ Bot.Limit.MaxDbQueue = 5000
 #            outside its pair (kTrain refuses them). First Aid, Cooking, Fishing and Riding are not restricted. Higher ranks are learned as the skill allows; nothing raises
 #            the skill yet.
 #
+#    Bot.Actions.UseObject
+#        Default:     0
+#        1 = a module may make a bot use a game object near it (kUseObject): click a door, a lever or an altar, or use an item on it (a key, a charge of powder; the
+#            bot is given the item if it has none). For dungeon scenarios, where a bot party cannot open a locked door a player would. Off in normal play.
+#
 #    Bot.Taxi.Enabled
 #        Default:     1
 #        1 = a module may make a bot fly (kTaxi): from a flight master to the flight node nearest to a point on the bot's map. A bot knows every flight node

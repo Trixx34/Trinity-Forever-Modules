@@ -37,7 +37,7 @@ int main()
     // The core writes kTier2LayoutVersion into the region and the module refuses to attach on any other value, so the
     // number is pinned here as well as compared below: a silent bump of the core's copy would otherwise only show up as a
     // module that refuses to attach.
-    CHECK(forever_module::kTier2LayoutVersion == 18);
+    CHECK(forever_module::kTier2LayoutVersion == 19);
     CHECK(static_cast<int>(forever_module::BotActionStatus::kNoRoute) == 13);
     CHECK(static_cast<int>(forever_module::ActionType::kCraft) == 20);
     CHECK(static_cast<int>(forever_module::ActionType::kGather) == 21);

@@ -1406,6 +1406,83 @@ bool HasFullRouteTo(Player& bot, float x, float y, float z)
     return !((type & (PATHFIND_NOPATH | PATHFIND_INCOMPLETE)) != 0);
 }
 
+// Use a game object (layout 19, ActionType::kUseObject): a door, a lever, an altar, a chest, as a click would. spell_id is the object's entry; the nearest of that
+// entry within 30 yards is the one, and the bot must be within kUseObjectYards of it. target_guid, when not 0, is an item entry: the bot gets one if it has none
+// and uses it on the object (the item's own spell is cast at the object), which is how a door that only a key or a charge opens is opened. A scenario tool: off
+// unless Bot.Actions.UseObject is on.
+constexpr float kUseObjectSearchYards = 30.0f;
+constexpr float kUseObjectYards = 8.0f;
+
+BotActionStatus UseObjectAction(Player& bot, BotAction const& action, std::string& reason)
+{
+    static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Actions.UseObject", false);
+    if (!allowed)
+    {
+        reason = "Bot.Actions.UseObject is off";
+        return BotActionStatus::kRefused;
+    }
+    if (!bot.IsAlive() || bot.IsInCombat() || bot.IsInFlight())
+    {
+        reason = !bot.IsAlive() ? "bot is dead" : bot.IsInCombat() ? "bot is in combat" : "bot is on a flight";
+        return BotActionStatus::kRefused;
+    }
+    GameObject* object = action.spell_id ? bot.FindNearestGameObject(action.spell_id, kUseObjectSearchYards, false) : nullptr;
+    if (!object)
+    {
+        reason = "no object " + std::to_string(action.spell_id) + " within " + std::to_string(int(kUseObjectSearchYards)) + " yards";
+        return BotActionStatus::kInvalidTarget;
+    }
+    if (!bot.IsWithinDistInMap(object, kUseObjectYards))
+    {
+        reason = "the object is " + std::to_string(int(bot.GetDistance(object))) + " yards away";
+        return BotActionStatus::kOutOfRange;
+    }
+
+    uint32 const itemEntry = uint32(action.target_guid);
+    if (itemEntry == 0)
+    {
+        // A door or a lever toggles when used: one that is open (or pressed) already is left alone, so a bot that comes by twice does not shut it.
+        GameobjectTypes const type = object->GetGoType();
+        if ((type == GAMEOBJECT_TYPE_DOOR || type == GAMEOBJECT_TYPE_BUTTON) && object->GetGoState() == GO_STATE_ACTIVE)
+            return BotActionStatus::kApplied;
+        object->Use(&bot);
+        return BotActionStatus::kApplied;
+    }
+
+    ItemTemplate const* proto = sObjectMgr->GetItemTemplate(itemEntry);
+    if (!proto || proto->Effects.empty())
+    {
+        reason = "item " + std::to_string(itemEntry) + " is unknown or has no use effect";
+        return BotActionStatus::kRefused;
+    }
+    Item* item = bot.GetItemByEntry(itemEntry);
+    if (!item)
+    {
+        ItemPosCountVec destination;
+        if (bot.CanStoreNewItem(NULL_BAG, NULL_SLOT, destination, itemEntry, 1) != EQUIP_ERR_OK || !(item = bot.StoreNewItem(destination, itemEntry, true)))
+        {
+            reason = "the bot cannot be given item " + std::to_string(itemEntry);
+            return BotActionStatus::kRefused;
+        }
+    }
+    if (Spell const* current = bot.GetCurrentSpell(CURRENT_GENERIC_SPELL); current && current->getState() != SPELL_STATE_FINISHED)
+    {
+        reason = "bot is casting spell " + std::to_string(current->GetSpellInfo()->Id);
+        return BotActionStatus::kBusy;
+    }
+    if (bot.isMoving())
+    {
+        reason = "bot is moving; stop first";
+        return BotActionStatus::kMoving;
+    }
+    CastSpellExtraArgs args(TRIGGERED_NONE);
+    args.SetCastItem(item);
+    SpellCastResult const result = bot.CastSpell(object, uint32(proto->Effects[0]->SpellID), args);
+    if (result != SPELL_CAST_OK)
+        reason = "use of item " + std::to_string(itemEntry) + " on the object returned result " + std::to_string(int32(result));
+    return StatusForCast(result);
+}
+
 // Fly (layout 17, ActionType::kTaxi). The bot stands at a flight master (target_guid names it, 0 = the nearest in reach) and wants to get near
 // (dest_x, dest_y, dest_z) on its own map (spell_id is that map). Every bot knows every flight node (the known-node check of the player's handler is
 // skipped) and flies free (Player::ActivateTaxiPathTo does not charge a bot, BotTaxi::FliesFree). The flight goes from the node at the flight master to the node
@@ -1875,6 +1952,9 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
 
         case ActionType::kTaxi:
             return TaxiAction(bot, action, reason);
+
+        case ActionType::kUseObject:
+            return UseObjectAction(bot, action, reason);
 
         // Layout 12: crafting and gathering. kLastActionType admits them, so the switch must answer for them: they are
         // refused with a reason a module can log rather than falling through to "unknown action type" below.
