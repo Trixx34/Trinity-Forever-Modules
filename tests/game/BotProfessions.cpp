@@ -31,7 +31,7 @@ TEST_CASE("Two professions go together only as the owner's rules allow", "[BotPr
 
 TEST_CASE("Secondary professions are never restricted", "[BotProfessions]")
 {
-    for (uint32 skill : { uint32(SKILL_COOKING), uint32(SKILL_FIRST_AID), uint32(SKILL_FISHING), uint32(SKILL_RIDING), uint32(0) })
+    for (uint32 skill : { uint32(SKILL_COOKING), uint32(129) /* First Aid */, uint32(SKILL_FISHING), uint32(SKILL_RIDING), uint32(0) })
         for (uint64 guid = 1; guid <= 50; ++guid)
             CHECK(MayLearn(guid, skill));
 }
