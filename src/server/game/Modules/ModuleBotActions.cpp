@@ -232,16 +232,39 @@ bool IsWhiteJunk(Item const& item, ItemTemplate const& proto)
     }
 }
 
-// Sells every grey item in the bags to the vendor, and with `whiteJunk` the white junk of IsWhiteJunk too. Returns how many stacks were sold.
+// The pieces of each trade good (cloth, meat, leather...) a bot keeps when it sells its white junk: cloth is for First Aid, meat for Cooking, and the rest
+// can go to the auction house, so only what is above this is sold to the vendor. Whole stacks are kept until the total reaches it.
+constexpr uint32 kJunkKeepTradeGoods = 60;
+
+// Sells every grey item in the bags to the vendor, and with `whiteJunk` the white junk of IsWhiteJunk too (of the trade goods only the surplus above
+// kJunkKeepTradeGoods of an entry). Returns how many stacks were sold.
 uint32 SellGreyItems(Player& bot, bool whiteJunk = false)
 {
     // Collected first: selling moves the items out of the bags, which the search must not be walking while it does.
     std::vector<Item*> grey;
-    bot.ForEachItem(ItemSearchLocation::Inventory, [&grey, whiteJunk](Item* item)
+    std::map<uint32, uint32> keepLeft; // trade goods entry -> pieces still to keep
+    bot.ForEachItem(ItemSearchLocation::Inventory, [&grey, &keepLeft, whiteJunk](Item* item)
     {
         ItemTemplate const* proto = item->GetTemplate();
-        if (proto && proto->GetSellPrice() > 0 && (proto->GetQuality() == kQualityPoor || (whiteJunk && IsWhiteJunk(*item, *proto))))
+        if (!proto || proto->GetSellPrice() == 0)
+            return ItemSearchCallbackResult::Continue;
+        if (proto->GetQuality() == kQualityPoor)
+        {
             grey.push_back(item);
+            return ItemSearchCallbackResult::Continue;
+        }
+        if (!whiteJunk || !IsWhiteJunk(*item, *proto))
+            return ItemSearchCallbackResult::Continue;
+        if (proto->GetClass() == ITEM_CLASS_TRADE_GOODS)
+        {
+            uint32& left = keepLeft.try_emplace(item->GetEntry(), kJunkKeepTradeGoods).first->second;
+            if (left > 0)
+            {
+                left = left > item->GetCount() ? left - item->GetCount() : 0;
+                return ItemSearchCallbackResult::Continue; // kept: a working supply
+            }
+        }
+        grey.push_back(item);
         return ItemSearchCallbackResult::Continue;
     });
 
