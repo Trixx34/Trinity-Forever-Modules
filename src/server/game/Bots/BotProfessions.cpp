@@ -78,7 +78,7 @@ uint32 Teach(Player& bot)
             if (trainer.GetType() != Trainer::Type::Tradeskill)
                 continue;
             uint32 const skill = SkillOfTrainer(trainer);
-            if (skill && IsOneOf(key, skill) && TrainerMayTeach(trainer, key))
+            if (skill && (IsOneOf(key, skill) || IsCraftedSecondary(skill)) && TrainerMayTeach(trainer, key))
                 learned += trainer.TeachAvailableSpellsFree(&bot, true);
         }
         taught += learned;

@@ -275,6 +275,57 @@ uint32 SellGreyItems(Player& bot, bool whiteJunk = false)
     return sold;
 }
 
+constexpr uint32 kBasicCampfireSpell = 818; // Cooking: a campfire that lasts a minute, which the cooking recipes need near the cook
+
+// The recipe a bot makes to raise `skill` (First Aid, Cooking): among the recipes it knows of that skill line, those that can still raise the skill (its value is
+// between the recipe's skill and the point where the recipe turns grey) and that it has the materials for, the one that needs the most skill, which raises
+// it fastest. 0 and a reason when there is none.
+uint32 ChooseSkillUpRecipe(Player& bot, uint32 skill, std::string& reason)
+{
+    if (!bot.HasSkill(skill))
+    {
+        reason = "bot does not have skill " + std::to_string(skill);
+        return 0;
+    }
+    uint16 const value = bot.GetPureSkillValue(skill);
+    uint32 best = 0;
+    int32 bestRank = -1;
+    bool anyRecipe = false, anyCanRaise = false;
+    for (auto const& [spellId, playerSpell] : bot.GetSpellMap())
+    {
+        if (playerSpell.state == PLAYERSPELL_REMOVED || !playerSpell.active || playerSpell.disabled)
+            continue;
+        auto const bounds = sSpellMgr->GetSkillLineAbilityMapBounds(spellId);
+        for (auto it = bounds.first; it != bounds.second; ++it)
+        {
+            SkillLineAbilityEntry const* ability = it->second;
+            if (ability->SkillLine != skill || ability->MinSkillLineRank <= 0)
+                continue; // not a recipe of this skill (the skill's own spell has no minimum)
+            anyRecipe = true;
+            if (value < uint16(ability->MinSkillLineRank) || value >= uint16(ability->TrivialSkillLineRankHigh))
+                continue;
+            anyCanRaise = true;
+            SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE);
+            if (!info)
+                continue;
+            bool materials = true;
+            for (std::size_t i = 0; i < info->Reagent.size(); ++i)
+                if (info->Reagent[i] > 0 && !bot.HasItemCount(uint32(info->Reagent[i]), uint32(std::max<int32>(1, info->ReagentCount[i]))))
+                    materials = false;
+            if (materials && int32(ability->MinSkillLineRank) > bestRank)
+            {
+                best = spellId;
+                bestRank = int32(ability->MinSkillLineRank);
+            }
+        }
+    }
+    if (!best)
+        reason = !anyRecipe ? "bot knows no recipe of skill " + std::to_string(skill)
+               : !anyCanRaise ? "no recipe the bot knows can still raise its skill"
+               : "bot lacks the materials of every recipe that can raise its skill";
+    return best;
+}
+
 // Sells `count` of the items of `entry` in the bags to the vendor, a stack at a time (0 = every one the bot carries of it). Returns how many
 // were sold. An item the vendor will not take (no sell price, a bag that is not empty) is kept.
 uint32 SellEntryToVendor(Player& bot, uint32 entry, uint32 count)
@@ -1959,6 +2010,56 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             if (services & kServiceEquipBit)
                 EquipBestGear(bot);
             return BotActionStatus::kApplied;
+        }
+
+        case ActionType::kCraft:
+        {
+            if (bot.IsInCombat() || !bot.IsAlive())
+            {
+                reason = bot.IsAlive() ? "bot is in combat" : "bot is dead";
+                return BotActionStatus::kRefused;
+            }
+            if (action.spell_id != BotProfessions::kSkillFirstAid && action.spell_id != SKILL_COOKING)
+            {
+                reason = "skill " + std::to_string(action.spell_id) + " is not one the bots craft (129 First Aid, 185 Cooking)";
+                return BotActionStatus::kRefused;
+            }
+            if (Spell const* current = bot.GetCurrentSpell(CURRENT_GENERIC_SPELL); current && current->getState() != SPELL_STATE_FINISHED)
+            {
+                reason = "bot is casting spell " + std::to_string(current->GetSpellInfo()->Id);
+                return BotActionStatus::kBusy;
+            }
+            if (Spell const* channel = bot.GetCurrentSpell(CURRENT_CHANNELED_SPELL); channel && channel->getState() != SPELL_STATE_FINISHED)
+            {
+                reason = "bot is channeling spell " + std::to_string(channel->GetSpellInfo()->Id);
+                return BotActionStatus::kBusy;
+            }
+            uint32 const recipe = ChooseSkillUpRecipe(bot, action.spell_id, reason);
+            if (!recipe)
+                return BotActionStatus::kRefused;
+            if (bot.isMoving())
+            {
+                SpellInfo const* recipeInfo = sSpellMgr->GetSpellInfo(recipe, DIFFICULTY_NONE);
+                if (recipeInfo && recipeInfo->CalcCastTime() > 0)
+                {
+                    reason = "recipe " + std::to_string(recipe) + " has a cast time and the bot is moving";
+                    return BotActionStatus::kMoving;
+                }
+            }
+            SpellCastResult result = bot.CastSpell(&bot, recipe, false);
+            if (result == SPELL_FAILED_REQUIRES_SPELL_FOCUS && bot.HasSpell(kBasicCampfireSpell))
+            {
+                // The recipe needs a cooking fire and none is near: light one, and the next kCraft cooks.
+                result = bot.CastSpell(&bot, kBasicCampfireSpell, false);
+                if (result == SPELL_CAST_OK)
+                {
+                    reason = "lit a campfire for recipe " + std::to_string(recipe);
+                    return BotActionStatus::kApplied;
+                }
+            }
+            if (result != SPELL_CAST_OK)
+                reason = "cast of recipe " + std::to_string(recipe) + " returned result " + std::to_string(int32(result));
+            return StatusForCast(result);
         }
 
         case ActionType::kSellToVendor:

@@ -45,8 +45,9 @@ int main()
     CHECK(static_cast<int>(forever_module::ActionType::kConsume) == 23);
     CHECK(static_cast<int>(forever_module::ActionType::kUseObject) == 25);
     CHECK(static_cast<int>(forever_module::ActionType::kSellToVendor) == 26);
+    CHECK(static_cast<int>(forever_module::ActionType::kCraft) == 27);
     CHECK(static_cast<int>(forever_module::ActionType::kLastActionType) ==
-          static_cast<int>(forever_module::ActionType::kSellToVendor));
+          static_cast<int>(forever_module::ActionType::kCraft));
     CHECK(forever_module::kMaxAuras == 16);
 
     // The shared region is mapped by two processes built separately, so a shape that changes without a layout bump is
