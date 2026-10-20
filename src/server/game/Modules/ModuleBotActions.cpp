@@ -2054,6 +2054,14 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
                 if (!bot.HasSpell(kBasicCampfireSpell))
                     bot.LearnSpell(kBasicCampfireSpell, false);
                 result = bot.CastSpell(&bot, kBasicCampfireSpell, false);
+                if (result == SPELL_FAILED_REAGENTS)
+                {
+                    // In Forever's data the campfire costs a piece of Simple Wood (item 4470; the recipe dump shows it). The snapshot now names it and a vendor that
+                    // sells it, and the bot buys it on its next supply visit like any missing reagent.
+                    ModuleBotSupplies::NoteMissingReagent(bot, kBasicCampfireSpell);
+                    reason = "the campfire needs a reagent the bot does not carry";
+                    return BotActionStatus::kRefused;
+                }
                 if (result == SPELL_CAST_OK)
                 {
                     reason = "lit a campfire for recipe " + std::to_string(recipe);
