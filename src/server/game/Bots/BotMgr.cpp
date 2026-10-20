@@ -178,6 +178,60 @@ void DumpSpellCosts(std::string const& path)
     TC_LOG_INFO("server.worldserver", "BotMgr: wrote the costs of {} spell power entries to {}", lines, path);
 }
 
+// Bot.Dump.Recipes = <file>: once at startup, one line per profession recipe (a spell of a profession's skill line), so crafting can be planned from the game
+// data: the spell id, the skill line, the skill it needs, where it turns green and grey, the spell focus it needs (3 = a cooking fire), the item it creates
+// and how many, the reagents (item:count, joined by ;) and the name. Spells named Campfire, Flint or Tinder are listed as well, with skill 0: what a campfire
+// needs is not in a skill line.
+void DumpRecipes(std::string const& path)
+{
+    std::ofstream out(path, std::ios::trunc);
+    if (!out)
+    {
+        TC_LOG_ERROR("server.worldserver", "BotMgr: cannot write the recipes to {}", path);
+        return;
+    }
+    static constexpr std::array<uint16, 15> professions = { 164, 165, 171, 182, 186, 197, 202, 333, 393, 129, 185, 356, 755, 773, 794 };
+    out << "# spell_id\tskill\tmin_skill\ttrivial_low\ttrivial_high\tfocus\tcreates_item\tcreates_count\treagents\tname\n";
+    uint32 lines = 0;
+    sSpellMgr->ForEachSpellInfo([&](SpellInfo const* info)
+    {
+        std::string const name = info->SpellName ? std::string((*info->SpellName)[sWorld->GetDefaultDbcLocale()]) : std::string("?");
+        bool const campfire = name.find("Campfire") != std::string::npos || name.find("Flint") != std::string::npos || name.find("Tinder") != std::string::npos;
+
+        uint32 createdItem = 0, createdCount = 0;
+        for (SpellEffectInfo const& effect : info->GetEffects())
+            if (effect.IsEffect(SPELL_EFFECT_CREATE_ITEM))
+            {
+                createdItem = effect.ItemType;
+                createdCount = uint32(std::max<int32>(1, int32(effect.BasePoints) + 1));
+                break;
+            }
+        std::string reagents;
+        for (std::size_t i = 0; i < info->Reagent.size(); ++i)
+            if (info->Reagent[i] > 0)
+                reagents += (reagents.empty() ? "" : ";") + std::to_string(info->Reagent[i]) + ":" + std::to_string(std::max<int32>(1, info->ReagentCount[i]));
+
+        auto const bounds = sSpellMgr->GetSkillLineAbilityMapBounds(info->Id);
+        bool wrote = false;
+        for (auto it = bounds.first; it != bounds.second; ++it)
+        {
+            SkillLineAbilityEntry const* ability = it->second;
+            if (std::find(professions.begin(), professions.end(), ability->SkillLine) == professions.end())
+                continue;
+            out << info->Id << '\t' << ability->SkillLine << '\t' << ability->MinSkillLineRank << '\t' << ability->TrivialSkillLineRankLow << '\t'
+                << ability->TrivialSkillLineRankHigh << '\t' << info->RequiresSpellFocus << '\t' << createdItem << '\t' << createdCount << '\t' << reagents << '\t' << name << '\n';
+            ++lines;
+            wrote = true;
+        }
+        if (!wrote && campfire)
+        {
+            out << info->Id << "\t0\t0\t0\t0\t" << info->RequiresSpellFocus << '\t' << createdItem << '\t' << createdCount << '\t' << reagents << '\t' << name << '\n';
+            ++lines;
+        }
+    });
+    TC_LOG_INFO("server.worldserver", "BotMgr: wrote {} recipes to {}", lines, path);
+}
+
 } // namespace
 
 void BotMgr::LoadRegistry()
@@ -188,6 +242,8 @@ void BotMgr::LoadRegistry()
 
     if (std::string const costFile = sConfigMgr->GetStringDefault("Bot.Dump.SpellCosts", ""); !costFile.empty())
         DumpSpellCosts(costFile);
+    if (std::string const recipeFile = sConfigMgr->GetStringDefault("Bot.Dump.Recipes", ""); !recipeFile.empty())
+        DumpRecipes(recipeFile);
 
     _loginMaxPerTick = uint32(std::max<int32>(1, sConfigMgr->GetIntDefault("Bot.Login.MaxPerTick", 5)));
     _loginTimeoutMs = uint32(std::max<int32>(1000, sConfigMgr->GetIntDefault("Bot.Login.TimeoutMs", 60000)));
