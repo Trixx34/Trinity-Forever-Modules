@@ -18,7 +18,8 @@ bool Enabled()
 
 namespace
 {
-// The primary profession a spell belongs to: it has a SKILL effect for it, or it teaches (SPELL_EFFECT_LEARN_SPELL) a spell that has.
+// The profession a spell belongs to (a primary one, or First Aid or Cooking, which bots are taught too): it has a SKILL effect for it, or it teaches
+// (SPELL_EFFECT_LEARN_SPELL) a spell that has.
 uint32 SkillOfSpell(uint32 spellId, uint32 depth = 0)
 {
     SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE);
@@ -26,7 +27,7 @@ uint32 SkillOfSpell(uint32 spellId, uint32 depth = 0)
         return 0;
     for (SpellEffectInfo const& effect : info->GetEffects())
     {
-        if (effect.IsEffect(SPELL_EFFECT_SKILL) && IsPrimary(uint32(effect.MiscValue)))
+        if (effect.IsEffect(SPELL_EFFECT_SKILL) && (IsPrimary(uint32(effect.MiscValue)) || IsCraftedSecondary(uint32(effect.MiscValue))))
             return uint32(effect.MiscValue);
         if (depth == 0 && effect.IsEffect(SPELL_EFFECT_LEARN_SPELL) && effect.TriggerSpell)
             if (uint32 const inner = SkillOfSpell(effect.TriggerSpell, 1))
