@@ -19,8 +19,12 @@
 #define TRINITYCORE_BOUNDING_INTERVAL_HIERARCHY_WRAPPER_H
 
 #include "BoundingIntervalHierarchy.h"
+#include "Log.h"
+#include <cmath>
 #include <span>
+#include <stdexcept>
 #include <unordered_map>
+#include <vector>
 
 template<class T, class BoundsFunc = BoundsTrait<T> >
 class BIHWrap
@@ -58,6 +62,15 @@ class BIHWrap
     std::vector<T const*> m_objects;
     std::unordered_map<T const*, std::size_t> m_obj2Idx;
     int unbalanced_times;
+
+    // Bounds the tree can place: all six values finite, and low not above high on any axis (an empty box, low > high, cannot be placed).
+    static bool UsableBounds(G3D::AABox const& box)
+    {
+        for (int axis = 0; axis < 3; ++axis)
+            if (!std::isfinite(box.low()[axis]) || !std::isfinite(box.high()[axis]) || box.low()[axis] > box.high()[axis])
+                return false;
+        return true;
+    }
 
 public:
     BIHWrap() : unbalanced_times(0) { }
@@ -97,7 +110,52 @@ public:
         if (unbalanced_times == 0)
             return;
 
-        m_tree.build(m_objects, BoundsFunc());
+        try
+        {
+            m_tree.build(m_objects, BoundsFunc());
+        }
+        catch (std::logic_error const& error)
+        {
+            // An object whose bounds the tree cannot place ("invalid node overlap") made the build throw, and nothing caught it: the world server
+            // aborted (several times an hour on the test server). The objects with unusable bounds are logged and dropped, then the tree is built
+            // again; if it still fails, the tree stays empty (no dynamic collision in this cell) until it changes.
+            TC_LOG_ERROR("maps", "BIHWrap: building the tree of {} object(s) failed: {}", m_objects.size(), error.what());
+            std::vector<T const*> unusable;
+            for (T const* obj : m_objects)
+            {
+                G3D::AABox box;
+                BoundsFunc()(obj, box);
+                if (!UsableBounds(box))
+                    unusable.push_back(obj);
+            }
+            for (T const* obj : unusable)
+            {
+                G3D::AABox box;
+                BoundsFunc()(obj, box);
+                TC_LOG_ERROR("maps", "BIHWrap: dropped object {} with bounds lo=({}, {}, {}) hi=({}, {}, {})", static_cast<void const*>(obj),
+                    box.low().x, box.low().y, box.low().z, box.high().x, box.high().y, box.high().z);
+                remove(*obj);
+            }
+            try
+            {
+                m_tree.build(m_objects, BoundsFunc());
+            }
+            catch (std::logic_error const& again)
+            {
+                TC_LOG_ERROR("maps", "BIHWrap: building the tree again failed too ({}); the tree of {} object(s) is left empty", again.what(), m_objects.size());
+                std::size_t logged = 0;
+                for (T const* obj : m_objects)
+                {
+                    if (logged++ >= 8)
+                        break;
+                    G3D::AABox box;
+                    BoundsFunc()(obj, box);
+                    TC_LOG_ERROR("maps", "BIHWrap:   object {} bounds lo=({}, {}, {}) hi=({}, {}, {})", static_cast<void const*>(obj),
+                        box.low().x, box.low().y, box.low().z, box.high().x, box.high().y, box.high().z);
+                }
+                m_tree.build(std::vector<T const*>(), BoundsFunc());
+            }
+        }
         unbalanced_times = 0;
     }
 

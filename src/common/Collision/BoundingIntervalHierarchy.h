@@ -76,7 +76,15 @@ class TC_COMMON_API BIH
             }
             std::vector<uint32> tempTree;
             BuildStats stats;
-            buildHierarchy(tempTree, dat, stats);
+            try
+            {
+                buildHierarchy(tempTree, dat, stats);
+            }
+            catch (...)
+            {
+                ::operator delete[](dat.primBound); // the build throws on bounds it cannot place; do not leak the buffer
+                throw;
+            }
             if (printStats)
                 stats.printStats();
 
