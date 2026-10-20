@@ -2012,7 +2012,7 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             return BotActionStatus::kApplied;
         }
 
-        case ActionType::kCraft:
+        case ActionType::kSkillUp:
         {
             if (bot.IsInCombat() || !bot.IsAlive())
             {

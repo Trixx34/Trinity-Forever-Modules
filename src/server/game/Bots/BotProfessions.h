@@ -29,7 +29,7 @@ inline constexpr std::array<uint32, 9> kPrimary = { SKILL_ALCHEMY, SKILL_BLACKSM
                                                     SKILL_LEATHERWORKING, SKILL_MINING, SKILL_SKINNING, SKILL_TAILORING };
 
 // The secondary skills a bot is taught too (its recipes are free, like the two professions): First Aid (bandages from cloth) and Cooking (food from meat),
-// so the cloth and meat a bot picks up have a use. The kCraft action (ModuleBotActions) makes them.
+// so the cloth and meat a bot picks up have a use. The kSkillUp action (ModuleBotActions) makes them.
 inline constexpr uint32 kSkillFirstAid = 129;
 
 constexpr bool IsCraftedSecondary(uint32 skill)
