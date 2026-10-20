@@ -42,6 +42,7 @@
 #include <chrono>
 #include <cmath>
 #include <ctime>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <set>
@@ -147,6 +148,36 @@ int32 LocalSecondsOfDay()
     return local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec;
 }
 
+// Bot.Dump.SpellCosts = <file>: once at startup, one line per spell that costs power, so a module can tell before a cast whether the bot can pay for it
+// (the bots module reads the file as SpellCostFile). Tab separated: spell id, the level the spell needs, the power type (0 mana, 1 rage, 3 energy...),
+// the flat cost, the cost added per level, the percent cost (of the base mana, 0 when none), the next rank's spell id (0 for the last), the name. The
+// costs are in the core's own units, the ones Unit::GetPower uses (rage is tenths of a point), so they compare with the bot's power as it is.
+void DumpSpellCosts(std::string const& path)
+{
+    std::ofstream out(path, std::ios::trunc);
+    if (!out)
+    {
+        TC_LOG_ERROR("server.worldserver", "BotMgr: cannot write the spell costs to {}", path);
+        return;
+    }
+    out << "# spell_id\tlevel\tpower_type\tcost\tcost_per_level\tcost_pct\tnext_rank\tname\n";
+    uint32 lines = 0;
+    sSpellMgr->ForEachSpellInfo([&](SpellInfo const* info)
+    {
+        for (SpellPowerEntry const* power : info->PowerCosts)
+        {
+            if (!power || (power->ManaCost == 0 && power->PowerCostPct == 0.0f))
+                continue;
+            SpellInfo const* next = info->GetNextRankSpell();
+            out << info->Id << '\t' << info->SpellLevel << '\t' << int32(power->PowerType) << '\t' << power->ManaCost << '\t' << power->ManaCostPerLevel << '\t'
+                << power->PowerCostPct << '\t' << (next ? next->Id : 0) << '\t'
+                << (info->SpellName ? std::string((*info->SpellName)[sWorld->GetDefaultDbcLocale()]) : std::string("?")) << '\n';
+            ++lines;
+        }
+    });
+    TC_LOG_INFO("server.worldserver", "BotMgr: wrote the costs of {} spell power entries to {}", lines, path);
+}
+
 } // namespace
 
 void BotMgr::LoadRegistry()
@@ -154,6 +185,9 @@ void BotMgr::LoadRegistry()
     if (_registryLoaded)
         return;
     _registryLoaded = true;
+
+    if (std::string const costFile = sConfigMgr->GetStringDefault("Bot.Dump.SpellCosts", ""); !costFile.empty())
+        DumpSpellCosts(costFile);
 
     _loginMaxPerTick = uint32(std::max<int32>(1, sConfigMgr->GetIntDefault("Bot.Login.MaxPerTick", 5)));
     _loginTimeoutMs = uint32(std::max<int32>(1000, sConfigMgr->GetIntDefault("Bot.Login.TimeoutMs", 60000)));
