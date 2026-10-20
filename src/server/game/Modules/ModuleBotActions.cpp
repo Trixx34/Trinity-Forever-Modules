@@ -181,6 +181,7 @@ constexpr uint32 kServiceBuyHealthPotionBit = 64;  // layout 16: health potions,
 constexpr uint32 kServiceBuyManaPotionBit = 128;   // ... mana potions (Bot.Supplies.ManaPotionTarget)
 constexpr uint32 kServiceBuyBandageBit = 256;      // ... bandages (Bot.Supplies.BandageTarget)
 constexpr uint32 kServiceBuyReagentBit = 512;      // ... the reagent the core noted a cast was missing (Bot.Supplies.ReagentTarget)
+constexpr uint32 kServiceSellJunkBit = 1024;       // SDK 0.16: also sell white junk (trade goods, spare bags, miscellaneous items) with the grey items
 constexpr uint32 kServiceBuyMask = kServiceBuyAmmoBit | kServiceBuyFoodBit | kServiceBuyDrinkBit | kServiceBuyHealthPotionBit |
     kServiceBuyManaPotionBit | kServiceBuyBandageBit | kServiceBuyReagentBit;
 constexpr float kMaxSupplyTarget = 2000.0f; // a sanity bound on the counts a module asks for
@@ -211,15 +212,35 @@ Creature* NearestServiceNpc(Player& bot, NPCFlags flags)
     return best;
 }
 
-// Sells every grey item in the bags to the vendor. Returns how many stacks were sold.
-uint32 SellGreyItems(Player& bot)
+// A white item a bot has no use for, so that a full bag can be emptied: trade goods (cloth, meat, leather...), a spare bag, miscellaneous items. Never a
+// quest item, one that starts a quest, a bag that is equipped (the bags in the bag slots), or anything the bot eats, drinks, shoots or casts with
+// (consumables, projectiles, reagents), or wears or wields (weapons, armour): those have their own rules.
+bool IsWhiteJunk(Item const& item, ItemTemplate const& proto)
+{
+    if (proto.GetQuality() != kQualityCommon || proto.GetBonding() == BIND_QUEST || proto.GetStartQuest() != 0)
+        return false;
+    if (item.GetBagSlot() == INVENTORY_SLOT_BAG_0 && item.GetSlot() >= INVENTORY_SLOT_BAG_START && item.GetSlot() < INVENTORY_SLOT_BAG_END)
+        return false;
+    switch (proto.GetClass())
+    {
+        case ITEM_CLASS_TRADE_GOODS:
+        case ITEM_CLASS_CONTAINER:
+        case ITEM_CLASS_MISCELLANEOUS:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Sells every grey item in the bags to the vendor, and with `whiteJunk` the white junk of IsWhiteJunk too. Returns how many stacks were sold.
+uint32 SellGreyItems(Player& bot, bool whiteJunk = false)
 {
     // Collected first: selling moves the items out of the bags, which the search must not be walking while it does.
     std::vector<Item*> grey;
-    bot.ForEachItem(ItemSearchLocation::Inventory, [&grey](Item* item)
+    bot.ForEachItem(ItemSearchLocation::Inventory, [&grey, whiteJunk](Item* item)
     {
         ItemTemplate const* proto = item->GetTemplate();
-        if (proto && proto->GetQuality() == kQualityPoor && proto->GetSellPrice() > 0)
+        if (proto && proto->GetSellPrice() > 0 && (proto->GetQuality() == kQualityPoor || (whiteJunk && IsWhiteJunk(*item, *proto))))
             grey.push_back(item);
         return ItemSearchCallbackResult::Continue;
     });
@@ -1862,7 +1883,7 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
 
             uint32 const services = action.spell_id;
             bool const buying = (services & kServiceBuyMask) != 0 && ModuleBotSupplies::Enabled();
-            if (services & (kServiceSellBit | kServiceRepairBit) || buying)
+            if (services & (kServiceSellBit | kServiceSellJunkBit | kServiceRepairBit) || buying)
             {
                 // Layout 13: the module can name the NPC (BotSnapshot::vendor_guid / repair_guid, which is where a BuyItem
                 // action gets its vendor from). A reference the core cannot use is not an error -- the nearest NPC in
@@ -1881,8 +1902,8 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
                     reason = "no vendor or repairman within interaction range";
                     return BotActionStatus::kRefused;
                 }
-                if ((services & kServiceSellBit) && npc->HasNpcFlag(UNIT_NPC_FLAG_VENDOR_MASK))
-                    SellGreyItems(bot);
+                if ((services & (kServiceSellBit | kServiceSellJunkBit)) && npc->HasNpcFlag(UNIT_NPC_FLAG_VENDOR_MASK))
+                    SellGreyItems(bot, (services & kServiceSellJunkBit) != 0);
                 if ((services & kServiceRepairBit) && npc->HasNpcFlag(UNIT_NPC_FLAG_REPAIR))
                     bot.DurabilityRepairAll(true, 0.0f, false);
                 // Buying comes last, from the money the sale left and the repair did not take. A vendor without the goods buys nothing and
