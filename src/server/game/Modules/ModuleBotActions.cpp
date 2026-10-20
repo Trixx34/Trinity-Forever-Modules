@@ -2047,9 +2047,12 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
                 }
             }
             SpellCastResult result = bot.CastSpell(&bot, recipe, false);
-            if (result == SPELL_FAILED_REQUIRES_SPELL_FOCUS && bot.HasSpell(kBasicCampfireSpell))
+            if (result == SPELL_FAILED_REQUIRES_SPELL_FOCUS && sSpellMgr->GetSpellInfo(kBasicCampfireSpell, DIFFICULTY_NONE))
             {
-                // The recipe needs a cooking fire and none is near: light one, and the next kCraft cooks.
+                // The recipe needs a cooking fire and none is near: light one, and the next kSkillUp cooks. Any cook may light a basic campfire; the cooking
+                // trainer does not list it for the bots (it was missing on 300 of them), so it is learned the first time it is needed.
+                if (!bot.HasSpell(kBasicCampfireSpell))
+                    bot.LearnSpell(kBasicCampfireSpell, false);
                 result = bot.CastSpell(&bot, kBasicCampfireSpell, false);
                 if (result == SPELL_CAST_OK)
                 {
