@@ -2036,14 +2036,18 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
                 reason = "bot is in combat";
                 return BotActionStatus::kRefused;
             }
+            BotActionStatus status = BotActionStatus::kRefused;
             switch (action.spell_id)
             {
-                case 1: return InviteToParty(bot, action.target_guid, reason);
-                case 2: return AcceptPartyInvite(bot, reason);
-                case 3: return LeaveParty(bot, reason);
+                case 1: status = InviteToParty(bot, action.target_guid, reason); break;
+                case 2: status = AcceptPartyInvite(bot, reason); break;
+                case 3: status = LeaveParty(bot, reason); break;
+                default: reason = "unknown party action " + std::to_string(action.spell_id); break;
             }
-            reason = "unknown party action " + std::to_string(action.spell_id);
-            return BotActionStatus::kRefused;
+            // Diagnostic: the bot module only sees "refused", so the reason is logged here.
+            if (status == BotActionStatus::kRefused)
+                TC_LOG_INFO("server.worldserver", "BotMgr: party action {} refused for bot={}: {}", action.spell_id, bot.GetName(), reason);
+            return status;
         }
 
         case ActionType::kCastSpell:
