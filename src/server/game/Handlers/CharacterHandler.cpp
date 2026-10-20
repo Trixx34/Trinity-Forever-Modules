@@ -1310,12 +1310,18 @@ void WorldSession::HandlePlayerLoginOpcode(WorldPackets::Character::PlayerLogin&
         return;
     }
 
-    // A character that is logged in as a bot (an alt) cannot log in as a player at the same time.
+    // A character that is logged in as a bot (an alt) cannot log in as a player at the same time. The player wins: the bot is logged out
+    // (saved and removed at once) and the login goes on. A bot that is still logging in cannot be stopped yet, so that login is refused.
     if (sBotMgr->IsActiveAlt(playerLogin.Guid.GetCounter()))
     {
-        TC_LOG_ERROR("network", "Account ({}) tried to log in with {}, which is playing as a bot.", GetAccountId(), playerLogin.Guid.ToString());
-        KickPlayer("WorldSession::HandlePlayerLoginOpcode character is logged in as a bot");
-        return;
+        sBotMgr->StopAlt(playerLogin.Guid.GetCounter());
+        if (sBotMgr->IsActiveAlt(playerLogin.Guid.GetCounter()))
+        {
+            TC_LOG_ERROR("network", "Account ({}) tried to log in with {}, which is still logging in as a bot.", GetAccountId(), playerLogin.Guid.ToString());
+            KickPlayer("WorldSession::HandlePlayerLoginOpcode character is logging in as a bot");
+            return;
+        }
+        TC_LOG_INFO("network", "Account ({}) took {} back from its bot.", GetAccountId(), playerLogin.Guid.ToString());
     }
 
     SendConnectToInstance(WorldPackets::Auth::ConnectToSerial::WorldAttempt1);
