@@ -39,6 +39,7 @@ int main()
     // module that refuses to attach.
     CHECK(forever_module::kTier2LayoutVersion == 20);
     CHECK(static_cast<int>(forever_module::BotActionStatus::kNoRoute) == 13);
+    CHECK(static_cast<int>(forever_module::BotActionStatus::kNeedsFocus) == 14);
     CHECK(static_cast<int>(forever_module::ActionType::kCraft) == 20);
     CHECK(static_cast<int>(forever_module::ActionType::kGather) == 21);
     CHECK(static_cast<int>(forever_module::ActionType::kPetCommand) == 22);

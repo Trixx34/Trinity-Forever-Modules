@@ -53,6 +53,7 @@
 #include <cctype>
 #include <limits>
 #include <map>
+#include <set>
 #include <vector>
 
 using forever_module::ActionType;
@@ -144,6 +145,8 @@ BotActionStatus StatusForCast(SpellCastResult result)
             return BotActionStatus::kMoving;
         case SPELL_FAILED_SPELL_IN_PROGRESS:
             return BotActionStatus::kBusy;
+        case SPELL_FAILED_REQUIRES_SPELL_FOCUS:
+            return BotActionStatus::kNeedsFocus; // an anvil, a forge or a fire is not near: the module walks to one
         default:
             return BotActionStatus::kRefused;
     }
@@ -276,12 +279,75 @@ uint32 SellGreyItems(Player& bot, bool whiteJunk = false)
 }
 
 constexpr uint32 kBasicCampfireSpell = 818; // Cooking: a campfire that lasts a minute, which the cooking recipes need near the cook
+constexpr uint32 kCookingFireFocus = 4;     // the spell focus of a cooking fire (SpellFocusObject): a campfire or a hearth
 
-// The recipe a bot makes to raise `skill` (First Aid, Cooking): among the recipes it knows of that skill line, those that can still raise the skill (its value is
-// between the recipe's skill and the point where the recipe turns grey) and that it has the materials for, the one that needs the most skill, which raises
-// it fastest. 0 and a reason when there is none.
-uint32 ChooseSkillUpRecipe(Player& bot, uint32 skill, std::string& reason)
+// The skill lines kSkillUp and kCraft make things for: the two secondary ones, and the crafting professions. Enchanting is left out (its recipes work on an item
+// the bot would have to name); 186 is Mining's line, whose recipes are the smelting of ore.
+bool IsCraftSkill(uint32 skill)
 {
+    switch (skill)
+    {
+        case SKILL_FIRST_AID:
+        case SKILL_COOKING:
+        case SKILL_BLACKSMITHING:
+        case SKILL_LEATHERWORKING:
+        case SKILL_ALCHEMY:
+        case SKILL_TAILORING:
+        case SKILL_ENGINEERING:
+        case SKILL_MINING:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// The spell focus ids a game object of the world provides (an anvil, a forge, a fire...). A recipe that asks for any other focus can be crafted by nobody on
+// this server (the recipe dump shows about 90 such recipes), so the recipe choice leaves them out. Built on first use, after the object templates are loaded.
+std::set<uint32> const& FocusIdsInWorld()
+{
+    static std::set<uint32> const ids = []
+    {
+        std::set<uint32> found;
+        for (auto const& [entry, templ] : sObjectMgr->GetGameObjectTemplates())
+            if (templ.type == GAMEOBJECT_TYPE_SPELL_FOCUS)
+                found.insert(templ.spellFocus.spellFocusType);
+        return found;
+    }();
+    return ids;
+}
+
+// Whether a game object of the spell focus `focus` stands within reach of the bot: the search a spell with RequiresSpellFocus makes at cast time (Spell::SearchSpellFocus).
+bool FocusNear(Player& bot, uint32 focus)
+{
+    GameObject* object = nullptr;
+    Trinity::GameObjectFocusCheck check(&bot, focus);
+    Trinity::GameObjectSearcher<Trinity::GameObjectFocusCheck> searcher(&bot, object, check);
+    Cell::VisitGridObjects(&bot, searcher, bot.GetVisibilityRange());
+    return object != nullptr;
+}
+
+bool HasReagents(Player& bot, SpellInfo const& info)
+{
+    for (std::size_t i = 0; i < info.Reagent.size(); ++i)
+        if (info.Reagent[i] > 0 && !bot.HasItemCount(uint32(info.Reagent[i]), uint32(std::max<int32>(1, info.ReagentCount[i]))))
+            return false;
+    return true;
+}
+
+// A recipe the bots can cast on themselves: not one that works on an item (an enchantment, a weapon chain).
+bool WorksOnSelf(SpellInfo const& info)
+{
+    return (info.Targets & (TARGET_FLAG_ITEM | TARGET_FLAG_TRADE_ITEM)) == 0;
+}
+
+// The recipe a bot makes to raise `skill` (First Aid, Cooking, a crafting profession): among the recipes it knows of that skill line, those that can still raise
+// the skill (its value is between the recipe's skill and the point where the recipe turns grey), that it has the materials for and whose focus is no obstacle,
+// the one that needs the most skill, which raises it fastest. A focus is no obstacle when the recipe needs none, an object of it stands near, or it is the
+// cooking fire (a campfire is lit). A recipe that asks for a focus no object provides is never chosen. 0 and a reason when there is none; `needsFocus` is the focus
+// id when recipes were left out only because their focus is not near (the answer is then kNeedsFocus: walk to one), else 0.
+uint32 ChooseSkillUpRecipe(Player& bot, uint32 skill, std::string& reason, uint32& needsFocus)
+{
+    needsFocus = 0;
     if (!bot.HasSkill(skill))
     {
         reason = "bot does not have skill " + std::to_string(skill);
@@ -290,7 +356,7 @@ uint32 ChooseSkillUpRecipe(Player& bot, uint32 skill, std::string& reason)
     uint16 const value = bot.GetPureSkillValue(skill);
     uint32 best = 0;
     int32 bestRank = -1;
-    bool anyRecipe = false, anyCanRaise = false;
+    bool anyRecipe = false, anyCanRaise = false, anyUnobtainable = false;
     for (auto const& [spellId, playerSpell] : bot.GetSpellMap())
     {
         if (playerSpell.state == PLAYERSPELL_REMOVED || !playerSpell.active || playerSpell.disabled)
@@ -306,13 +372,23 @@ uint32 ChooseSkillUpRecipe(Player& bot, uint32 skill, std::string& reason)
                 continue;
             anyCanRaise = true;
             SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE);
-            if (!info)
+            if (!info || !WorksOnSelf(*info) || !HasReagents(bot, *info))
                 continue;
-            bool materials = true;
-            for (std::size_t i = 0; i < info->Reagent.size(); ++i)
-                if (info->Reagent[i] > 0 && !bot.HasItemCount(uint32(info->Reagent[i]), uint32(std::max<int32>(1, info->ReagentCount[i]))))
-                    materials = false;
-            if (materials && int32(ability->MinSkillLineRank) > bestRank)
+            if (uint32 const focus = info->RequiresSpellFocus; focus && focus != kCookingFireFocus)
+            {
+                if (!FocusIdsInWorld().count(focus))
+                {
+                    anyUnobtainable = true; // no object of this focus exists on this server
+                    continue;
+                }
+                if (!FocusNear(bot, focus))
+                {
+                    if (!needsFocus)
+                        needsFocus = focus;
+                    continue;
+                }
+            }
+            if (int32(ability->MinSkillLineRank) > bestRank)
             {
                 best = spellId;
                 bestRank = int32(ability->MinSkillLineRank);
@@ -320,10 +396,136 @@ uint32 ChooseSkillUpRecipe(Player& bot, uint32 skill, std::string& reason)
         }
     }
     if (!best)
-        reason = !anyRecipe ? "bot knows no recipe of skill " + std::to_string(skill)
-               : !anyCanRaise ? "no recipe the bot knows can still raise its skill"
-               : "bot lacks the materials of every recipe that can raise its skill";
+    {
+        if (needsFocus)
+            reason = "the recipes the bot can make need a spell focus (" + std::to_string(needsFocus) + ": an anvil, a forge or a fire) within reach";
+        else
+            reason = !anyRecipe ? "bot knows no recipe of skill " + std::to_string(skill)
+                   : !anyCanRaise ? "no recipe the bot knows can still raise its skill"
+                   : anyUnobtainable ? "every recipe the bot has the materials for needs a focus object this world does not have"
+                   : "bot lacks the materials of every recipe that can raise its skill";
+    }
     return best;
+}
+
+// Casts a recipe on the bot: the checks and the casting that kSkillUp and kCraft share. A cooking recipe whose fire is not near makes the bot light a campfire
+// (kApplied, and the next ask cooks); any other focus that is not near is kNeedsFocus.
+BotActionStatus CastRecipe(Player& bot, uint32 recipe, std::string& reason)
+{
+    if (bot.isMoving())
+    {
+        SpellInfo const* recipeInfo = sSpellMgr->GetSpellInfo(recipe, DIFFICULTY_NONE);
+        if (recipeInfo && recipeInfo->CalcCastTime() > 0)
+        {
+            reason = "recipe " + std::to_string(recipe) + " has a cast time and the bot is moving";
+            return BotActionStatus::kMoving;
+        }
+    }
+    SpellCastResult result = bot.CastSpell(&bot, recipe, false);
+    if (result == SPELL_FAILED_REQUIRES_SPELL_FOCUS)
+    {
+        SpellInfo const* recipeInfo = sSpellMgr->GetSpellInfo(recipe, DIFFICULTY_NONE);
+        if (!recipeInfo || recipeInfo->RequiresSpellFocus != kCookingFireFocus || !sSpellMgr->GetSpellInfo(kBasicCampfireSpell, DIFFICULTY_NONE))
+        {
+            reason = "recipe " + std::to_string(recipe) + " needs spell focus " + std::to_string(recipeInfo ? recipeInfo->RequiresSpellFocus : 0) + " within reach";
+            return BotActionStatus::kNeedsFocus;
+        }
+        // The recipe needs a cooking fire and none is near: light one, and the next ask cooks. Any cook may light a basic campfire; the cooking
+        // trainer does not list it for the bots (it was missing on 300 of them), so it is learned the first time it is needed.
+        if (!bot.HasSpell(kBasicCampfireSpell))
+            bot.LearnSpell(kBasicCampfireSpell, false);
+        result = bot.CastSpell(&bot, kBasicCampfireSpell, false);
+        if (result == SPELL_FAILED_REAGENTS)
+        {
+            // In Forever's data the campfire costs a piece of Simple Wood (item 4470; the recipe dump shows it). The snapshot now names it and a vendor that
+            // sells it, and the bot buys it on its next supply visit like any missing reagent.
+            ModuleBotSupplies::NoteMissingReagent(bot, kBasicCampfireSpell);
+            reason = "the campfire needs a reagent the bot does not carry";
+            return BotActionStatus::kRefused;
+        }
+        if (result == SPELL_CAST_OK)
+        {
+            reason = "lit a campfire for recipe " + std::to_string(recipe);
+            return BotActionStatus::kApplied;
+        }
+    }
+    if (result != SPELL_CAST_OK)
+        reason = "cast of recipe " + std::to_string(recipe) + " returned result " + std::to_string(int32(result));
+    return StatusForCast(result);
+}
+
+// Why the bot cannot start a craft or a gather now: dead, in combat, or already casting. Empty when it can.
+BotActionStatus CannotCraftNow(Player& bot, std::string& reason, bool& refused)
+{
+    refused = true;
+    if (bot.IsInCombat() || !bot.IsAlive())
+    {
+        reason = bot.IsAlive() ? "bot is in combat" : "bot is dead";
+        return BotActionStatus::kRefused;
+    }
+    if (Spell const* current = bot.GetCurrentSpell(CURRENT_GENERIC_SPELL); current && current->getState() != SPELL_STATE_FINISHED)
+    {
+        reason = "bot is casting spell " + std::to_string(current->GetSpellInfo()->Id);
+        return BotActionStatus::kBusy;
+    }
+    if (Spell const* channel = bot.GetCurrentSpell(CURRENT_CHANNELED_SPELL); channel && channel->getState() != SPELL_STATE_FINISHED)
+    {
+        reason = "bot is channeling spell " + std::to_string(channel->GetSpellInfo()->Id);
+        return BotActionStatus::kBusy;
+    }
+    refused = false;
+    return BotActionStatus::kApplied;
+}
+
+// kCraft: one named recipe, cast on the bot. The recipe must be one the bot knows, of a crafting skill line, that works on the bot itself.
+BotActionStatus CraftAction(Player& bot, BotAction const& action, std::string& reason)
+{
+    bool refused = false;
+    BotActionStatus const blocked = CannotCraftNow(bot, reason, refused);
+    if (refused)
+        return blocked;
+    uint32 const recipe = action.spell_id;
+    SpellInfo const* info = sSpellMgr->GetSpellInfo(recipe, DIFFICULTY_NONE);
+    if (!info)
+    {
+        reason = "recipe " + std::to_string(recipe) + " does not exist";
+        return BotActionStatus::kUnknownSpell;
+    }
+    if (!bot.HasSpell(recipe))
+    {
+        reason = "the bot has not learned recipe " + std::to_string(recipe);
+        return BotActionStatus::kNotKnown;
+    }
+    bool isRecipe = false;
+    auto const bounds = sSpellMgr->GetSkillLineAbilityMapBounds(recipe);
+    for (auto it = bounds.first; it != bounds.second; ++it)
+        if (IsCraftSkill(it->second->SkillLine) && it->second->MinSkillLineRank > 0)
+            isRecipe = true;
+    if (!isRecipe || !WorksOnSelf(*info))
+    {
+        reason = "spell " + std::to_string(recipe) + " is not a recipe the bots can craft on themselves";
+        return BotActionStatus::kRefused;
+    }
+    if (!HasReagents(bot, *info))
+    {
+        ModuleBotSupplies::NoteMissingReagent(bot, recipe);
+        reason = "the bot lacks the materials of recipe " + std::to_string(recipe);
+        return BotActionStatus::kRefused;
+    }
+    if (uint32 const focus = info->RequiresSpellFocus; focus && focus != kCookingFireFocus)
+    {
+        if (!FocusIdsInWorld().count(focus))
+        {
+            reason = "recipe " + std::to_string(recipe) + " needs spell focus " + std::to_string(focus) + ", which no object of this world provides";
+            return BotActionStatus::kRefused;
+        }
+        if (!FocusNear(bot, focus))
+        {
+            reason = "recipe " + std::to_string(recipe) + " needs spell focus " + std::to_string(focus) + " within reach";
+            return BotActionStatus::kNeedsFocus;
+        }
+    }
+    return CastRecipe(bot, recipe, reason);
 }
 
 // Sells `count` of the items of `entry` in the bags to the vendor, a stack at a time (0 = every one the bot carries of it). Returns how many
@@ -1117,6 +1319,30 @@ BotActionStatus LeaveParty(Player& bot, std::string& reason)
 // the loot handler uses for a corpse. A corpse that is empty, or whose items do not all fit, is not an error: the bot took what it could.
 constexpr float kLootDistanceYards = 30.0f;
 
+// Takes every item of every loot in the bot's loot view, then the money, and releases each loot (the part of LootCorpse after the loot is open; a gathered
+// node or a skinned corpse leaves its loot in the view the same way).
+void TakeLootView(Player& bot, WorldSession& session)
+{
+    // Take every item of every loot in the view, then the money.
+    WorldPackets::Loot::LootItem take{ WorldPacket(CMSG_LOOT_ITEM) };
+    for (std::pair<ObjectGuid const, Loot*> const& view : bot.GetAELootView())
+        for (::LootItem const& item : view.second->items)
+            if (take.Loot.size() < 100)
+                take.Loot.push_back({ view.first, uint8(item.LootListId) });
+    if (!take.Loot.empty())
+        session.HandleAutostoreLootItemOpcode(take);
+
+    WorldPackets::Loot::LootMoney money{ WorldPacket(CMSG_LOOT_MONEY) };
+    session.HandleLootMoneyOpcode(money);
+
+    // Release each loot. The view changes as they are released, so the list is copied first.
+    std::vector<Loot*> opened;
+    for (std::pair<ObjectGuid const, Loot*> const& view : bot.GetAELootView())
+        opened.push_back(view.second);
+    for (Loot* loot : opened)
+        session.DoLootRelease(loot);
+}
+
 BotActionStatus LootCorpse(Player& bot, uint64 targetRef, std::string& reason)
 {
     Unit* unit = ResolveUnit(bot, targetRef);
@@ -1161,25 +1387,129 @@ BotActionStatus LootCorpse(Player& bot, uint64 targetRef, std::string& reason)
     if (bot.GetAELootView().empty())
         return BotActionStatus::kApplied; // nothing to take
 
-    // Take every item of every loot in the view, then the money.
-    WorldPackets::Loot::LootItem take{ WorldPacket(CMSG_LOOT_ITEM) };
-    for (std::pair<ObjectGuid const, Loot*> const& view : bot.GetAELootView())
-        for (::LootItem const& item : view.second->items)
-            if (take.Loot.size() < 100)
-                take.Loot.push_back({ view.first, uint8(item.LootListId) });
-    if (!take.Loot.empty())
-        session->HandleAutostoreLootItemOpcode(take);
-
-    WorldPackets::Loot::LootMoney money{ WorldPacket(CMSG_LOOT_MONEY) };
-    session->HandleLootMoneyOpcode(money);
-
-    // Release each loot. The view changes as they are released, so the list is copied first.
-    std::vector<Loot*> opened;
-    for (std::pair<ObjectGuid const, Loot*> const& view : bot.GetAELootView())
-        opened.push_back(view.second);
-    for (Loot* loot : opened)
-        session->DoLootRelease(loot);
+    TakeLootView(bot, *session);
     return BotActionStatus::kApplied;
+}
+
+// Gathering (kGather): what a node of Mining or Herbalism needs and what a corpse needs for Skinning. A node is a chest-type game object whose lock asks for the
+// skill (Lock.dbc, LOCK_KEY_SKILL with LOCKTYPE_MINING or LOCKTYPE_HERBALISM), at the skill value the lock names.
+constexpr float kGatherSearchYards = 30.0f;
+constexpr float kGatherReachYards = 4.0f;
+constexpr uint32 kMiningSpell = 2575, kHerbGatheringSpell = 2366, kSkinningSpell = 8613; // rank 1 of each; HighestKnownRank finds the rank the bot has
+
+std::map<uint32, uint32> const& GatherNodes(int32 lockType) // game object entry -> the skill value its lock asks for
+{
+    static std::map<int32, std::map<uint32, uint32>> const byLock = []
+    {
+        std::map<int32, std::map<uint32, uint32>> out;
+        for (auto const& [entry, templ] : sObjectMgr->GetGameObjectTemplates())
+        {
+            if (templ.type != GAMEOBJECT_TYPE_CHEST)
+                continue;
+            LockEntry const* lock = sLockStore.LookupEntry(templ.GetLockId());
+            if (!lock)
+                continue;
+            for (std::size_t i = 0; i < lock->Type.size(); ++i)
+                if (lock->Type[i] == LOCK_KEY_SKILL && (lock->Index[i] == LOCKTYPE_MINING || lock->Index[i] == LOCKTYPE_HERBALISM))
+                    out[lock->Index[i]][entry] = lock->Skill[i];
+        }
+        return out;
+    }();
+    static std::map<uint32, uint32> const none;
+    auto const it = byLock.find(lockType);
+    return it != byLock.end() ? it->second : none;
+}
+
+struct GatherNodeCheck
+{
+    WorldObject const* _bot;
+    std::map<uint32, uint32> const& _nodes;
+    uint32 _skillValue;
+    bool operator()(GameObject* object) const
+    {
+        auto const it = _nodes.find(object->GetEntry());
+        return it != _nodes.end() && it->second <= _skillValue && object->isSpawned() && object->GetGoState() == GO_STATE_READY && _bot->IsWithinDist(object, kGatherSearchYards);
+    }
+};
+
+struct SkinnableCorpseCheck
+{
+    WorldObject const* _bot;
+    bool operator()(Creature* creature) const
+    {
+        return !creature->IsAlive() && creature->HasUnitFlag(UNIT_FLAG_SKINNABLE) && _bot->IsWithinDist(creature, kGatherSearchYards);
+    }
+};
+
+BotActionStatus GatherAction(Player& bot, BotAction const& action, std::string& reason)
+{
+    uint32 const skill = action.spell_id;
+    if (skill != SKILL_MINING && skill != SKILL_HERBALISM && skill != SKILL_SKINNING)
+    {
+        reason = "skill " + std::to_string(skill) + " is not one the bots gather with (186 Mining, 182 Herbalism, 393 Skinning)";
+        return BotActionStatus::kRefused;
+    }
+    bool refused = false;
+    BotActionStatus const blocked = CannotCraftNow(bot, reason, refused);
+    if (refused)
+        return blocked;
+    if (!bot.HasSkill(skill))
+    {
+        reason = "bot does not have skill " + std::to_string(skill);
+        return BotActionStatus::kRefused;
+    }
+    // What an earlier gather left in the loot view (a vein opened, a hide skinned) is taken first, as a kLoot takes a corpse's.
+    if (!bot.GetAELootView().empty())
+    {
+        if (WorldSession* session = bot.GetSession())
+        {
+            TakeLootView(bot, *session);
+            reason = "took the loot of the last gather";
+            return BotActionStatus::kApplied;
+        }
+    }
+    uint32 const baseSpell = skill == SKILL_MINING ? kMiningSpell : skill == SKILL_HERBALISM ? kHerbGatheringSpell : kSkinningSpell;
+    uint32 const spell = HighestKnownRank(bot, baseSpell);
+    if (!spell)
+    {
+        reason = "the bot has not learned the gathering spell of skill " + std::to_string(skill);
+        return BotActionStatus::kNotKnown;
+    }
+
+    WorldObject* target = nullptr;
+    if (skill == SKILL_SKINNING)
+    {
+        Creature* corpse = nullptr;
+        SkinnableCorpseCheck check{ &bot };
+        Trinity::CreatureSearcher<SkinnableCorpseCheck> searcher(&bot, corpse, check);
+        Cell::VisitGridObjects(&bot, searcher, kGatherSearchYards);
+        target = corpse;
+    }
+    else
+    {
+        GameObject* node = nullptr;
+        GatherNodeCheck check{ &bot, GatherNodes(skill == SKILL_MINING ? LOCKTYPE_MINING : LOCKTYPE_HERBALISM), uint32(bot.GetSkillValue(skill)) };
+        Trinity::GameObjectSearcher<GatherNodeCheck> searcher(&bot, node, check);
+        Cell::VisitGridObjects(&bot, searcher, kGatherSearchYards);
+        target = node;
+    }
+    if (!target)
+    {
+        reason = std::string("nothing to gather within ") + std::to_string(int(kGatherSearchYards)) + " yards";
+        return BotActionStatus::kRefused;
+    }
+    if (!bot.IsWithinDist(target, kGatherReachYards))
+    {
+        // Walk to it: a point next to it, so the bot does not try to stand inside a rock. The next ask casts.
+        float x, y, z;
+        target->GetClosePoint(x, y, z, bot.GetCombatReach(), kGatherReachYards - 1.5f, target->GetAbsoluteAngle(&bot));
+        bot.GetMotionMaster()->Clear();
+        bot.GetMotionMaster()->MovePoint(0, x, y, z);
+        reason = "walking to the " + std::string(skill == SKILL_SKINNING ? "corpse" : "node") + " " + std::to_string(int(bot.GetDistance(target))) + " yards away";
+        return BotActionStatus::kMoving;
+    }
+    bot.StopMoving();
+    return StatusForCast(bot.CastSpell(target, spell, false));
 }
 
 // Release the spirit (layout 11): the checks of WorldSession::HandleRepopRequest, which returns silently, plus the combat refusal.
@@ -2014,63 +2344,21 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
 
         case ActionType::kSkillUp:
         {
-            if (bot.IsInCombat() || !bot.IsAlive())
+            bool refused = false;
+            BotActionStatus const blocked = CannotCraftNow(bot, reason, refused);
+            if (refused)
+                return blocked;
+            if (!IsCraftSkill(action.spell_id))
             {
-                reason = bot.IsAlive() ? "bot is in combat" : "bot is dead";
+                reason = "skill " + std::to_string(action.spell_id) + " is not one the bots craft (129 First Aid, 185 Cooking, 164 Blacksmithing, 165 Leatherworking, 171 Alchemy, "
+                         "186 Smelting, 197 Tailoring, 202 Engineering)";
                 return BotActionStatus::kRefused;
             }
-            if (action.spell_id != BotProfessions::kSkillFirstAid && action.spell_id != SKILL_COOKING)
-            {
-                reason = "skill " + std::to_string(action.spell_id) + " is not one the bots craft (129 First Aid, 185 Cooking)";
-                return BotActionStatus::kRefused;
-            }
-            if (Spell const* current = bot.GetCurrentSpell(CURRENT_GENERIC_SPELL); current && current->getState() != SPELL_STATE_FINISHED)
-            {
-                reason = "bot is casting spell " + std::to_string(current->GetSpellInfo()->Id);
-                return BotActionStatus::kBusy;
-            }
-            if (Spell const* channel = bot.GetCurrentSpell(CURRENT_CHANNELED_SPELL); channel && channel->getState() != SPELL_STATE_FINISHED)
-            {
-                reason = "bot is channeling spell " + std::to_string(channel->GetSpellInfo()->Id);
-                return BotActionStatus::kBusy;
-            }
-            uint32 const recipe = ChooseSkillUpRecipe(bot, action.spell_id, reason);
+            uint32 needsFocus = 0;
+            uint32 const recipe = ChooseSkillUpRecipe(bot, action.spell_id, reason, needsFocus);
             if (!recipe)
-                return BotActionStatus::kRefused;
-            if (bot.isMoving())
-            {
-                SpellInfo const* recipeInfo = sSpellMgr->GetSpellInfo(recipe, DIFFICULTY_NONE);
-                if (recipeInfo && recipeInfo->CalcCastTime() > 0)
-                {
-                    reason = "recipe " + std::to_string(recipe) + " has a cast time and the bot is moving";
-                    return BotActionStatus::kMoving;
-                }
-            }
-            SpellCastResult result = bot.CastSpell(&bot, recipe, false);
-            if (result == SPELL_FAILED_REQUIRES_SPELL_FOCUS && sSpellMgr->GetSpellInfo(kBasicCampfireSpell, DIFFICULTY_NONE))
-            {
-                // The recipe needs a cooking fire and none is near: light one, and the next kSkillUp cooks. Any cook may light a basic campfire; the cooking
-                // trainer does not list it for the bots (it was missing on 300 of them), so it is learned the first time it is needed.
-                if (!bot.HasSpell(kBasicCampfireSpell))
-                    bot.LearnSpell(kBasicCampfireSpell, false);
-                result = bot.CastSpell(&bot, kBasicCampfireSpell, false);
-                if (result == SPELL_FAILED_REAGENTS)
-                {
-                    // In Forever's data the campfire costs a piece of Simple Wood (item 4470; the recipe dump shows it). The snapshot now names it and a vendor that
-                    // sells it, and the bot buys it on its next supply visit like any missing reagent.
-                    ModuleBotSupplies::NoteMissingReagent(bot, kBasicCampfireSpell);
-                    reason = "the campfire needs a reagent the bot does not carry";
-                    return BotActionStatus::kRefused;
-                }
-                if (result == SPELL_CAST_OK)
-                {
-                    reason = "lit a campfire for recipe " + std::to_string(recipe);
-                    return BotActionStatus::kApplied;
-                }
-            }
-            if (result != SPELL_CAST_OK)
-                reason = "cast of recipe " + std::to_string(recipe) + " returned result " + std::to_string(int32(result));
-            return StatusForCast(result);
+                return needsFocus ? BotActionStatus::kNeedsFocus : BotActionStatus::kRefused;
+            return CastRecipe(bot, recipe, reason);
         }
 
         case ActionType::kSellToVendor:
@@ -2174,15 +2462,12 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
         case ActionType::kUseObject:
             return UseObjectAction(bot, action, reason);
 
-        // Layout 12: crafting and gathering. kLastActionType admits them, so the switch must answer for them: they are
-        // refused with a reason a module can log rather than falling through to "unknown action type" below.
+        // Crafting and gathering (SDK 0.18).
         case ActionType::kCraft:
-            reason = "crafting is not implemented in this core";
-            return BotActionStatus::kRefused;
+            return CraftAction(bot, action, reason);
 
         case ActionType::kGather:
-            reason = "gathering is not implemented in this core";
-            return BotActionStatus::kRefused;
+            return GatherAction(bot, action, reason);
 
         case ActionType::kGroup:
         {
