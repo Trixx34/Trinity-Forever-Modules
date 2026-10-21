@@ -287,7 +287,7 @@ bool IsCraftSkill(uint32 skill)
 {
     switch (skill)
     {
-        case SKILL_FIRST_AID:
+        case BotProfessions::kSkillFirstAid:
         case SKILL_COOKING:
         case SKILL_BLACKSMITHING:
         case SKILL_LEATHERWORKING:
