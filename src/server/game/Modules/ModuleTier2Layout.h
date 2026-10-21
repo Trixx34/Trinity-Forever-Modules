@@ -65,8 +65,6 @@ enum class BotActionStatus : std::uint8_t {
     kMoving = 12,        // a cast: the spell has a cast time and the bot is moving; stop first (layout 10)
     kNoRoute = 13,       // a move: the navmesh has no full route to the destination, so the bot walks to the nearest reachable point
                          // and stops there (the move is still applied). Only sent for kMoveTo.
-    kNeedsFocus = 14,    // SDK 0.18: a craft (kSkillUp, kCraft) or a cast needs a spell focus object (an anvil, a forge, a cooking fire) within reach and
-                         // there is none: walk to one and try again. Distinct from kRefused (no recipe, no materials), which no walk will cure.
 };
 
 // One active spell cooldown of a bot. spell_id 0 marks an unused slot.
@@ -289,9 +287,6 @@ enum class ActionType : std::uint32_t {
                  // Layout 16: 64 buy health potions, 128 buy mana potions, 256 buy bandages. Their target counts are the core's settings
                  // (Bot.Supplies.HealthPotionTarget, ManaPotionTarget, BandageTarget), not the action's. The core keeps back a money reserve
                  // (Bot.Supplies.ReserveCopperPerLevel per level) from every purchase except ammunition.
-                 // SDK 0.16: 1024 also sells white junk with the grey items of bit 1 (or alone): spare bags, miscellaneous items, and the surplus of trade
-                 // goods (a bot keeps 60 pieces of each kind, for First Aid, Cooking or the auction house). Never a quest item, an equipped bag, a
-                 // consumable, a reagent, ammunition, a weapon or armour. Meant for a bot whose bags are nearly full.
     kTrain = 7,  // learn every spell the trainer in interaction range teaches this bot now (M4). Refused in combat.
     kGroup = 8,  // party actions (M8). spell_id 1 invites the bot named by target_guid, 2 accepts the bot's pending invite,
                  // 3 leaves the bot's party. Refused in combat.
@@ -318,14 +313,10 @@ enum class ActionType : std::uint32_t {
     kRevive = 18,        // a chat order: resurrect the dead bot (corpse or ghost) at 35% health and put it next to the player target_guid names (as kSummon).
                          // Refused on a hardcore realm. Needs Bot.Chat.Orders.Enabled.
     kMount = 19,         // spell_id 1 mounts the bot on its fastest learned ground mount, 0 dismounts it. Refused in combat.
-    kCraft = 20,         // SDK 0.18: craft one named recipe: spell_id = the recipe's spell id (a recipe of Alchemy, Blacksmithing, Engineering, Leatherworking,
-                         // Tailoring, Smelting, First Aid or Cooking that the bot knows), cast on the bot itself. kNeedsFocus when its anvil, forge or fire is not
-                         // near; kRefused (with a reason) for an unknown recipe, missing materials, combat or death; kNotKnown when the bot has not learned it;
-                         // kBusy while another cast runs; kMoving for a recipe with a cast time while the bot moves.
-    kGather = 21,        // SDK 0.18: gather with a gathering skill. spell_id is the skill line: 186 Mining, 182 Herbalism or 393 Skinning. The core looks for what the
-                         // bot can gather within 30 yards (a vein or herb of a level its skill allows, or a corpse it can skin) and, when it is more than 4 yards
-                         // away, starts the bot walking to it (kMoving: ask again); in reach it casts the gathering spell, and the loot is taken with kLoot as for a
-                         // kill. kRefused with a reason when there is nothing to gather, the bot has no such skill, or it is in combat or dead; kBusy while casting.
+    kCraft = 20,         // craft using a profession spell: spell_id = the profession spell/recipe id,
+                         // target_guid = optional unit or object target (0 = self). Refused in combat.
+    kGather = 21,        // gather a node (herb, ore, etc.): target_guid = the node/object unit reference,
+                         // spell_id = the gathering spell id (optional). Refused in combat.
     kPetCommand = 22,    // command the bot's pet (layout 13). spell_id 1 = attack target_guid, 2 = follow the bot,
                          // 3 = stay; 4 = set stance (spell_id 4, dest_x = the stance value). Refused in combat
                          // and when the bot has no pet (status kInvalidTarget).
@@ -343,19 +334,11 @@ enum class ActionType : std::uint32_t {
                          // bot must be within 8 yards of it (status kOutOfRange otherwise: walk closer). target_guid, when not 0, is an ITEM ENTRY to use on the object
                          // instead of a click (a key, a charge of powder): the bot is given one if it has none, and casts the item's spell at the object. Refused unless
                          // Bot.Actions.UseObject is on in the core (for scenarios and tests), in combat, dead, or with no such object in reach.
-    kSellToVendor = 26,  // layout 20: sell items of one entry from the bags to a vendor in reach. spell_id is the item entry; dest_x the count
+    kSellToVendor = 26,  // layout 20: sell items of one entry from the bags to a vendor in interaction range. spell_id is the item entry; dest_x the count
                          // to sell (0 = every one the bot carries of it). target_guid, when not 0, names the vendor NPC (BotSnapshot::vendor_guid is the
                          // one to use); 0 takes the nearest vendor in reach. Refused in combat, dead, with no vendor in reach, or when the bot has none
                          // of the entry. Items the vendor will not take are kept and reported as kRefused with a reason.
-    kSkillUp = 27,         // SDK 0.17: make something that raises a crafting skill. spell_id is the skill line, 129 First Aid (bandages from cloth) or 185 Cooking
-                         // (food from meat); SDK 0.18 adds 164 Blacksmithing, 165 Leatherworking, 171 Alchemy, 186 Smelting, 197 Tailoring and 202 Engineering
-                         // (Enchanting needs an item to work on and is not offered). The core picks, among the recipes the bot knows for that skill, the one that can still raise its skill, that it has the
-                         // materials for and that needs the most skill, and casts it on the bot. A recipe that needs a cooking fire when none is near makes the
-                         // bot light a campfire first (Basic Campfire); the next kSkillUp makes the food. kApplied when a cast started; kRefused with a reason when
-                         // the bot has no recipe, no materials, or its skill is too high for any recipe it can make; kBusy while another cast runs; kMoving when the
-                         // recipe has a cast time and the bot moves. Refused in combat and dead. SDK 0.18: a recipe whose focus (anvil, forge, fire) is not near is
-                         // not picked when another is possible; when only such recipes remain the answer is kNeedsFocus, and the module walks to a focus object.
-    kLastActionType = kSkillUp, // the highest valid value; PublishActions refuses anything above it
+    kLastActionType = kSellToVendor, // the highest valid value; PublishActions refuses anything above it
 };
 
 // A unit as one 64-bit value (BotAction::target_guid, NearbyUnit::guid). See MakeUnitRef.
