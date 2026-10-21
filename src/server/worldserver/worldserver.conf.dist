@@ -1830,6 +1830,12 @@ Bot.Limit.MaxDbQueue = 5000
 #        1 = a module may make a bot use a game object near it (kUseObject): click a door, a lever or an altar, or use an item on it (a key, a charge of powder; the
 #            bot is given the item if it has none). For dungeon scenarios, where a bot party cannot open a locked door a player would. Off in normal play.
 #
+#    Bot.Snapshot.GroundEffects
+#        Default:     0
+#        1 = the snapshot of each bot lists the dynamic objects (a spell's persistent area: Flamestrike, Blizzard, a poison cloud) and area triggers within 30 yards
+#            (GroundEffect, layout 21), so a module can move the bot out of a harmful one. A grid search for every bot on every snapshot: leave it off unless a module
+#            asks for it (forever-bots: AvoidGroundEffects).
+#
 #    Bot.Taxi.Enabled
 #        Default:     1
 #        1 = a module may make a bot fly (kTaxi): from a flight master to the flight node nearest to a point on the bot's map. A bot knows every flight node
