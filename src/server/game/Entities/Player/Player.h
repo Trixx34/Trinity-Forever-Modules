@@ -2396,7 +2396,10 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         // set while taken to another map to watch a recap: where the character goes back to (and is saved at)
         Optional<WorldLocation> m_deathRecapReturn;
         void BuildPlayerRepop();
-        void RepopAtGraveyard();
+        // reviveUnreachable: the body is placed at the graveyard alive (TELE_REVIVE_AT_TELEPORT) where a ghost could not get back to it
+        // (a dungeon, a raid, a transport). A module's bot releases as a ghost instead (tier2_layout kReleaseSpirit: "the corpse becomes a
+        // ghost at the graveyard"), walks back to its corpse and is revived there.
+        void RepopAtGraveyard(bool reviveUnreachable = true);
         // Classic 1.60: a graveyard row whose Z lies under the terrain (retail world_safe_locs Z against Classic terrain) drops the ghost
         // out of the world. Raises loc to the floor when it is buried (no static surface near it); returns true when it moved the point.
         bool SnapBuriedLocToFloor(Map* map, WorldLocation& loc, uint32 safeLocId) const;

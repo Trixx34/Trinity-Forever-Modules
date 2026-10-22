@@ -5003,7 +5003,7 @@ bool Player::SnapBuriedLocToFloor(Map* map, WorldLocation& loc, uint32 safeLocId
     return true;
 }
 
-void Player::RepopAtGraveyard()
+void Player::RepopAtGraveyard(bool reviveUnreachable)
 {
     // note: this can be called also when the player is alive
     // for example from WorldSession::HandleMovementOpcodes
@@ -5012,7 +5012,7 @@ void Player::RepopAtGraveyard()
 
     bool shouldResurrect = false;
     // Such zones are considered unreachable as a ghost and the player must be automatically revived
-    if ((!IsAlive() && zone && zone->GetFlags().HasFlag(AreaFlags::NoGhostOnRelease)) || GetMap()->IsNonRaidDungeon() || GetMap()->IsRaid() || GetTransport() || GetPositionZ() < GetMap()->GetMinHeight(GetPhaseShift(), GetPositionX(), GetPositionY()))
+    if (reviveUnreachable && ((!IsAlive() && zone && zone->GetFlags().HasFlag(AreaFlags::NoGhostOnRelease)) || GetMap()->IsNonRaidDungeon() || GetMap()->IsRaid() || GetTransport() || GetPositionZ() < GetMap()->GetMinHeight(GetPhaseShift(), GetPositionX(), GetPositionY())))
     {
         shouldResurrect = true;
         SpawnCorpseBones();
