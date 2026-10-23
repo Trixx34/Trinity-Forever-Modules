@@ -43,6 +43,7 @@
 #include "InstanceScript.h"
 #include "Item.h"
 #include "Log.h"
+#include "ModuleDungeonTelegraph.h"
 #include "Loot.h"
 #include "LootMgr.h"
 #include "MotionMaster.h"
@@ -3750,6 +3751,9 @@ void Spell::_cast(bool skipCheck)
         cancel();
         return;
     }
+
+    WorldObject* spellTarget = m_targets.GetUnitTarget();
+    ModuleDungeonTelegraph::Cast(m_caster->ToUnit(), spellTarget ? spellTarget->ToUnit() : nullptr, GetSpellInfo(), skipCheck);
 
     if (Player* playerCaster = m_caster->ToPlayer())
     {

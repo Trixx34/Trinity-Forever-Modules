@@ -1759,6 +1759,12 @@ Modules.Tier2.NearbyRefreshTicks = 0
 
 Modules.Tier2.MaxTickInterval = 100
 
+#    Modules.Tier2.DungeonTelegraph
+#        Default:     0
+#        Logs ordered Deadmines cast starts, applied damage, and heals. For bounded sim runs only.
+
+Modules.Tier2.DungeonTelegraph = 0
+
 #    Bot.Login.MaxPerTick
 #        Default:     5
 #        Bot logins started per world tick. Logins are spread over several ticks so the world does not stall.
