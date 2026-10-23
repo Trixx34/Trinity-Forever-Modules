@@ -54,6 +54,7 @@
 #include "Loot.h"
 #include "LootMgr.h"
 #include "LootPackets.h"
+#include "ModuleDungeonTelegraph.h"
 #include "MapUtils.h"
 #include "MiscPackets.h"
 #include "MotionMaster.h"
@@ -1080,6 +1081,9 @@ bool Unit::HasBreakableByDamageCrowdControlAura(Unit const* excludeCasterChannel
 
     if (spellProto && spellProto->HasAttribute(SPELL_ATTR3_NO_DURABILITY_LOSS))
         durabilityLoss = false;
+
+    // Record applied damage after absorbs/resists and script adjustments.
+    ModuleDungeonTelegraph::Damage(attacker, victim, spellProto, damageTaken, health);
 
     if (killed)
         Unit::Kill(attacker, victim, durabilityLoss, skipSettingDeathState);
@@ -6682,6 +6686,7 @@ void Unit::SetCharm(Unit* charm, bool apply)
     Unit* healer = healInfo.GetHealer();
     Unit* victim = healInfo.GetTarget();
     uint32 addhealth = healInfo.GetHeal();
+    uint32 const healthBefore = victim->GetHealth();
 
     if (UnitAI* victimAI = victim->GetAI())
         victimAI->HealReceived(healer, addhealth);
@@ -6694,6 +6699,7 @@ void Unit::SetCharm(Unit* charm, bool apply)
 
     // Hook for OnHeal Event
     sScriptMgr->OnHeal(healer, victim, (uint32&)gain);
+    ModuleDungeonTelegraph::Heal(healer, victim, healInfo.GetSpellInfo(), addhealth, uint32(std::max(gain, 0)), healthBefore);
 
     Unit* unit = healer;
     if (healer && healer->GetTypeId() == TYPEID_UNIT && healer->IsTotem())
