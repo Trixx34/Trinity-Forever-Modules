@@ -133,8 +133,9 @@ bool ModuleTier2Region::ReadNewActions(ModuleActionSet& out)
             TC_LOG_ERROR("modules", "Tier 2 region '{}': published action buffer {} is not 0 or 1; skipping read", _name, buffer);
             return false;
         }
+        uint64 const tick = _header->published_action_tick.load(std::memory_order_acquire);
         // The header tick is the cheap check for "nothing new", so an idle module costs one load per tick.
-        if (buffer == _seenActionBuffer && _header->published_action_tick.load(std::memory_order_acquire) == _seenActionTick)
+        if (buffer == _seenActionBuffer && tick == _seenActionTick)
             return false;
 
         auto const* queue = reinterpret_cast<ActionQueueHeader const*>(base + _actionOffset + buffer * _actionBytes);
@@ -145,8 +146,11 @@ bool ModuleTier2Region::ReadNewActions(ModuleActionSet& out)
         if (count > 0)
             std::memcpy(copy.Actions.data(), reinterpret_cast<std::byte const*>(queue + 1), count * sizeof(forever_module::BotAction));
 
-        if (_header->published_action_buffer.load(std::memory_order_acquire) != buffer)
-            continue; // the module published again while we copied; read the new buffer
+        // published_action_tick is the sequence. The module stores it after the buffer contents, so a
+        // change here means the copy raced a publish, including one that flipped away and back to the same index.
+        if (_header->published_action_tick.load(std::memory_order_acquire) != tick ||
+            _header->published_action_buffer.load(std::memory_order_acquire) != buffer)
+            continue;
 
         _seenActionBuffer = buffer;
         _seenActionTick = copy.Tick;
