@@ -1546,8 +1546,15 @@ BotActionStatus ReleaseSpiritAction(Player& bot, std::string& reason)
         reason = "bot has no session";
         return BotActionStatus::kRefused;
     }
-    WorldPackets::Misc::RepopRequest request{ WorldPacket(CMSG_REPOP_REQUEST) };
-    session->HandleRepopRequest(request);
+    // Released as a ghost, never revived at the graveyard. HandleRepopRequest ends in RepopAtGraveyard, which places a body released inside
+    // a dungeon or a raid at the graveyard alive (a ghost could not walk back to a corpse in there). A bot released that way stood up among
+    // the wolves of Westfall at half health and died outside the dungeon. The contract of this action (tier2_layout kReleaseSpirit) is the
+    // game's own release: the corpse stays where it fell and the ghost walks back, so the bot is revived in the dungeon it died in.
+    if (bot.getDeathState() == JUST_DIED)
+        bot.KillPlayer();   // a release that arrived after the kill but before the death update (the check of HandleRepopRequest)
+    bot.RemovePet(nullptr, PET_SAVE_NOT_IN_SLOT, true);
+    bot.BuildPlayerRepop();
+    bot.RepopAtGraveyard(false);
     return BotActionStatus::kApplied;
 }
 
