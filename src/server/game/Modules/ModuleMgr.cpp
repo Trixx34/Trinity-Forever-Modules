@@ -1089,7 +1089,7 @@ void ModuleMgr::ApplyModuleActions(ModuleId module, ModuleActionSet const& actio
         }
 
         std::string reason;
-        forever_module::BotActionStatus const status = ApplyBotAction(*bot, action, reason);
+        forever_module::BotActionStatus const status = ApplyBotAction(*bot, action, reason, module);
         RecordActionResult(action.bot_guid, action, status);
         if (status != forever_module::BotActionStatus::kApplied)
         {

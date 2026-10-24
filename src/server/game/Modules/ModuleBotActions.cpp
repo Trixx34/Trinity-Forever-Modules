@@ -1,4 +1,5 @@
 #include "ModuleBotActions.h"
+#include "ModuleMgr.h"
 #include "BotProfessions.h"
 #include "BotTaxi.h"
 #include "BotGearRules.h"
@@ -1187,7 +1188,7 @@ BotActionStatus LearnFromTrainer(Player& bot, std::string& reason)
 
 // Party actions (M8). A bot invites only other bots the module controls, so the module's parties are its own; an invite
 // never reaches a player on a real account. The steps follow the core's own invite and accept handlers (GroupHandler.cpp).
-BotActionStatus InviteToParty(Player& bot, uint64 targetRef, std::string& reason)
+BotActionStatus InviteToParty(Player& bot, uint64 targetRef, std::string& reason, uint32 module)
 {
     if (forever_module::UnitRefType(targetRef) != uint8(HighGuid::Player))
     {
@@ -1196,9 +1197,9 @@ BotActionStatus InviteToParty(Player& bot, uint64 targetRef, std::string& reason
     }
     uint32 const counter = forever_module::UnitRefCounter(targetRef);
     Player* target = ObjectAccessor::FindPlayerByLowGUID(counter);
-    if (!target || target == &bot || !target->IsInWorld() || !sBotMgr->Exists(counter))
+    if (!target || target == &bot || !target->IsInWorld() || !sBotMgr->Exists(counter) || !sModuleMgr->ControlsBot(counter, module))
     {
-        reason = "party invite target is not a bot on this realm";
+        reason = "party invite target is not a bot this module controls";
         return BotActionStatus::kInvalidTarget;
     }
     if (target->GetGroup() || target->GetGroupInvite())
@@ -2231,7 +2232,7 @@ BotActionStatus PetCommandAction(Player& bot, BotAction const& action, std::stri
     }
 }
 
-BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string& reason)
+BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string& reason, uint32 module)
 {
     switch (action.type)
     {
@@ -2496,7 +2497,7 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             BotActionStatus status = BotActionStatus::kRefused;
             switch (action.spell_id)
             {
-                case 1: status = InviteToParty(bot, action.target_guid, reason); break;
+                case 1: status = InviteToParty(bot, action.target_guid, reason, module); break;
                 case 2: status = AcceptPartyInvite(bot, reason); break;
                 case 3: status = LeaveParty(bot, reason); break;
                 default: reason = "unknown party action " + std::to_string(action.spell_id); break;
