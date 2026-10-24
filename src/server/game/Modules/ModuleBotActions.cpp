@@ -1131,12 +1131,18 @@ BotActionStatus GrantAction(Player& bot, BotAction const& action, std::string& r
         return BotActionStatus::kRefused;
     }
     uint32 const entry = action.spell_id;
-    if (!sObjectMgr->GetItemTemplate(entry))
+    ItemTemplate const* proto = sObjectMgr->GetItemTemplate(entry);
+    if (!proto)
     {
         reason = "unknown item";
         return BotActionStatus::kRefused;
     }
-    uint32 const count = action.dest_x >= 1.0f ? uint32(action.dest_x) : 1u;
+    if (!std::isfinite(action.dest_x) || action.dest_x < 1.0f || action.dest_x > float(proto->GetMaxStackSize()))
+    {
+        reason = "grant count must be from 1 to the item's stack size";
+        return BotActionStatus::kRefused;
+    }
+    uint32 const count = uint32(action.dest_x);
     ItemPosCountVec destination;
     if (bot.CanStoreNewItem(NULL_BAG, NULL_SLOT, destination, entry, count) != EQUIP_ERR_OK)
     {
