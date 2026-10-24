@@ -160,6 +160,15 @@ int main()
     }
     CHECK(!region->ReadNewActions(actions)); // the same set is not returned twice
 
+    // A poisoned index must not be used as an offset into the region.
+    rwHeader->published_action_buffer.store(7);
+    CHECK(!region->ReadNewActions(actions));
+    rwHeader->published_action_buffer.store(0);
+    rwHeader->published_snapshot_buffer.store(9);
+    region->PublishSnapshot(9);
+    CHECK(rwHeader->published_snapshot_tick.load() != 9);
+    rwHeader->published_snapshot_buffer.store(0);
+
     // An empty set is still new (it tells the core the module now wants nothing).
     publishActions(8, {}, 0);
     CHECK(region->ReadNewActions(actions));

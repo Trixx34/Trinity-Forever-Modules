@@ -20,6 +20,6 @@
 class Player;
 
 // Applies the action and returns what happened. Anything but kApplied comes with the reason in `reason` (for the log).
-forever_module::BotActionStatus ApplyBotAction(Player& bot, forever_module::BotAction const& action, std::string& reason);
+forever_module::BotActionStatus ApplyBotAction(Player& bot, forever_module::BotAction const& action, std::string& reason, uint32 module = 0);
 
 #endif // TRINITYCORE_MODULE_BOT_ACTIONS_H

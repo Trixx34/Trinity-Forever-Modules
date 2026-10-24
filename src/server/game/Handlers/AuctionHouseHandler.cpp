@@ -898,7 +898,6 @@ void WorldSession::HandleAuctionSellItem(WorldPackets::AuctionHouse::AuctionSell
     }
 
     uint32 auctionId = sObjectMgr->GenerateAuctionID();
-    ModuleLastAuctionId = auctionId;
 
     AuctionPosting auction;
     auction.Id = auctionId;
@@ -937,6 +936,7 @@ void WorldSession::HandleAuctionSellItem(WorldPackets::AuctionHouse::AuctionSell
     item->SaveToDB(trans);
 
     auctionHouse->AddAuction(trans, std::move(auction));
+    ModuleLastAuctionId = auctionId;
     _player->SaveInventoryAndGoldToDB(trans);
     AddTransactionCallback(CharacterDatabase.AsyncCommitTransaction(trans)).AfterComplete([this, auctionId, auctionPlayerGuid = _player->GetGUID(), throttle](bool success)
     {
