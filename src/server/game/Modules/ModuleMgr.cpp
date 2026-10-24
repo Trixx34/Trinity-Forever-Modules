@@ -363,6 +363,7 @@ bool ModuleMgr::SpawnModule(ModuleId id)
         std::lock_guard<std::mutex> lock(_mutex);
         ModuleDescriptor& d = _modules.at(id);
         d.LastFailure = std::string("failed to start process: ") + e.what();
+        ++d.HandshakeAttempts;
         ScheduleRestart(d, /*handshakeFailure=*/true);
         TC_LOG_ERROR("modules", "'{}': failed to start '{}': {}", name, executable, e.what());
         return false;
