@@ -220,8 +220,9 @@ int main()
     nearbyEntry.guid = forever_module::MakeUnitRef(8, 1234, 7);
     nearbyEntry.is_hostile = true;
     std::vector<ModuleSnapshotBot> withBot(1);
+    std::vector<forever_module::NearbyUnit> nearbyStorage{ nearbyEntry };
     withBot[0].Bot = botEntry;
-    withBot[0].Nearby = { nearbyEntry };
+    withBot[0].Nearby = nearbyStorage;
     region->PublishSnapshot(9, withBot);
 
     uint8_t const contentBuffer = header->published_snapshot_buffer.load();
@@ -301,8 +302,8 @@ int main()
     withBot[0].Bot.goods_vendor_y = -2.5f;
     withBot[0].Bot.goods_vendor_z = 3.5f;
     withBot[0].Bot.goods_vendor_guid = forever_module::MakeUnitRef(8, 5100, 41);
-    withBot[0].Nearby[0].aura_count = 3;
-    withBot[0].Nearby[0].aura_mask = 0x00000005; // a DOT and a poison (see doc/module-system/20)
+    nearbyStorage[0].aura_count = 3;
+    nearbyStorage[0].aura_mask = 0x00000005; // a DOT and a poison (see doc/module-system/20)
     region->PublishSnapshot(11, withBot);
 
     uint8_t const layout13Buffer = header->published_snapshot_buffer.load();
@@ -342,8 +343,9 @@ int main()
     // And back to zero: an entry written from scratch must not keep the previous tick's facts.
     withBot[0].Bot = forever_module::BotSnapshot();
     withBot[0].Bot.guid = 42;
-    withBot[0].Nearby[0] = forever_module::NearbyUnit();
-    withBot[0].Nearby[0].guid = forever_module::MakeUnitRef(8, 1234, 7);
+    nearbyStorage[0] = forever_module::NearbyUnit();
+    nearbyStorage[0].guid = forever_module::MakeUnitRef(8, 1234, 7);
+    withBot[0].Nearby = nearbyStorage;
     region->PublishSnapshot(12, withBot);
     uint8_t const zeroBuffer = header->published_snapshot_buffer.load();
     auto const* zeroSnap = reinterpret_cast<forever_module::WorldTickSnapshotHeader const*>(
