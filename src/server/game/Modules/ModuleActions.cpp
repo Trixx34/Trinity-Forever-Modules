@@ -235,23 +235,17 @@ static uint32 AuctionFactionTemplate(ObjectGuid auctioneer)
     return 0;
 }
 
-static Creature* ResolveAuctioneerCreature(uint64 ref)
+static Creature* ResolveAuctioneerCreature(Player* player, uint64 ref)
 {
-    if (forever_module::UnitRefType(ref) != uint8(HighGuid::Creature))
+    if (!player || forever_module::UnitRefType(ref) != uint8(HighGuid::Creature))
         return nullptr;
-    uint32 const entry = forever_module::UnitRefEntry(ref);
-    uint32 const counter = static_cast<uint32>(forever_module::UnitRefCounter(ref));
-    Creature* found = nullptr;
-    sMapMgr->DoForAllMaps([&](Map* map)
-    {
-        if (found)
-            return;
-        ObjectGuid const guid = ObjectGuid::Create<HighGuid::Creature>(0, map->GetId(), entry, counter);
-        Creature* creature = map->GetCreature(guid);
-        if (creature)
-            found = creature;
-    });
-    return found;
+    Map* map = player->GetMap();
+    if (!map)
+        return nullptr;
+    ObjectGuid const guid = ObjectGuid::Create<HighGuid::Creature>(uint16(map->GetId()),
+                                                                  forever_module::UnitRefEntry(ref),
+                                                                  forever_module::UnitRefCounter(ref));
+    return map->GetCreature(guid);
 }
 
 void BuyItemAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply)
@@ -266,12 +260,12 @@ void BuyItemAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg const& re
         return;
     }
 
-    Creature* vendor = ResolveAuctioneerCreature(request.AuctioneerGuid);
+    Creature* vendor = ResolveAuctioneerCreature(player, request.AuctioneerGuid);
     if (!vendor)
     {
         // Allow the module to pass an ObjectGuid-style raw vendor reference by interacting as with an NPC in range.
         // Fall back to nearest vendor? Refuse rather than guessing.
-        reply.Reason = "vendor not found on any map";
+                reply.Reason = "vendor not found on the player's map";
         return;
     }
 
@@ -342,16 +336,19 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
     {
         case 0: // kBrowse
         {
-            Creature* auctioneer = ResolveAuctioneerCreature(request.AuctioneerGuid);
+            Player* browser = primaryPlayer;
+            if (!browser && request.PlayerGuid)
+                browser = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(request.PlayerGuid));
+            Creature* auctioneer = ResolveAuctioneerCreature(browser, request.AuctioneerGuid);
             if (!auctioneer)
             {
-                reply.Reason = "auctioneer not found on any map";
+                reply.Reason = "auctioneer not found on the player's map";
                 return;
             }
             AuctionHouseObject* ah = sAuctionMgr->GetAuctionsMap(auctioneer->GetCreatureTemplate()->faction);
 
-            // The locale comes from the bot searching when it is online (its own faction's house), else any online player.
-            Player* anyPlayer = request.PlayerGuid ? ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(request.PlayerGuid)) : nullptr;
+            // The locale comes from the player who asked, who must be on the auctioneer's map.
+            Player* anyPlayer = browser;
             for (auto const& [guid, player] : ObjectAccessor::GetPlayers())
             {
                 if (anyPlayer)
@@ -410,10 +407,10 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
                 return;
             }
 
-            Creature* auctioneer = ResolveAuctioneerCreature(request.AuctioneerGuid);
+            Creature* auctioneer = ResolveAuctioneerCreature(player, request.AuctioneerGuid);
             if (!auctioneer)
             {
-                reply.Reason = "auctioneer not found on any map";
+                reply.Reason = "auctioneer not found on the player's map";
                 return;
             }
             Creature* creature = player->GetNPCIfCanInteractWith(auctioneer->GetGUID(), UNIT_NPC_FLAG_AUCTIONEER, UNIT_NPC_FLAG_2_NONE);
@@ -481,10 +478,10 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
                 return;
             }
 
-            Creature* auctioneer = ResolveAuctioneerCreature(request.AuctioneerGuid);
+            Creature* auctioneer = ResolveAuctioneerCreature(player, request.AuctioneerGuid);
             if (!auctioneer)
             {
-                reply.Reason = "auctioneer not found on any map";
+                reply.Reason = "auctioneer not found on the player's map";
                 return;
             }
             Creature* creature = player->GetNPCIfCanInteractWith(auctioneer->GetGUID(), UNIT_NPC_FLAG_AUCTIONEER, UNIT_NPC_FLAG_2_NONE);
@@ -544,10 +541,10 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
                 return;
             }
 
-            Creature* auctioneer = ResolveAuctioneerCreature(request.AuctioneerGuid);
+            Creature* auctioneer = ResolveAuctioneerCreature(player, request.AuctioneerGuid);
             if (!auctioneer)
             {
-                reply.Reason = "auctioneer not found on any map";
+                reply.Reason = "auctioneer not found on the player's map";
                 return;
             }
             Creature* creature = player->GetNPCIfCanInteractWith(auctioneer->GetGUID(), UNIT_NPC_FLAG_AUCTIONEER, UNIT_NPC_FLAG_2_NONE);
