@@ -2235,6 +2235,11 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             // The route is asked for before the move is started, and the move is carried out either way: a bot with no full
             // route still walks as far towards the destination as the mesh allows. kNoRoute only tells the module that its
             // destination is out of reach, so it stops sending the bot there (layout 13, BotActionStatus::kNoRoute).
+            if (!Trinity::IsValidMapCoord(action.dest_x, action.dest_y, action.dest_z))
+            {
+                reason = "not a valid map position";
+                return BotActionStatus::kRefused;
+            }
             bool const reachable = HasFullRouteTo(bot, action.dest_x, action.dest_y, action.dest_z);
             bot.GetMotionMaster()->Clear();
             bot.GetMotionMaster()->MovePoint(0, action.dest_x, action.dest_y, action.dest_z);
