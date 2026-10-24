@@ -446,7 +446,12 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
             uint64 before = player->GetMoney();
             player->GetSession()->HandleAuctionPlaceBid(placeBid);
             uint64 after = player->GetMoney();
-            reply.CopperSpent = before > after ? before - after : 0;
+            if (after >= before)
+            {
+                reply.Reason = "bid was not placed";
+                return;
+            }
+            reply.CopperSpent = before - after;
             reply.Success = true;
             reply.AuctionGuid = request.AuctionGuid;
             return;
@@ -509,8 +514,6 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
             sellItem.RunTime = 120;
             sellItem.Items.push_back({ itemGuid, 1 });
 
-            auto const beforeAuctionId = player->GetSession()->ModuleLastAuctionId;
-            (void)beforeAuctionId;
             player->GetSession()->ModuleLastAuctionId = 0;
 
             uint64 moneyBefore = player->GetMoney();
@@ -518,10 +521,14 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
             uint32 generated = player->GetSession()->ModuleLastAuctionId;
 
             uint64 moneyAfter = player->GetMoney();
-            reply.CopperSpent = moneyBefore > moneyAfter ? moneyBefore - moneyAfter : deposit;
-            reply.ItemEntry = item->GetEntry();
-            if (generated)
-                reply.AuctionGuid = generated;
+            if (!generated)
+            {
+                reply.Reason = "auction was not listed";
+                return;
+            }
+            reply.CopperSpent = moneyBefore > moneyAfter ? moneyBefore - moneyAfter : 0;
+            reply.ItemEntry = request.ItemEntry ? request.ItemEntry : item->GetEntry();
+            reply.AuctionGuid = generated;
             reply.Success = true;
             return;
         }
@@ -561,10 +568,12 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
             removeItem.Auctioneer = auctioneer->GetGUID();
             removeItem.AuctionID = static_cast<int32>(request.AuctionGuid);
 
-            uint64 before = player->GetMoney();
             player->GetSession()->HandleAuctionRemoveItem(removeItem);
-            uint64 after = player->GetMoney();
-            reply.CopperSpent = before > after ? before - after : 0;
+            if (ah->GetAuction(static_cast<uint32>(request.AuctionGuid)))
+            {
+                reply.Reason = "auction was not cancelled";
+                return;
+            }
             reply.Success = true;
             reply.AuctionGuid = request.AuctionGuid;
             return;
