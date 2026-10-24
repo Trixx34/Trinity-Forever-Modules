@@ -40,6 +40,16 @@ struct BotSnapshotWatch
     uint32 LostReason = 0;     // why it went: 0 none or not told, 1 killed, 2 leashed, 3 despawned, 4 another player
 };
 
+// Reused by sequential bot snapshot builds on the world thread to retain nearby-query allocations.
+struct NearbySnapshotScratch
+{
+    std::vector<Unit*> InRange;
+    std::vector<Unit*> Players;
+    std::vector<Unit*> Creatures;
+    std::vector<Unit*> Corpses;
+    std::vector<Unit*> Chosen;
+};
+
 // Frees the nearest-vendor lookup cache entry for a bot that has logged out. Without this the cache grows
 // to one entry per ever-created bot; calling this on logout keeps it bounded to currently-online bots.
 void ClearVendorLookup(uint64 botCounter);
@@ -49,6 +59,7 @@ void ClearVendorLookup(uint64 botCounter);
 // stored in cachedNearby, so the range query runs for only some of the bots on each tick. `watch` carries the state of
 // the previous tick and is updated by the call.
 ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNearby,
-                                   std::vector<forever_module::NearbyUnit>& cachedNearby, BotSnapshotWatch& watch);
+                                   std::vector<forever_module::NearbyUnit>& cachedNearby, BotSnapshotWatch& watch,
+                                   NearbySnapshotScratch& scratch);
 
 #endif // TRINITYCORE_MODULE_BOT_SNAPSHOT_H
