@@ -387,12 +387,16 @@ void ModuleSession::Run()
         if (WaitFor(_listenFd, ModuleSocket::kReadable, std::min(remaining, PollSlice)))
         {
             ModuleSocket::Handle const fd = ModuleSocket::Accept(_listenFd);
-            if (fd != ModuleSocket::kInvalid)
+            if (fd == ModuleSocket::kInvalid)
+                continue;
+            if (!ModuleSocket::PeerIsOwner(fd))
             {
-                ModuleSocket::SetNonBlocking(fd);
-                _connFd = fd;
-                break;
+                ModuleSocket::Close(fd);
+                continue;
             }
+            ModuleSocket::SetNonBlocking(fd);
+            _connFd = fd;
+            break;
         }
     }
     if (_stop)

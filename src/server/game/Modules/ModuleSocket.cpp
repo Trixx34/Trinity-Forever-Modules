@@ -13,6 +13,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <aclapi.h>
+#include <sddl.h>
 
 namespace
 {
@@ -104,6 +106,34 @@ bool BindAndListen(Handle listener, std::string const& path, std::string& error)
         error = "bind/listen on " + path + " failed: " + LastError();
         return false;
     }
+
+    // The socket file is otherwise readable by any local user. Restrict it to the current user.
+    HANDLE token = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+    {
+        DWORD needed = 0;
+        GetTokenInformation(token, TokenUser, nullptr, 0, &needed);
+        std::string user(needed, '\0');
+        if (needed && GetTokenInformation(token, TokenUser, user.data(), needed, &needed))
+        {
+            EXPLICIT_ACCESS_A access{};
+            access.grfAccessPermissions = GENERIC_ALL;
+            access.grfAccessMode = SET_ACCESS;
+            access.grfInheritance = NO_INHERITANCE;
+            access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+            access.Trustee.TrusteeType = TRUSTEE_IS_USER;
+            access.Trustee.ptstrName = reinterpret_cast<LPSTR>(reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid);
+            PACL acl = nullptr;
+            if (SetEntriesInAclA(1, &access, nullptr, &acl) == ERROR_SUCCESS)
+            {
+                SetNamedSecurityInfoA(const_cast<char*>(path.c_str()), SE_FILE_OBJECT,
+                                      DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                                      nullptr, nullptr, acl, nullptr);
+                LocalFree(acl);
+            }
+        }
+        CloseHandle(token);
+    }
     return true;
 }
 
@@ -111,6 +141,13 @@ Handle Accept(Handle listener)
 {
     SOCKET s = ::accept(Native(listener), nullptr, nullptr);
     return s == INVALID_SOCKET ? kInvalid : static_cast<Handle>(s);
+}
+
+bool PeerIsOwner(Handle)
+{
+    // Winsock AF_UNIX has no SO_PEERCRED and no peer token. BindAndListen restricts the socket file
+    // to the current user; that ACL is the check on this platform.
+    return true;
 }
 
 bool CreateWakePair(Handle& readEnd, Handle& writeEnd, std::string& error)
@@ -224,9 +261,11 @@ void RemovePath(std::string const& path)
 #else // POSIX
 
 #include <cerrno>
+#include <cstring>
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -293,9 +332,17 @@ bool BindAndListen(Handle listener, std::string const& path, std::string& error)
 
     // Remove a stale socket file from a previous run; bind fails with EADDRINUSE otherwise.
     RemovePath(path);
-    if (::bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0 || ::listen(listener, 1) != 0)
+    mode_t const previous = ::umask(0077);
+    int const bound = ::bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    ::umask(previous);
+    if (bound != 0 || ::listen(listener, 1) != 0)
     {
         error = "bind/listen on " + path + " failed: " + LastError();
+        return false;
+    }
+    if (::chmod(path.c_str(), 0600) != 0)
+    {
+        error = "chmod 0600 on " + path + " failed: " + LastError();
         return false;
     }
     return true;
@@ -307,6 +354,15 @@ Handle Accept(Handle listener)
     if (fd >= 0)
         SetCloexec(fd);
     return fd;
+}
+
+bool PeerIsOwner(Handle connected)
+{
+    ucred cred{};
+    socklen_t len = sizeof(cred);
+    if (::getsockopt(connected, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0)
+        return false;
+    return cred.uid == ::geteuid();
 }
 
 bool CreateWakePair(Handle& readEnd, Handle& writeEnd, std::string& error)
