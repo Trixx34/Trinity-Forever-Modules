@@ -1910,6 +1910,17 @@ BotActionStatus UseObjectAction(Player& bot, BotAction const& action, std::strin
         reason = "item " + std::to_string(itemEntry) + " is unknown or has no use effect";
         return BotActionStatus::kRefused;
     }
+    bool lockRequiresItem = false;
+    if (uint32 const lockId = object->GetGOInfo()->GetLockId())
+        if (LockEntry const* lock = sLockStore.LookupEntry(lockId))
+            for (uint8 i = 0; i < MAX_LOCK_CASE; ++i)
+                if (lock->Type[i] == LOCK_KEY_ITEM && uint32(lock->Index[i]) == itemEntry)
+                    lockRequiresItem = true;
+    if (!lockRequiresItem)
+    {
+        reason = "the object's lock does not require item " + std::to_string(itemEntry);
+        return BotActionStatus::kRefused;
+    }
     Item* item = bot.GetItemByEntry(itemEntry);
     if (!item)
     {
