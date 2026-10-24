@@ -73,7 +73,14 @@ bool ModuleTier2Region::SnapshotDue(uint64 tick) const
 void ModuleTier2Region::PublishSnapshot(uint64 tick, std::vector<ModuleSnapshotBot> const& bots)
 {
     // Write into the buffer the module is not reading, then publish it: tick first, then the index.
-    uint8 const next = static_cast<uint8>(1 - _header->published_snapshot_buffer.load(std::memory_order_relaxed));
+    // The index is module-writable. Anything other than 0 or 1 would walk off the mapping.
+    uint8 const published = _header->published_snapshot_buffer.load(std::memory_order_relaxed);
+    if (published > 1)
+    {
+        TC_LOG_ERROR("modules", "Tier 2 region '{}': published snapshot buffer {} is not 0 or 1; skipping publish", _name, published);
+        return;
+    }
+    uint8 const next = static_cast<uint8>(1 - published);
     auto* base = static_cast<std::byte*>(_mapping->get_address());
     std::byte* buffer = base + _snapshotOffset + next * _snapshotBytes;
 
@@ -120,8 +127,15 @@ bool ModuleTier2Region::ReadNewActions(ModuleActionSet& out)
     for (int attempt = 0; attempt < 3; ++attempt)
     {
         uint8 const buffer = _header->published_action_buffer.load(std::memory_order_acquire);
+        // The index is module-writable. Anything other than 0 or 1 would walk off the mapping.
+        if (buffer > 1)
+        {
+            TC_LOG_ERROR("modules", "Tier 2 region '{}': published action buffer {} is not 0 or 1; skipping read", _name, buffer);
+            return false;
+        }
+        uint64 const tick = _header->published_action_tick.load(std::memory_order_acquire);
         // The header tick is the cheap check for "nothing new", so an idle module costs one load per tick.
-        if (buffer == _seenActionBuffer && _header->published_action_tick.load(std::memory_order_acquire) == _seenActionTick)
+        if (buffer == _seenActionBuffer && tick == _seenActionTick)
             return false;
 
         auto const* queue = reinterpret_cast<ActionQueueHeader const*>(base + _actionOffset + buffer * _actionBytes);
@@ -132,8 +146,11 @@ bool ModuleTier2Region::ReadNewActions(ModuleActionSet& out)
         if (count > 0)
             std::memcpy(copy.Actions.data(), reinterpret_cast<std::byte const*>(queue + 1), count * sizeof(forever_module::BotAction));
 
-        if (_header->published_action_buffer.load(std::memory_order_acquire) != buffer)
-            continue; // the module published again while we copied; read the new buffer
+        // published_action_tick is the sequence. The module stores it after the buffer contents, so a
+        // change here means the copy raced a publish, including one that flipped away and back to the same index.
+        if (_header->published_action_tick.load(std::memory_order_acquire) != tick ||
+            _header->published_action_buffer.load(std::memory_order_acquire) != buffer)
+            continue;
 
         _seenActionBuffer = buffer;
         _seenActionTick = copy.Tick;

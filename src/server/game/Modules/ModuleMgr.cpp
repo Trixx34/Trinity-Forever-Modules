@@ -350,8 +350,6 @@ bool ModuleMgr::SpawnModule(ModuleId id)
         std::lock_guard<std::mutex> lock(_mutex);
         SetStatus(_modules.at(id), ModuleStatus::Starting, "waiting for the module to connect");
     }
-    session->Start();
-
     std::shared_ptr<bp::child> process;
     try
     {
@@ -363,19 +361,22 @@ bool ModuleMgr::SpawnModule(ModuleId id)
         std::lock_guard<std::mutex> lock(_mutex);
         ModuleDescriptor& d = _modules.at(id);
         d.LastFailure = std::string("failed to start process: ") + e.what();
+        ++d.HandshakeAttempts;
         ScheduleRestart(d, /*handshakeFailure=*/true);
         TC_LOG_ERROR("modules", "'{}': failed to start '{}': {}", name, executable, e.what());
         return false;
     }
 
-    // Store the process under the lock, so a session event that fires now sees it and can stop it.
+    // Publish the child before the session thread runs. A connect/disconnect in that window calls
+    // StopProcess, which must see the child or it is left running with nobody to reap it.
     {
         std::lock_guard<std::mutex> lock(_mutex);
         ModuleDescriptor& d = _modules.at(id);
-        d.Session = std::move(session);
+        d.Session = session;
         d.Process = process;
         TC_LOG_INFO("modules", "started '{}' (pid {}), waiting for its handshake.", d.Name, process->id());
     }
+    session->Start();
     return true;
 }
 
@@ -624,6 +625,7 @@ void ModuleMgr::RestartDueModules()
             std::lock_guard<std::mutex> lock(_mutex);
             ModuleDescriptor& d = _modules.at(id);
             oldSession = std::move(d.Session);
+            StopProcess(d);
             d.Process.reset();
         }
         if (oldSession)
@@ -846,20 +848,33 @@ ModuleWire::ControlResponseMsg ModuleMgr::ExecuteControlRequest(ModuleId module,
                 response.Reason = "max_bots exceeded, request a larger bound at handshake";
                 return response;
             }
+            // Reserve the slot before Spawn, so two requests at max_bots - 1 cannot both pass CanTakeMore.
+            if (!_owners.TryReserve(module, maxBots))
+            {
+                response.Reason = "max_bots exceeded, request a larger bound at handshake";
+                return response;
+            }
         }
 
         std::string reason;
         uint64 const guid = backend->Spawn(request.SpawnParams, reason);
         if (guid == 0)
         {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _owners.CancelReserve(module);
             response.Reason = reason.empty() ? "bot could not be spawned" : reason;
             return response;
         }
 
         uint32 owner = 0;
-        std::lock_guard<std::mutex> lock(_mutex);
-        if (_owners.TryClaim(guid, module, maxBots, owner) != ModuleBotOwnership::Claim::Granted)
+        ModuleBotOwnership::Claim claim;
         {
+            std::lock_guard<std::mutex> lock(_mutex);
+            claim = _owners.CommitReserve(guid, module, owner);
+        }
+        if (claim != ModuleBotOwnership::Claim::Granted)
+        {
+            backend->Delete(guid);
             response.Reason = "bot was spawned but its ownership could not be recorded";
             return response;
         }
@@ -1074,7 +1089,7 @@ void ModuleMgr::ApplyModuleActions(ModuleId module, ModuleActionSet const& actio
         }
 
         std::string reason;
-        forever_module::BotActionStatus const status = ApplyBotAction(*bot, action, reason);
+        forever_module::BotActionStatus const status = ApplyBotAction(*bot, action, reason, module);
         RecordActionResult(action.bot_guid, action, status);
         if (status != forever_module::BotActionStatus::kApplied)
         {
