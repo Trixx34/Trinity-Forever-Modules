@@ -16,4 +16,8 @@
 void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply,
                          std::string const& moduleName, uint32 module);
 
+// Called from DispatchItemLooted, on the world thread. ShareQuestItem may only give a count that was
+// reported here for that player and item, and each share consumes it.
+void NoteModuleLoot(uint64 playerGuid, uint32 itemEntry, uint32 count);
+
 #endif // TRINITYCORE_MODULE_ACTIONS_H

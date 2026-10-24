@@ -19,10 +19,15 @@
 #include "MapManager.h"
 #include "CharacterCache.h"
 #include "CreatureData.h"
+#include "CellImpl.h"
+#include "GridNotifiers.h"
+#include "GridNotifiersImpl.h"
 #include "Player.h"
 #include "WorldSession.h"
 
 #include <algorithm>
+#include <limits>
+#include <unordered_map>
 
 namespace
 {
@@ -34,9 +39,17 @@ constexpr size_t MaxMessageBytes = 255;
 constexpr uint32 DefaultShareRangeYards = 100;
 constexpr uint32 MaxShareRangeYards = 200;
 
+// Recent OnLootItem counts, keyed by player guid and item entry. ShareQuestItem consumes from this so a
+// module cannot mint a quest item the named player did not just loot. World thread only.
+std::unordered_map<uint64, std::unordered_map<uint32, uint32>>& LootedCounts()
+{
+    static std::unordered_map<uint64, std::unordered_map<uint32, uint32>> counts;
+    return counts;
+}
+
 // Gives a copy of a quest item the looter just looted to each party member who still needs it. The looter keeps their own. A member
 // is skipped when on another map, out of range, with no quest that needs the item, or with no room in the bags; none of that is an
-// error. The module names the item, the core finds who gets it and gives it, so a module cannot give out items to anyone it likes.
+// error. The count given cannot exceed what OnLootItem reported for this player and entry.
 void ShareQuestItem(Player* looter, ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply)
 {
     ItemTemplate const* proto = sObjectMgr->GetItemTemplate(request.ItemEntry);
@@ -50,6 +63,21 @@ void ShareQuestItem(Player* looter, ModuleWire::ActionRequestMsg const& request,
         reply.Reason = "count must be from 1 to the item's stack size";
         return;
     }
+
+    auto playerIt = LootedCounts().find(looter->GetGUID().GetCounter());
+    uint32* looted = nullptr;
+    if (playerIt != LootedCounts().end())
+    {
+        auto itemIt = playerIt->second.find(request.ItemEntry);
+        if (itemIt != playerIt->second.end())
+            looted = &itemIt->second;
+    }
+    if (!looted || *looted == 0)
+    {
+        reply.Reason = "player has not looted that quest item";
+        return;
+    }
+    uint32 const shareCount = std::min(request.Count, *looted);
 
     Group* group = looter->GetGroup();
     if (!group)
@@ -69,16 +97,18 @@ void ShareQuestItem(Player* looter, ModuleWire::ActionRequestMsg const& request,
             continue;
 
         ItemPosCountVec dest;
-        if (member->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, request.ItemEntry, request.Count) != EQUIP_ERR_OK)
+        if (member->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, request.ItemEntry, shareCount) != EQUIP_ERR_OK)
             continue;
         Item* item = member->StoreNewItem(dest, request.ItemEntry, true);
         if (!item)
             continue;
 
-        member->SendNewItem(item, request.Count, true, false);
+        member->SendNewItem(item, shareCount, true, false);
         ++given;
     }
 
+    if (given)
+        *looted -= std::min(*looted, shareCount);
     reply.Recipients = given;
     reply.Success = true;
     TC_LOG_DEBUG("modules.actions", "shared quest item {} x{} from player {} with {} party member(s)",
@@ -87,65 +117,64 @@ void ShareQuestItem(Player* looter, ModuleWire::ActionRequestMsg const& request,
 
 void SellItem(Player* player, ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply)
 {
+    struct VendorCheck
+    {
+        Player const* player;
+        bool operator()(Creature* creature) const
+        {
+            if (!creature->IsAlive() || !creature->HasNpcFlag(UNIT_NPC_FLAG_VENDOR))
+                return false;
+            if ((creature->GetCreatureTemplate()->flags_extra & CREATURE_FLAG_EXTRA_NO_SELL_VENDOR) != 0)
+                return false;
+            return player->GetNPCIfCanInteractWith(creature->GetGUID(), UNIT_NPC_FLAG_VENDOR, UNIT_NPC_FLAG_2_NONE) != nullptr;
+        }
+    };
+    Creature* vendor = nullptr;
+    VendorCheck check{ player };
+    Trinity::CreatureSearcher<VendorCheck> searcher(player, vendor, check);
+    Cell::VisitGridObjects(player, searcher, 10.0f);
+    if (!vendor)
+    {
+        reply.Reason = "no vendor in range";
+        return;
+    }
+
     Item* item = player->GetItemByGuid(ObjectGuid::Create<HighGuid::Item>(request.ItemGuid));
     if (!item)
     {
         reply.Reason = "item is no longer in the player's bags";
         return;
     }
-
     if (item->GetEntry() != request.ItemEntry)
     {
         reply.Reason = "item entry does not match the request";
         return;
     }
-
-    if (request.Count == 0 || player->GetItemCount(request.ItemEntry) < request.Count)
+    if (item->IsRefundable())
+    {
+        reply.Reason = "item is still refundable";
+        return;
+    }
+    if (request.Count == 0 || request.Count > item->GetCount())
     {
         reply.Reason = "not enough of the item to sell";
         return;
     }
 
-    ItemTemplate const* proto = item->GetTemplate();
-    uint32 const price = proto ? proto->GetSellPrice() : 0;
-    if (price == 0)
+    uint64 const before = player->GetMoney();
+    Optional<SellResult> error = player->CanSellItemToVendor(item, request.Count);
+    if (!error)
+        error = player->SellItemToVendor(item, request.Count);
+    if (error)
     {
-        reply.Reason = "item has no vendor value";
+        reply.Reason = "vendor refused the sale";
         return;
     }
 
-    // Refuse before removing anything: once the items are gone the money has to be credited.
-    uint64 const total = uint64(price) * request.Count;
-    if (player->GetMoney() > MAX_MONEY_AMOUNT - total)
-    {
-        reply.Reason = "gold cap would be exceeded";
-        return;
-    }
-
-    // Count what was really removed, rather than trusting the return value of DestroyItemCount.
-    uint32 const before = player->GetItemCount(request.ItemEntry);
-    player->DestroyItemCount(request.ItemEntry, request.Count, true);
-    uint32 const removed = before - player->GetItemCount(request.ItemEntry);
-
-    uint64 const credit = uint64(price) * removed;
-    if (credit && !player->ModifyMoney(static_cast<int64>(credit)))
-    {
-        TC_LOG_ERROR("modules", "sold {} x item {} for player {} but could not credit {} copper",
-                     removed, request.ItemEntry, player->GetGUID().ToString(), credit);
-        reply.Reason = "items were removed but the money could not be credited";
-        return;
-    }
-
-    reply.CopperGained = credit;
-    if (removed != request.Count)
-    {
-        reply.Reason = "only part of the requested count was removed";
-        return;
-    }
-
+    reply.CopperGained = player->GetMoney() - before;
     reply.Success = true;
     TC_LOG_DEBUG("modules.actions", "sold {} x item {} [{}] for {} copper, player {}",
-                 removed, request.ItemEntry, request.ItemGuid, credit, player->GetGUID().ToString());
+                 request.Count, request.ItemEntry, request.ItemGuid, reply.CopperGained, player->GetGUID().ToString());
 }
 
 } // namespace
@@ -426,21 +455,11 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
         case 3: // kList
         {
             Player* player = primaryPlayer;
+            if (!player && request.PlayerGuid)
+                player = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(request.PlayerGuid));
             if (!player)
             {
-                ObjectGuid itemGuid = ObjectGuid::Create<HighGuid::Item>(request.ItemGuid);
-                for (auto const& [guid, p] : ObjectAccessor::GetPlayers())
-                    if (p && p->GetItemByGuid(itemGuid))
-                    {
-                        player = p;
-                        break;
-                    }
-            }
-            if (!player)
-                player = request.PlayerGuid ? ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(request.PlayerGuid)) : nullptr;
-            if (!player)
-            {
-                reply.Reason = "no online player owns the listed item";
+                reply.Reason = "AuctionHouse list has no acting player";
                 return;
             }
 
@@ -510,20 +529,11 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
         case 4: // kCancel
         {
             Player* player = primaryPlayer;
+            if (!player && request.PlayerGuid)
+                player = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(request.PlayerGuid));
             if (!player)
             {
-                Creature* auc = ResolveAuctioneerCreature(request.AuctioneerGuid);
-                if (auc)
-                {
-                    AuctionHouseObject* ah = sAuctionMgr->GetAuctionsMap(auc->GetCreatureTemplate()->faction);
-                    AuctionPosting* auction = ah->GetAuction(static_cast<uint32>(request.AuctionGuid));
-                    if (auction)
-                        player = ObjectAccessor::FindConnectedPlayer(auction->Owner);
-                }
-            }
-            if (!player)
-            {
-                reply.Reason = "no online player owns the auction";
+                reply.Reason = "AuctionHouse cancel has no acting player";
                 return;
             }
 
@@ -565,6 +575,15 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
 }
 
 } // namespace
+
+void NoteModuleLoot(uint64 playerGuid, uint32 itemEntry, uint32 count)
+{
+    if (!playerGuid || !itemEntry || !count)
+        return;
+    uint32& total = LootedCounts()[playerGuid][itemEntry];
+    uint32 const room = std::numeric_limits<uint32>::max() - total;
+    total += std::min(count, room);
+}
 
 void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, std::string const& moduleName,
                          uint32 module)
@@ -641,7 +660,7 @@ void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire
                 reply.Reason = "message must be 1 to 255 bytes";
                 return;
             }
-            ChatHandler(player->GetSession()).SendSysMessage(request.Text);
+            ChatHandler(player->GetSession()).SendSysMessage(request.Text, true);
             reply.Success = true;
             return;
 
