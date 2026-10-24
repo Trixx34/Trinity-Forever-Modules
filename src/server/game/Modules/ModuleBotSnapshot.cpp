@@ -1145,9 +1145,7 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
     // Between refreshes the bot's own entry is current, and its nearby units are the ones from the last refresh.
     if (!refreshNearby && !cachedNearby.empty())
     {
-        result.Nearby = cachedNearby;
-        if (result.Nearby.size() > maxNearby)
-            result.Nearby.resize(maxNearby);
+        result.Nearby = std::span<NearbyUnit const>(cachedNearby).first(std::min<std::size_t>(cachedNearby.size(), maxNearby));
         return result;
     }
 
@@ -1157,6 +1155,9 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
     Trinity::AnyUnitInObjectRangeCheck check(&bot, NearbyRange, true, false);
     Trinity::UnitListSearcher<Trinity::AnyUnitInObjectRangeCheck> searcher(&bot, inRange, check);
     Cell::VisitAllObjects(&bot, searcher, NearbyRange);
+
+    cachedNearby.clear();
+    cachedNearby.reserve(std::max(cachedNearby.capacity(), size_t(maxNearby)));
 
     std::vector<Unit*> players;
     std::vector<Unit*> creatures;
@@ -1225,10 +1226,10 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
         near.elite = unit->IsCreature() && unit->ToCreature()->IsElite() ? 1 : 0;
         near.casting = unit->IsNonMeleeSpellCast(false) ? 1 : 0;
         FillNearbyAuras(*unit, near); // layout 13
-        result.Nearby.push_back(near);
+        cachedNearby.push_back(near);
     }
 
-    cachedNearby = result.Nearby;
+    result.Nearby = cachedNearby;
     return result;
 }
 

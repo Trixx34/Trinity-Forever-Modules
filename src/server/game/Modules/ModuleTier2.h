@@ -17,6 +17,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -37,7 +38,7 @@ struct ModuleActionSet
 struct ModuleSnapshotBot
 {
     forever_module::BotSnapshot Bot;
-    std::vector<forever_module::NearbyUnit> Nearby;
+    std::span<forever_module::NearbyUnit const> Nearby;
 };
 
 class ModuleTier2Region
