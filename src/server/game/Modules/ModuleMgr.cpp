@@ -983,7 +983,7 @@ void ModuleMgr::OnWorldTick(uint64 tick)
                 // Staggered by guid: each bot refreshes on one tick in refreshEvery, so the cost is spread over the ticks.
                 bool const refresh = refreshEvery <= 1 || (tick + guid) % refreshEvery == 0;
                 ModuleSnapshotBot entry = BuildSnapshotBot(*bot, region->GetBounds().MaxNearbyUnits, refresh,
-                                                            _nearbyCache[guid], _snapshotWatch[guid]);
+                                                            _nearbyCache[guid], _snapshotWatch[guid], _nearbyScratch);
                 if (auto result = _actionResults.find(guid); result != _actionResults.end())
                 {
                     entry.Bot.last_action_type = result->second.Type;

@@ -239,6 +239,7 @@ class TC_GAME_API ModuleMgr
         std::unordered_map<uint64, ActionResult> _actionResults;
         // The last nearby units of each controlled bot (world thread only), reused between refreshes.
         std::unordered_map<uint64, std::vector<forever_module::NearbyUnit>> _nearbyCache;
+        NearbySnapshotScratch _nearbyScratch; // world-thread scratch; retains grid-query capacity between ticks
         // Per bot, the state a snapshot needs from the previous tick (layout 13's last_target_lost_reason). Pruned with
         // the nearby cache above.
         std::unordered_map<uint64, BotSnapshotWatch> _snapshotWatch;

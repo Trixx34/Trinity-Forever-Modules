@@ -1064,7 +1064,7 @@ bool EncodeUnitRef(Unit const& unit, uint64& ref)
 }
 
 ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNearby, std::vector<NearbyUnit>& cachedNearby,
-                                   BotSnapshotWatch& watch)
+                                   BotSnapshotWatch& watch, NearbySnapshotScratch& scratch)
 {
     ModuleSnapshotBot result;
 
@@ -1151,17 +1151,23 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
 
     // Every unit in range, split into players and creatures, each closest first. Dead creatures are kept (a boss's corpse is how a
     // scenario sees the boss die); dead players are not.
-    std::list<Unit*> inRange;
+    auto& inRange = scratch.InRange;
+    auto& players = scratch.Players;
+    auto& creatures = scratch.Creatures;
+    auto& corpses = scratch.Corpses;
+    auto& chosen = scratch.Chosen;
+    inRange.clear();
+    players.clear();
+    creatures.clear();
+    corpses.clear();
+    chosen.clear();
+    chosen.reserve(std::max(chosen.capacity(), size_t(maxNearby)));
     Trinity::AnyUnitInObjectRangeCheck check(&bot, NearbyRange, true, false);
     Trinity::UnitListSearcher<Trinity::AnyUnitInObjectRangeCheck> searcher(&bot, inRange, check);
     Cell::VisitAllObjects(&bot, searcher, NearbyRange);
 
     cachedNearby.clear();
     cachedNearby.reserve(std::max(cachedNearby.capacity(), size_t(maxNearby)));
-
-    std::vector<Unit*> players;
-    std::vector<Unit*> creatures;
-    std::vector<Unit*> corpses;
     for (Unit* unit : inRange)
     {
         if (unit == &bot)
@@ -1178,13 +1184,22 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
     {
         return bot.GetExactDist2dSq(a) < bot.GetExactDist2dSq(b);
     };
-    std::sort(players.begin(), players.end(), closerFirst);
-    std::sort(creatures.begin(), creatures.end(), closerFirst);
-    std::sort(corpses.begin(), corpses.end(), closerFirst);
+    // Only the nearest maxNearby units of each category can appear in this snapshot. Partial-sort
+    // that prefix instead of fully sorting potentially large crowds around a bot.
+    auto sortPrefix = [&](std::vector<Unit*>& units)
+    {
+        size_t const prefix = std::min<size_t>(units.size(), maxNearby);
+        if (prefix < units.size())
+            std::partial_sort(units.begin(), units.begin() + prefix, units.end(), closerFirst);
+        else
+            std::sort(units.begin(), units.end(), closerFirst);
+    };
+    sortPrefix(players);
+    sortPrefix(creatures);
+    sortPrefix(corpses);
 
     // The closest few players, then living creatures, then corpses, then any players that are left if there is still room. Corpses
     // come after the living so that they never take a slot a live target needs.
-    std::vector<Unit*> chosen;
     size_t const playerSlots = std::min<size_t>(kNearbyPlayerSlots, maxNearby);
     for (Unit* player : players)
     {
