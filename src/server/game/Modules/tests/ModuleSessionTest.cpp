@@ -143,6 +143,7 @@ ModuleSession::Settings TestSettings(std::string const& path)
     settings.HandshakeTimeout = 1000ms;
     settings.HeartbeatTimeout = 5000ms;
     settings.ExpectedProtocolVersion = "1";
+    settings.ExpectedModuleName = "session-test";
     settings.SupportedHooks = {"PlayerScript.OnLootItem", "CommandScript"};
     settings.Config = {{"greeting", "hello"}};
     return settings;
@@ -298,6 +299,69 @@ void RejectsProtocolMismatch()
         std::this_thread::sleep_for(5ms);
     CHECK(rejected == 1);
     session.Stop();
+}
+
+// An approved grant is a ceiling: a hook or Tier 2 the operator did not approve is a rejection, and the
+// handshake name must be the module that was spawned.
+void RejectsUnapprovedCapabilities()
+{
+    std::string const path = SocketPath("unapproved");
+    std::atomic<int> rejected{0};
+    auto settings = TestSettings(path);
+    CapabilityDeclaration approved;
+    approved.Hooks = {"PlayerScript.OnLootItem"};
+    settings.Approved = approved;
+    ModuleSession session(settings, 13, [&](ModuleSession::Event e, std::string const&)
+    {
+        if (e == ModuleSession::Event::Rejected)
+            ++rejected;
+    });
+    std::string error;
+    CHECK(session.Listen(error));
+    session.Start();
+
+    int fd = Connect(path);
+    CHECK(fd >= 0);
+    if (fd >= 0)
+    {
+        CHECK(SendEnvelope(fd, HandshakeRequest("1", "CommandScript")));
+        forever_module::Envelope in;
+        CHECK(RecvEnvelope(fd, in));
+        CHECK(in.payload_case() == forever_module::Envelope::kHandshakeResponse);
+        CHECK(!in.handshake_response().accepted());
+        CHECK(in.handshake_response().reason().find("not approved") != std::string::npos);
+        ::close(fd);
+    }
+    for (int i = 0; i < 200 && rejected == 0; ++i)
+        std::this_thread::sleep_for(5ms);
+    CHECK(rejected == 1);
+    session.Stop();
+
+    std::string const namePath = SocketPath("wrongname");
+    auto nameSettings = TestSettings(namePath);
+    nameSettings.ExpectedModuleName = "spawned-module";
+    ModuleSession named(nameSettings, 14, [&](ModuleSession::Event e, std::string const&)
+    {
+        if (e == ModuleSession::Event::Rejected)
+            ++rejected;
+    });
+    CHECK(named.Listen(error));
+    named.Start();
+    int fd2 = Connect(namePath);
+    CHECK(fd2 >= 0);
+    if (fd2 >= 0)
+    {
+        CHECK(SendEnvelope(fd2, HandshakeRequest("1", "PlayerScript.OnLootItem")));
+        forever_module::Envelope in;
+        CHECK(RecvEnvelope(fd2, in));
+        CHECK(!in.handshake_response().accepted());
+        CHECK(in.handshake_response().reason().find("module name") != std::string::npos);
+        ::close(fd2);
+    }
+    for (int i = 0; i < 200 && rejected < 2; ++i)
+        std::this_thread::sleep_for(5ms);
+    CHECK(rejected == 2);
+    named.Stop();
 }
 
 void TimesOutWithoutConnection()
@@ -519,6 +583,7 @@ int main()
 {
     AcceptAndActions();
     RejectsProtocolMismatch();
+    RejectsUnapprovedCapabilities();
     TimesOutWithoutConnection();
     Tier2Handshake();
     BotControlFlow();

@@ -17,6 +17,7 @@
 #define TRINITYCORE_MODULE_SESSION_H
 
 #include "Define.h"
+#include "ModuleApproval.h"
 #include "ModuleSocket.h"
 #include "ModuleWire.h"
 
@@ -58,7 +59,11 @@ class ModuleSession
             std::chrono::milliseconds HandshakeTimeout{5000};
             std::chrono::milliseconds HeartbeatTimeout{15000};
             std::string ExpectedProtocolVersion;          // exact match against HandshakeRequest.protocol_version
+            std::string ExpectedModuleName;               // exact match against HandshakeRequest.module_name; empty skips the check
             std::vector<std::string> SupportedHooks;      // requested Tier 1 hooks must all be in this list
+            // When set, requested hooks and Tier 2 must also be inside this declaration. Unset means the
+            // approval gate is not applied here (tests, and Modules.AutoApproveLocal).
+            std::optional<CapabilityDeclaration> Approved;
             std::vector<ModuleWire::ConfigEntry> Config;  // delivered in ModuleConfig right after accept
 
             // Tier 2 negotiation, called on the session thread when a handshake asks for Tier 2. On success it
