@@ -92,6 +92,11 @@ uint64 BotModuleBackend::SpawnAlt(ModuleWire::SpawnParamsMsg const& params, std:
     return guid.GetCounter();
 }
 
+void BotModuleBackend::Delete(uint64 botGuid)
+{
+    sBotMgr->DeleteBot(botGuid);
+}
+
 void BotModuleBackend::Deactivate(uint64 botGuid)
 {
     if (sBotMgr->StopAlt(botGuid))

@@ -846,20 +846,33 @@ ModuleWire::ControlResponseMsg ModuleMgr::ExecuteControlRequest(ModuleId module,
                 response.Reason = "max_bots exceeded, request a larger bound at handshake";
                 return response;
             }
+            // Reserve the slot before Spawn, so two requests at max_bots - 1 cannot both pass CanTakeMore.
+            if (!_owners.TryReserve(module, maxBots))
+            {
+                response.Reason = "max_bots exceeded, request a larger bound at handshake";
+                return response;
+            }
         }
 
         std::string reason;
         uint64 const guid = backend->Spawn(request.SpawnParams, reason);
         if (guid == 0)
         {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _owners.CancelReserve(module);
             response.Reason = reason.empty() ? "bot could not be spawned" : reason;
             return response;
         }
 
         uint32 owner = 0;
-        std::lock_guard<std::mutex> lock(_mutex);
-        if (_owners.TryClaim(guid, module, maxBots, owner) != ModuleBotOwnership::Claim::Granted)
+        ModuleBotOwnership::Claim claim;
         {
+            std::lock_guard<std::mutex> lock(_mutex);
+            claim = _owners.CommitReserve(guid, module, owner);
+        }
+        if (claim != ModuleBotOwnership::Claim::Granted)
+        {
+            backend->Delete(guid);
             response.Reason = "bot was spawned but its ownership could not be recorded";
             return response;
         }

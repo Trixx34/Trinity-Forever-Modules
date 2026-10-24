@@ -99,6 +99,9 @@ class TC_GAME_API BotMgr
         // Saves and logs out the bot. Returns false if the guid is not a bot. A bot still logging in logs out as soon as it is online.
         bool RequestLogout(uint64 guid, char const* reason);
 
+        // Logs the bot out and deletes the character. An alt is only logged out. Used when a spawn could not be claimed.
+        void DeleteBot(uint64 guid);
+
         // Logs out every bot (worldserver shutdown).
         void LogoutAll(char const* reason);
 

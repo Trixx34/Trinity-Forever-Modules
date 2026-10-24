@@ -676,6 +676,22 @@ bool BotMgr::RequestLogin(uint64 guid, std::string& error)
     return true;
 }
 
+void BotMgr::DeleteBot(uint64 guid)
+{
+    auto it = _bots.find(guid);
+    if (it == _bots.end())
+        return;
+    if (it->second.Alt)
+    {
+        StopAlt(guid);
+        return;
+    }
+    RequestLogout(guid, "spawn claim failed");
+    Player::DeleteFromDB(ObjectGuid::Create<HighGuid::Player>(guid), it->second.AccountId, true, true);
+    _freeAccounts.emplace_back(it->second.AccountId, it->second.AccountName);
+    _bots.erase(it);
+}
+
 bool BotMgr::RequestLogout(uint64 guid, char const* reason)
 {
     auto it = _bots.find(guid);
