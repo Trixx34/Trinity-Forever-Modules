@@ -350,8 +350,6 @@ bool ModuleMgr::SpawnModule(ModuleId id)
         std::lock_guard<std::mutex> lock(_mutex);
         SetStatus(_modules.at(id), ModuleStatus::Starting, "waiting for the module to connect");
     }
-    session->Start();
-
     std::shared_ptr<bp::child> process;
     try
     {
@@ -369,14 +367,16 @@ bool ModuleMgr::SpawnModule(ModuleId id)
         return false;
     }
 
-    // Store the process under the lock, so a session event that fires now sees it and can stop it.
+    // Publish the child before the session thread runs. A connect/disconnect in that window calls
+    // StopProcess, which must see the child or it is left running with nobody to reap it.
     {
         std::lock_guard<std::mutex> lock(_mutex);
         ModuleDescriptor& d = _modules.at(id);
-        d.Session = std::move(session);
+        d.Session = session;
         d.Process = process;
         TC_LOG_INFO("modules", "started '{}' (pid {}), waiting for its handshake.", d.Name, process->id());
     }
+    session->Start();
     return true;
 }
 
@@ -625,6 +625,7 @@ void ModuleMgr::RestartDueModules()
             std::lock_guard<std::mutex> lock(_mutex);
             ModuleDescriptor& d = _modules.at(id);
             oldSession = std::move(d.Session);
+            StopProcess(d);
             d.Process.reset();
         }
         if (oldSession)
