@@ -16,4 +16,7 @@
 void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply,
                          std::string const& moduleName, uint32 module);
 
+// Clear unshared quest-item loot credits when a player leaves the world.
+void ForgetModuleLoot(uint64 playerGuid);
+
 #endif // TRINITYCORE_MODULE_ACTIONS_H
