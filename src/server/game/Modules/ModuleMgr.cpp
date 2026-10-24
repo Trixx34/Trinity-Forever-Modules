@@ -291,18 +291,23 @@ bool ModuleMgr::SpawnModule(ModuleId id)
     std::string executable;
     std::string endpoint;
     std::string name;
+    CapabilityDeclaration approved;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         ModuleDescriptor const& d = _modules.at(id);
         executable = d.Executable;
         endpoint = d.Endpoint;
         name = d.Name;
+        approved = d.Capabilities;
     }
     settings.Endpoint = endpoint;
     settings.HandshakeTimeout = std::chrono::milliseconds(_config.HandshakeTimeoutMs);
     settings.HeartbeatTimeout = std::chrono::milliseconds(_config.HeartbeatTimeoutMs);
     settings.ExpectedProtocolVersion = kModuleProtocolVersion;
+    settings.ExpectedModuleName = name;
     settings.SupportedHooks = SupportedTier1Hooks;
+    if (!_config.AutoApprove)
+        settings.Approved = approved;
     settings.NegotiateTier2 = [this, id](ModuleWire::HandshakeRequest const& request, ModuleWire::HandshakeResponse& response,
                                          std::string& reason)
     {
@@ -378,12 +383,29 @@ bool ModuleMgr::NegotiateTier2(ModuleId id, ModuleWire::HandshakeRequest const& 
                                ModuleWire::HandshakeResponse& response, std::string& reason)
 {
     // Core may grant less than the module asked for; the module must size its view from the response.
+    // An approved declaration is a second cap: a handshake cannot raise the bounds the operator approved.
+    uint32 capBots = _config.Tier2MaxBots;
+    uint32 capNearby = _config.Tier2MaxNearbyUnits;
+    uint32 capActions = _config.Tier2MaxActions;
+    uint32 capInterval = _config.Tier2MaxTickInterval;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        ModuleDescriptor const& d = _modules.at(id);
+        if (d.Capabilities.Tier2Participates)
+        {
+            capBots = std::min(capBots, d.Capabilities.RequestedMaxBots);
+            capNearby = std::min(capNearby, d.Capabilities.RequestedMaxNearbyUnits);
+            capActions = std::min(capActions, d.Capabilities.RequestedMaxActions);
+            if (d.Capabilities.RequestedTickInterval != 0)
+                capInterval = std::min(capInterval, d.Capabilities.RequestedTickInterval);
+        }
+    }
     ModuleTier2Region::Bounds bounds;
-    bounds.MaxBots = std::min(request.RequestedMaxBots, _config.Tier2MaxBots);
-    bounds.MaxNearbyUnits = std::min(request.RequestedMaxNearbyUnits, _config.Tier2MaxNearbyUnits);
-    bounds.MaxActions = std::min(request.RequestedMaxActions, _config.Tier2MaxActions);
+    bounds.MaxBots = std::min(request.RequestedMaxBots, capBots);
+    bounds.MaxNearbyUnits = std::min(request.RequestedMaxNearbyUnits, capNearby);
+    bounds.MaxActions = std::min(request.RequestedMaxActions, capActions);
     uint32 const requestedInterval = request.RequestedTickInterval == 0 ? 1 : request.RequestedTickInterval;
-    bounds.TickInterval = std::min(requestedInterval, _config.Tier2MaxTickInterval);
+    bounds.TickInterval = std::min(requestedInterval, capInterval);
 
     std::string const name = "trinity_module_" + std::to_string(id) + "_tier2";
 
