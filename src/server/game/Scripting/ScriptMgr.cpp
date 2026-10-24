@@ -17,6 +17,7 @@
 
 #include "ScriptMgr.h"
 #include "AchievementMgr.h"
+#include "ModuleActions.h"
 #include "ModuleMgr.h"
 #include "ModuleBotSnapshot.h"
 #include "AreaTrigger.h"
@@ -2230,12 +2231,14 @@ void ScriptMgr::OnPlayerItemLooted(Player* player, Item* item, uint32 lootedCoun
     event.SellPrice = item->GetTemplate() ? item->GetTemplate()->GetSellPrice() : 0;
     char const* name = item->GetTemplate() ? item->GetTemplate()->GetDefaultLocaleName() : nullptr;
     event.ItemName = name ? name : "";
+    NoteModuleLoot(event.PlayerGuid, event.ItemEntry, event.Count);
     sModuleMgr->DispatchItemLooted("PlayerScript.OnLootItem", event);
 }
 
 void ScriptMgr::OnPlayerLogout(Player* player)
 {
     FOREACH_SCRIPT(PlayerScript)->OnLogout(player);
+    ForgetModuleLoot(player->GetGUID().GetCounter());
     sModuleMgr->DispatchNotify("PlayerScript.OnLogout", ModuleWire::NotifyKind::PlayerLogout, player->GetGUID().GetCounter());
 }
 
