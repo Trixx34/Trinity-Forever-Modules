@@ -232,6 +232,43 @@ void DumpRecipes(std::string const& path)
     TC_LOG_INFO("server.worldserver", "BotMgr: wrote {} recipes to {}", lines, path);
 }
 
+// Bot.Dump.Talents = <file>: once at startup, one line per talent node entry (a choice a node offers), so the talent profiles can be checked against the
+// server's own data: the node and its tree and sub-tree, its position, the node entry, its trait definition, the spell the definition grants, the max ranks,
+// the entry type and the spell name. The costs are not in the dump: the cost tables are empty on the test data.
+void DumpTalents(std::string const& path)
+{
+    std::ofstream out(path, std::ios::trunc);
+    if (!out)
+    {
+        TC_LOG_ERROR("server.worldserver", "BotMgr: cannot write the talents to {}", path);
+        return;
+    }
+    out << "# node\ttree\tsub_tree\tpos_x\tpos_y\tnode_type\tentry\tdefinition\tspell\tmax_ranks\tentry_type\tname\n";
+    uint32 lines = 0;
+    for (TraitNodeXTraitNodeEntryEntry const* link : sTraitNodeXTraitNodeEntryStore)
+    {
+        TraitNodeEntry const* node = sTraitNodeStore.LookupEntry(link->TraitNodeID);
+        TraitNodeEntryEntry const* entry = sTraitNodeEntryStore.LookupEntry(link->TraitNodeEntryID);
+        if (!node || !entry)
+            continue;
+
+        uint32 spellId = 0;
+        std::string name = "?";
+        if (TraitDefinitionEntry const* definition = sTraitDefinitionStore.LookupEntry(entry->TraitDefinitionID))
+            if (SpellInfo const* info = sSpellMgr->GetSpellInfo(definition->SpellID, DIFFICULTY_NONE))
+            {
+                spellId = info->Id;
+                if (info->SpellName)
+                    name = std::string((*info->SpellName)[sWorld->GetDefaultDbcLocale()]);
+            }
+
+        out << node->ID << '\t' << node->TraitTreeID << '\t' << node->TraitSubTreeID << '\t' << node->PosX << '\t' << node->PosY << '\t' << int32(node->Type) << '\t'
+            << entry->ID << '\t' << entry->TraitDefinitionID << '\t' << spellId << '\t' << entry->MaxRanks << '\t' << int32(entry->NodeEntryType) << '\t' << name << '\n';
+        ++lines;
+    }
+    TC_LOG_INFO("server.worldserver", "BotMgr: wrote {} talent node entries to {}", lines, path);
+}
+
 } // namespace
 
 void BotMgr::LoadRegistry()
@@ -244,6 +281,8 @@ void BotMgr::LoadRegistry()
         DumpSpellCosts(costFile);
     if (std::string const recipeFile = sConfigMgr->GetStringDefault("Bot.Dump.Recipes", ""); !recipeFile.empty())
         DumpRecipes(recipeFile);
+    if (std::string const talentFile = sConfigMgr->GetStringDefault("Bot.Dump.Talents", ""); !talentFile.empty())
+        DumpTalents(talentFile);
 
     _loginMaxPerTick = uint32(std::max<int32>(1, sConfigMgr->GetIntDefault("Bot.Login.MaxPerTick", 5)));
     _loginTimeoutMs = uint32(std::max<int32>(1000, sConfigMgr->GetIntDefault("Bot.Login.TimeoutMs", 60000)));
