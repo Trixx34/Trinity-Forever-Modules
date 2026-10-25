@@ -16,6 +16,9 @@
 void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply,
                          std::string const& moduleName, uint32 module);
 
+// Record quest-item loot credits for a player, used by the loot-share rules.
+void NoteModuleLoot(uint64 playerGuid, uint32 itemEntry, uint32 count);
+
 // Clear unshared quest-item loot credits when a player leaves the world.
 void ForgetModuleLoot(uint64 playerGuid);
 
