@@ -19,6 +19,7 @@
 #include "AchievementMgr.h"
 #include "ModuleActions.h"
 #include "ModuleMgr.h"
+#include "ModuleActions.h"
 #include "ModuleBotSnapshot.h"
 #include "AreaTrigger.h"
 #include "AreaTriggerAI.h"

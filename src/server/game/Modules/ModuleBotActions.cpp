@@ -1,4 +1,5 @@
 #include "ModuleBotActions.h"
+#include "ModuleMgr.h"
 #include "BotProfessions.h"
 #include "BotTaxi.h"
 #include "BotGearRules.h"
@@ -1130,12 +1131,18 @@ BotActionStatus GrantAction(Player& bot, BotAction const& action, std::string& r
         return BotActionStatus::kRefused;
     }
     uint32 const entry = action.spell_id;
-    if (!sObjectMgr->GetItemTemplate(entry))
+    ItemTemplate const* proto = sObjectMgr->GetItemTemplate(entry);
+    if (!proto)
     {
         reason = "unknown item";
         return BotActionStatus::kRefused;
     }
-    uint32 const count = action.dest_x >= 1.0f ? uint32(action.dest_x) : 1u;
+    if (!std::isfinite(action.dest_x) || action.dest_x < 1.0f || action.dest_x > float(proto->GetMaxStackSize()))
+    {
+        reason = "grant count must be from 1 to the item's stack size";
+        return BotActionStatus::kRefused;
+    }
+    uint32 const count = uint32(action.dest_x);
     ItemPosCountVec destination;
     if (bot.CanStoreNewItem(NULL_BAG, NULL_SLOT, destination, entry, count) != EQUIP_ERR_OK)
     {
@@ -1187,7 +1194,7 @@ BotActionStatus LearnFromTrainer(Player& bot, std::string& reason)
 
 // Party actions (M8). A bot invites only other bots the module controls, so the module's parties are its own; an invite
 // never reaches a player on a real account. The steps follow the core's own invite and accept handlers (GroupHandler.cpp).
-BotActionStatus InviteToParty(Player& bot, uint64 targetRef, std::string& reason)
+BotActionStatus InviteToParty(Player& bot, uint64 targetRef, std::string& reason, uint32 module)
 {
     if (forever_module::UnitRefType(targetRef) != uint8(HighGuid::Player))
     {
@@ -1196,9 +1203,9 @@ BotActionStatus InviteToParty(Player& bot, uint64 targetRef, std::string& reason
     }
     uint32 const counter = forever_module::UnitRefCounter(targetRef);
     Player* target = ObjectAccessor::FindPlayerByLowGUID(counter);
-    if (!target || target == &bot || !target->IsInWorld() || !sBotMgr->Exists(counter))
+    if (!target || target == &bot || !target->IsInWorld() || !sBotMgr->Exists(counter) || !sModuleMgr->ControlsBot(counter, module))
     {
-        reason = "party invite target is not a bot on this realm";
+        reason = "party invite target is not a bot this module controls";
         return BotActionStatus::kInvalidTarget;
     }
     if (target->GetGroup() || target->GetGroupInvite())
@@ -1917,6 +1924,17 @@ BotActionStatus UseObjectAction(Player& bot, BotAction const& action, std::strin
         reason = "item " + std::to_string(itemEntry) + " is unknown or has no use effect";
         return BotActionStatus::kRefused;
     }
+    bool lockRequiresItem = false;
+    if (uint32 const lockId = object->GetGOInfo()->GetLockId())
+        if (LockEntry const* lock = sLockStore.LookupEntry(lockId))
+            for (uint8 i = 0; i < MAX_LOCK_CASE; ++i)
+                if (lock->Type[i] == LOCK_KEY_ITEM && uint32(lock->Index[i]) == itemEntry)
+                    lockRequiresItem = true;
+    if (!lockRequiresItem)
+    {
+        reason = "the object's lock does not require item " + std::to_string(itemEntry);
+        return BotActionStatus::kRefused;
+    }
     Item* item = bot.GetItemByEntry(itemEntry);
     if (!item)
     {
@@ -2227,7 +2245,7 @@ BotActionStatus PetCommandAction(Player& bot, BotAction const& action, std::stri
     }
 }
 
-BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string& reason)
+BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string& reason, uint32 module)
 {
     switch (action.type)
     {
@@ -2242,6 +2260,11 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             // The route is asked for before the move is started, and the move is carried out either way: a bot with no full
             // route still walks as far towards the destination as the mesh allows. kNoRoute only tells the module that its
             // destination is out of reach, so it stops sending the bot there (layout 13, BotActionStatus::kNoRoute).
+            if (!Trinity::IsValidMapCoord(action.dest_x, action.dest_y, action.dest_z))
+            {
+                reason = "not a valid map position";
+                return BotActionStatus::kRefused;
+            }
             bool const reachable = HasFullRouteTo(bot, action.dest_x, action.dest_y, action.dest_z);
             bot.GetMotionMaster()->Clear();
             bot.GetMotionMaster()->MovePoint(0, action.dest_x, action.dest_y, action.dest_z);
@@ -2487,7 +2510,7 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             BotActionStatus status = BotActionStatus::kRefused;
             switch (action.spell_id)
             {
-                case 1: status = InviteToParty(bot, action.target_guid, reason); break;
+                case 1: status = InviteToParty(bot, action.target_guid, reason, module); break;
                 case 2: status = AcceptPartyInvite(bot, reason); break;
                 case 3: status = LeaveParty(bot, reason); break;
                 default: reason = "unknown party action " + std::to_string(action.spell_id); break;

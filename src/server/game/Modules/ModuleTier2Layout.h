@@ -437,6 +437,8 @@ struct Tier2RegionHeader {
     std::atomic<std::uint64_t> published_snapshot_tick{0};
     std::atomic<std::uint8_t> published_snapshot_buffer{0}; // 0 or 1
 
+    // Sequence for the action buffers. The module stores this after the buffer contents (release).
+    // The core loads it before the copy and again after (acquire). A change means the copy raced a publish.
     std::atomic<std::uint64_t> published_action_tick{0};
     std::atomic<std::uint8_t> published_action_buffer{0}; // 0 or 1
 

@@ -31,6 +31,12 @@ class ModuleBotOwnership
         // does not leave a bot behind.
         bool CanTakeMore(uint32 module, uint32 maxBots) const;
 
+        // Holds one slot before Spawn returns a guid. Counts toward max_bots. False when the module is already at the cap.
+        bool TryReserve(uint32 module, uint32 maxBots);
+        void CancelReserve(uint32 module);
+        // Turns one reservation into ownership of `botGuid`. Granted, or LimitReached if there was no reservation.
+        Claim CommitReserve(uint64 botGuid, uint32 module, uint32& owner);
+
         // Releases a bot the module controls. False if the module did not control it.
         bool Release(uint64 botGuid, uint32 module);
 
@@ -41,6 +47,7 @@ class ModuleBotOwnership
         std::vector<uint64> DropModule(uint32 module);
 
         uint32 OwnedCount(uint32 module) const;
+        uint32 ReservedCount(uint32 module) const;
 
         // Guids of the bots the module controls, ascending.
         std::vector<uint64> BotsOf(uint32 module) const;
@@ -48,6 +55,7 @@ class ModuleBotOwnership
 
     private:
         std::unordered_map<uint64, uint32> _owners; // bot guid -> module
+        std::unordered_map<uint32, uint32> _reserved; // module -> slots held before a guid exists
 };
 
 #endif // TRINITYCORE_MODULE_BOT_OWNERSHIP_H

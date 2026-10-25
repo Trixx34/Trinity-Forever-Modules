@@ -31,6 +31,9 @@ class ModuleBotBackend
         // The module released a bot it controlled (ReleaseControl). A backend may log out the bots whose owner asked for them (alts).
         virtual void Deactivate(uint64 botGuid) { (void)botGuid; }
 
+        // A spawn whose ownership could not be recorded. The backend deletes the character so it is not left unowned.
+        virtual void Delete(uint64 botGuid) { (void)botGuid; }
+
         // Race and class of a bot, for the reply to a control request. False when unknown.
         virtual bool Describe(uint64 botGuid, uint32& race, uint32& classId) const { (void)botGuid; (void)race; (void)classId; return false; }
 };
