@@ -65,10 +65,14 @@ T const& RandomOf(T const (&values)[N])
     return values[urand(0, N - 1)];
 }
 
-// Random syllables form a valid player name without exposing the internal account prefix.
+// Random syllables form a valid player name without exposing the internal account prefix. Up to two middle syllables: with one, the pool was
+// about 2100 names and a sim with 2000 bots used them all up (no free name); with two it is about 17000.
 std::string GenerateBotName()
 {
-    std::string name = std::string(RandomOf(NameStart)) + (urand(0, 1) ? RandomOf(NameMiddle) : "") + RandomOf(NameEnd);
+    std::string name = std::string(RandomOf(NameStart));
+    for (uint32 middles = urand(0, 2); middles > 0; --middles)
+        name += RandomOf(NameMiddle);
+    name += RandomOf(NameEnd);
     if (name.size() > 12)
         name.resize(12);
     normalizePlayerName(name);
@@ -608,7 +612,7 @@ uint64 BotMgr::CreateBot(uint8 raceId, uint8 classId, uint8 level, std::string& 
     createInfo.Class = classId;
     createInfo.Sex = uint8(urand(0, 1));
 
-    for (uint32 attempt = 0; attempt < 30; ++attempt)
+    for (uint32 attempt = 0; attempt < 200; ++attempt)
     {
         std::string name = GenerateBotName();
         if (ObjectMgr::CheckPlayerName(name, LOCALE_enUS, true) != CHAR_NAME_SUCCESS || sObjectMgr->IsReservedName(name) || sCharacterCache->GetCharacterCacheByName(name))
