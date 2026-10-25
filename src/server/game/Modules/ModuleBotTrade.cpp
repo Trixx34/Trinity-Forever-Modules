@@ -1,4 +1,5 @@
 #include "ModuleBotTrade.h"
+#include "BotMgr.h"
 #include "Config.h"
 #include "Item.h"
 #include "ItemTemplate.h"
@@ -156,6 +157,24 @@ void ExecuteSpeak(ModuleWire::ActionRequestMsg const& request, ModuleWire::Actio
         return;
     }
     reply.Reason = "unknown speak kind";
+}
+
+void ExecuteSpendTalents(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module)
+{
+    if (request.TalentRole > 3)
+    {
+        reply.Reason = "role must be 0 to 3";
+        return;
+    }
+    Player* bot = FindControlledBot(request.BotGuid, module, reply);
+    if (!bot)
+        return;
+    if (char const* why = BotMgr::SetTalentRole(*bot, static_cast<uint8>(request.TalentRole)))
+    {
+        reply.Reason = why;
+        return;
+    }
+    reply.Success = true;
 }
 
 void ExecuteTrade(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module)

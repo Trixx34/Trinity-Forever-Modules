@@ -536,6 +536,23 @@ int main()
         CHECK(core.BotGuid == 42 && core.SpeakKind == 1 && core.PlayerGuid == 7 && core.Text == "Hello there");
     }
 
+    // SDK -> core: SpendBotTalentsAction (actions.proto field 22).
+    for (std::uint32_t role = 0; role <= 3; ++role)
+    {
+        forever_module::ActionRequest sdk;
+        sdk.set_message_id(200 + role);
+        forever_module::SpendBotTalentsAction* talents = sdk.mutable_spend_bot_talents();
+        talents->set_bot_guid(42);
+        talents->set_role(role);
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+
+        ModuleWire::ActionRequestMsg core;
+        CHECK(ModuleWire::Decode(bytes, core));
+        CHECK(core.MessageId == 200 + role && core.Kind == ModuleWire::ActionKind::SpendBotTalents);
+        CHECK(core.BotGuid == 42 && core.TalentRole == role);
+    }
+
     // SDK -> core: BotTradeAction (field 21), every operation.
     for (int op = 0; op <= 6; ++op)
     {

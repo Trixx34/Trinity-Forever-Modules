@@ -103,6 +103,20 @@ void InitializeStarterBuildTraitConfig(WorldPackets::Traits::TraitConfig& traitC
 // allows, then to the next tab. Ranks already in the config are kept. Returns how many ranks were added; `summary` says how the tabs
 // were told apart and how the points went, for the log.
 int32 AutoSpendClassicTalents(WorldPackets::Traits::TraitConfig& traitConfig, PlayerDataAccessor player, uint32 preferredTab, std::string& summary);
+
+// One step of a talent profile: `Ranks` more ranks of the node `NodeId` (a server node id, see Bot.Dump.Talents).
+struct ProfileStep
+{
+    int32 NodeId = 0;
+    int32 Ranks = 0;
+};
+
+// Spends points on a Classic character's trees by a profile: the steps in order, one rank at a time, at most `maxPoints` ranks of the
+// profile in all (a node's ranks already in the config count toward that, so the call is repeatable at each level). It stops at the
+// first rank the validation refuses (tier gate, points owned, level) or the first step whose node is not a single-entry node of the
+// config's trees, so a later step never jumps ahead of an earlier one. It only adds ranks: points spent off the profile stay (no respec).
+// Returns how many ranks were added; `summary` says where it stopped, for the log.
+int32 SpendProfile(WorldPackets::Traits::TraitConfig& traitConfig, PlayerDataAccessor player, std::vector<ProfileStep> const& steps, int32 maxPoints, std::string& summary);
 }
 
 #endif // TRINITY_TRAIT_MGR_H

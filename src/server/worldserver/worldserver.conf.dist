@@ -1955,6 +1955,19 @@ Bot.Limit.MaxDbQueue = 5000
 #            next tab. Bot.Talents.Tab.<classId> (0, 1 or 2) picks the first tab for a class; the server log shows how the tabs
 #            were numbered ("spent talents: ... [sub .. cur ..: N nodes, M ranks]").
 #
+#    Bot.Talents.Profiles
+#        Default:     ""
+#        Path of a talent profile file (scripts/gen-talent-profile-file.py in forever-ops), read once at startup. One line per
+#        "<classId> <tank|healer|dps> <nodeId>:<ranks>,...": the node ids are server ids (Bot.Dump.Talents). A bot whose module
+#        has said its role (SpendBotTalentsAction) spends its points along the profile for its (class, role), in order, as far as
+#        its level allows; with no profile for it, the greedy allocator above runs. While this is set, a bot spends no talents at
+#        level-up until its module has said its role. Points already spent are never taken back (no respec yet).
+#
+#    Bot.Talents.PointsPerLevelOffset
+#        Default:     9
+#        A profile gets (level - this) points: 1 point at level 10, 21 at level 30, 31 at level 40. A guess from a comment in
+#        TraitMgr.cpp (one point per level from 10), not checked on a real character.
+#
 #    Bot.Learn.CombatSkills
 #        Default:     1
 #        1 = a bot's weapon skills, Unarmed, Thrown, Wands and Defense are set to 5 per level (what a player who trained and used them

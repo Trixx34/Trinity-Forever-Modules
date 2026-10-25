@@ -1247,4 +1247,76 @@ int32 AutoSpendClassicTalents(WorldPackets::Traits::TraitConfig& traitConfig, Pl
     }
     return placedRanks;
 }
+
+int32 SpendProfile(WorldPackets::Traits::TraitConfig& traitConfig, PlayerDataAccessor player, std::vector<ProfileStep> const& steps, int32 maxPoints, std::string& summary)
+{
+    std::vector<Tree const*> const* trees = GetTreesForConfig(traitConfig);
+    if (!trees)
+    {
+        summary = "no talent trees for the config";
+        return 0;
+    }
+
+    std::map<int32, int32> wanted; // node id -> the rank the profile has asked for so far
+    int32 planned = 0;             // ranks of the profile gone through (already there or added)
+    int32 placedRanks = 0;
+    std::string stop = "profile complete";
+    for (ProfileStep const& step : steps)
+    {
+        Node const* node = Trinity::Containers::MapGetValuePtr(_traitNodes, step.NodeId);
+        if (!node || node->Entries.size() != 1 || !node->Entries[0].Data
+            || std::ranges::none_of(*trees, [node](Tree const* tree) { return std::ranges::find(tree->Nodes, node) != tree->Nodes.end(); }))
+        {
+            stop = Trinity::StringFormat("stopped at node {}: not a single-entry node of this class", step.NodeId);
+            break;
+        }
+
+        bool stopped = false;
+        for (int32 rank = 0; rank < step.Ranks; ++rank)
+        {
+            if (planned >= maxPoints)
+            {
+                stop = Trinity::StringFormat("stopped at the level's {} point(s)", maxPoints);
+                stopped = true;
+                break;
+            }
+            int32 const target = ++wanted[step.NodeId];
+            auto itr = std::ranges::find_if(traitConfig.Entries, [node](WorldPackets::Traits::TraitEntry const& e)
+            {
+                return e.TraitNodeID == int32(node->Data->ID) && e.TraitNodeEntryID == int32(node->Entries[0].Data->ID);
+            });
+            if (itr != traitConfig.Entries.end() && itr->Rank + itr->GrantedRanks >= target)
+            {
+                ++planned; // already spent, by an earlier call
+                continue;
+            }
+            bool const added = itr == traitConfig.Entries.end();
+            if (added)
+            {
+                WorldPackets::Traits::TraitEntry& entry = traitConfig.Entries.emplace_back();
+                entry.TraitNodeID = node->Data->ID;
+                entry.TraitNodeEntryID = node->Entries[0].Data->ID;
+                itr = std::prev(traitConfig.Entries.end());
+            }
+            ++itr->Rank;
+            if (ValidateConfig(traitConfig, player) != LearnResult::Ok)
+            {
+                --itr->Rank;
+                if (added && !itr->Rank && !itr->GrantedRanks)
+                    traitConfig.Entries.erase(itr);
+                stop = Trinity::StringFormat("stopped at node {} rank {}: not allowed yet", step.NodeId, target);
+                stopped = true;
+                break;
+            }
+            ++planned;
+            ++placedRanks;
+        }
+        if (stopped)
+            break;
+    }
+    ValidateConfig(traitConfig, player);
+
+    summary = Trinity::StringFormat("profile of {} step(s): {} rank(s) added, {} of {} allowed point(s) on the profile; {}", steps.size(), placedRanks, planned, maxPoints, stop);
+    return placedRanks;
+}
 }

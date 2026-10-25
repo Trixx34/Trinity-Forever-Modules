@@ -691,6 +691,10 @@ void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire
             ModuleBotTrade::ExecuteTrade(request, reply, module);
             return;
 
+        case ModuleWire::ActionKind::SpendBotTalents:
+            ModuleBotTrade::ExecuteSpendTalents(request, reply, module);
+            return;
+
         case ModuleWire::ActionKind::Log:
             if (request.Text.empty() || request.Text.size() > MaxMessageBytes)
             {
@@ -740,6 +744,7 @@ void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire
         case ModuleWire::ActionKind::Log:
         case ModuleWire::ActionKind::BotSpeak:
         case ModuleWire::ActionKind::BotTrade:
+        case ModuleWire::ActionKind::SpendBotTalents:
         case ModuleWire::ActionKind::None:
             break;
     }

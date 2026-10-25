@@ -228,6 +228,7 @@ enum class ActionKind : uint8
     BuyItem = 10,
     BotSpeak = 11, // actions.proto field 20
     BotTrade = 12, // actions.proto field 21
+    SpendBotTalents = 13, // actions.proto field 22
 };
 
 struct ActionRequestMsg
@@ -262,6 +263,8 @@ struct ActionRequestMsg
     uint32 TradeOp = 0;
     uint32 TradeSlot = 0;
     uint64 Copper = 0;
+    // SpendBotTalentsAction (field 22): BotGuid spends its talent points as TalentRole (0 none, 1 tank, 2 healer, 3 dps).
+    uint32 TalentRole = 0;
 };
 
 // One item of a BotTrade kListBags reply (actions.proto TradeBagItem).
