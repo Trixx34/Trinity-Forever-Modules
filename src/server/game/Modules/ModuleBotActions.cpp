@@ -1021,7 +1021,8 @@ uint32 PickQuestReward(Player& bot, Quest const& quest)
 }
 
 // kQuest: spell_id = (operation << 24) | quest id. 1 accepts the quest from a giver in range, 2 hands it in at an ender in range
-// (picking the reward), 3 abandons it.
+// (picking the reward), 3 abandons it, 4 completes it with its reward and no objectives, anywhere (what the GM command
+// `.quest reward` does; the planner sends it for class quests).
 BotActionStatus QuestAction(Player& bot, uint32 code, std::string& reason)
 {
     uint32 const operation = code >> 24;
@@ -1041,6 +1042,24 @@ BotActionStatus QuestAction(Player& bot, uint32 code, std::string& reason)
             return BotActionStatus::kRefused;
         }
         bot.RemoveActiveQuest(questId);
+        return BotActionStatus::kApplied;
+    }
+
+    if (operation == 4)
+    {
+        if (bot.GetQuestStatus(questId) == QUEST_STATUS_NONE)
+        {
+            reason = "quest is not in the log";
+            return BotActionStatus::kRefused;
+        }
+        uint32 const reward = PickQuestReward(bot, *quest);
+        bot.CompleteQuest(questId);
+        if (!bot.CanRewardQuest(quest, LootItemType::Item, reward, false))
+        {
+            reason = "bot cannot receive the reward (bags full)";
+            return BotActionStatus::kRefused;
+        }
+        bot.RewardQuest(quest, LootItemType::Item, reward, &bot);
         return BotActionStatus::kApplied;
     }
 
