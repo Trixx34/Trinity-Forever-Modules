@@ -60,14 +60,6 @@ void PruneLootCredits(std::unordered_map<uint32, LootCredit>& credits, std::chro
         it = now - it->second.UpdatedAt >= LootCreditLifetime ? credits.erase(it) : std::next(it);
 }
 
-// Recent OnLootItem counts, keyed by player guid and item entry. ShareQuestItem consumes from this so a
-// module cannot mint a quest item the named player did not just loot. World thread only.
-std::unordered_map<uint64, std::unordered_map<uint32, uint32>>& LootedCounts()
-{
-    static std::unordered_map<uint64, std::unordered_map<uint32, uint32>> counts;
-    return counts;
-}
-
 // Gives a copy of a quest item the looter just looted to each party member who still needs it. The looter keeps their own. A member
 // is skipped when on another map, out of range, with no quest that needs the item, or with no room in the bags; none of that is an
 // error. The count given cannot exceed what OnLootItem reported for this player and entry.
@@ -85,20 +77,6 @@ void ShareQuestItem(Player* looter, ModuleWire::ActionRequestMsg const& request,
         return;
     }
 
-    auto playerIt = LootedCounts().find(looter->GetGUID().GetCounter());
-    uint32* looted = nullptr;
-    if (playerIt != LootedCounts().end())
-    {
-        auto itemIt = playerIt->second.find(request.ItemEntry);
-        if (itemIt != playerIt->second.end())
-            looted = &itemIt->second;
-    }
-    if (!looted || *looted == 0)
-    {
-        reply.Reason = "player has not looted that quest item";
-        return;
-    }
-    uint32 const shareCount = std::min(request.Count, *looted);
     uint64 const playerGuid = looter->GetGUID().GetCounter();
     auto& credits = LootedCounts();
     auto playerIt = credits.find(playerGuid);
