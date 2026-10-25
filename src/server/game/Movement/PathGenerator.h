@@ -26,11 +26,11 @@
 
 class WorldObject;
 
-// 74*4.0f=296y number_of_points*interval = max_path_len
-// this is way more than actual evade range
-// I think we can safely cut those down even more
-#define MAX_PATH_LENGTH         74
-#define MAX_POINT_PATH_LENGTH   74
+// 512*4.0f=2048y number_of_points*interval = max_path_len
+// 74 (about 296y) was too short for a bot walking from Westfall to the Deadmines entrance: the path came back
+// incomplete and the bot stopped partway (bots: no_route). Raised for the sim.
+#define MAX_PATH_LENGTH         512
+#define MAX_POINT_PATH_LENGTH   512
 
 #define SMOOTH_PATH_STEP_SIZE   4.0f
 #define SMOOTH_PATH_SLOP        0.3f
