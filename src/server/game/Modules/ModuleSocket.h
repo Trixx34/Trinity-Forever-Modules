@@ -50,6 +50,10 @@ bool BindAndListen(Handle listener, std::string const& path, std::string& error)
 // Accepts one connection. Returns kInvalid on failure.
 Handle Accept(Handle listener);
 
+// True when the connected peer is the same user as this process.
+// On platforms with no peer credential (Windows AF_UNIX) this returns true: the socket-file ACL is the check there.
+bool PeerIsOwner(Handle connected);
+
 // A connected pair of sockets, used to wake a thread blocked in Poll(). Both ends are non-blocking.
 bool CreateWakePair(Handle& readEnd, Handle& writeEnd, std::string& error);
 

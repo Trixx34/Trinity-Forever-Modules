@@ -387,12 +387,16 @@ void ModuleSession::Run()
         if (WaitFor(_listenFd, ModuleSocket::kReadable, std::min(remaining, PollSlice)))
         {
             ModuleSocket::Handle const fd = ModuleSocket::Accept(_listenFd);
-            if (fd != ModuleSocket::kInvalid)
+            if (fd == ModuleSocket::kInvalid)
+                continue;
+            if (!ModuleSocket::PeerIsOwner(fd))
             {
-                ModuleSocket::SetNonBlocking(fd);
-                _connFd = fd;
-                break;
+                ModuleSocket::Close(fd);
+                continue;
             }
+            ModuleSocket::SetNonBlocking(fd);
+            _connFd = fd;
+            break;
         }
     }
     if (_stop)
@@ -435,8 +439,13 @@ void ModuleSession::Run()
         if (request.ProtocolVersion != _settings.ExpectedProtocolVersion)
             reason = "protocol_version mismatch: core speaks \"" + _settings.ExpectedProtocolVersion +
                      "\", module declared \"" + request.ProtocolVersion + "\"";
+        else if (!_settings.ExpectedModuleName.empty() && request.ModuleName != _settings.ExpectedModuleName)
+            reason = "module name mismatch: core spawned \"" + _settings.ExpectedModuleName +
+                     "\", handshake declared \"" + request.ModuleName + "\"";
         else if (request.Tier2Participates && !_settings.NegotiateTier2)
             reason = "Tier 2 is not available on this core";
+        else if (_settings.Approved && request.Tier2Participates && !_settings.Approved->Tier2Participates)
+            reason = "Tier 2 was not approved for this module";
         else
         {
             for (std::string const& hook : request.Tier1Hooks)
@@ -444,6 +453,12 @@ void ModuleSession::Run()
                 if (std::find(_settings.SupportedHooks.begin(), _settings.SupportedHooks.end(), hook) == _settings.SupportedHooks.end())
                 {
                     reason = "unsupported Tier 1 hook: " + hook;
+                    break;
+                }
+                if (_settings.Approved &&
+                    std::find(_settings.Approved->Hooks.begin(), _settings.Approved->Hooks.end(), hook) == _settings.Approved->Hooks.end())
+                {
+                    reason = "Tier 1 hook was not approved: " + hook;
                     break;
                 }
             }
