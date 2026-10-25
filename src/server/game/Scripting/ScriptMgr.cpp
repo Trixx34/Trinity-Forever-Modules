@@ -17,6 +17,7 @@
 
 #include "ScriptMgr.h"
 #include "AchievementMgr.h"
+#include "ModuleActions.h"
 #include "ModuleMgr.h"
 #include "ModuleActions.h"
 #include "ModuleBotSnapshot.h"
@@ -2238,6 +2239,7 @@ void ScriptMgr::OnPlayerItemLooted(Player* player, Item* item, uint32 lootedCoun
 void ScriptMgr::OnPlayerLogout(Player* player)
 {
     FOREACH_SCRIPT(PlayerScript)->OnLogout(player);
+    ForgetModuleLoot(player->GetGUID().GetCounter());
     sModuleMgr->DispatchNotify("PlayerScript.OnLogout", ModuleWire::NotifyKind::PlayerLogout, player->GetGUID().GetCounter());
 }
 

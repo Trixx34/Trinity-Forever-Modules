@@ -1759,6 +1759,12 @@ Modules.Tier2.NearbyRefreshTicks = 0
 
 Modules.Tier2.MaxTickInterval = 100
 
+#    Modules.Tier2.DungeonTelegraph
+#        Default:     0
+#        Logs ordered Deadmines cast starts, applied damage, and heals. For bounded sim runs only.
+
+Modules.Tier2.DungeonTelegraph = 0
+
 #    Bot.Login.MaxPerTick
 #        Default:     5
 #        Bot logins started per world tick. Logins are spread over several ticks so the world does not stall.
@@ -1829,6 +1835,12 @@ Bot.Limit.MaxDbQueue = 5000
 #        Default:     0
 #        1 = a module may make a bot use a game object near it (kUseObject): click a door, a lever or an altar, or use an item on it (a key, a charge of powder; the
 #            bot is given the item if it has none). For dungeon scenarios, where a bot party cannot open a locked door a player would. Off in normal play.
+#
+#    Bot.Snapshot.GroundEffects
+#        Default:     0
+#        1 = the snapshot of each bot lists the dynamic objects (a spell's persistent area: Flamestrike, Blizzard, a poison cloud) and area triggers within 30 yards
+#            (GroundEffect, layout 21), so a module can move the bot out of a harmful one. A grid search for every bot on every snapshot: leave it off unless a module
+#            asks for it (forever-bots: AvoidGroundEffects).
 #
 #    Bot.Taxi.Enabled
 #        Default:     1
@@ -5046,6 +5058,14 @@ Classic.OfficialFeatureFlags = 1
 #                     0 - (Disabled)
 
 Classic.MountIndoorsRules = 1
+
+#    Classic.SecuredBagSlotsForAll
+#        Description: Every account gets the 4 extra backpack slots (and no "attach an Authenticator" prompt) that the
+#                     client otherwise shows locked until the Battle.net account has an authenticator.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled, only accounts with an authenticator)
+
+Classic.SecuredBagSlotsForAll = 1
 
 #    Classic.Shop.Enabled
 #        Description: In-game Store: shop points, products from world.shop_* (.shop reload), the Gold Market, character

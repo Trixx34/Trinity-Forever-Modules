@@ -26,6 +26,7 @@
 #include "WorldSession.h"
 
 #include <algorithm>
+#include <chrono>
 #include <limits>
 #include <unordered_map>
 
@@ -38,6 +39,26 @@ constexpr size_t MaxMessageBytes = 255;
 // Quest group loot: the range a party member may be from the looter when the module sets none, and the most it may set.
 constexpr uint32 DefaultShareRangeYards = 100;
 constexpr uint32 MaxShareRangeYards = 200;
+constexpr std::chrono::minutes LootCreditLifetime{5};
+
+struct LootCredit
+{
+    uint32 Count = 0;
+    std::chrono::steady_clock::time_point UpdatedAt;
+};
+
+// World-thread-only credits. Expiration and logout cleanup bound this to active players and recent loot.
+std::unordered_map<uint64, std::unordered_map<uint32, LootCredit>>& LootedCounts()
+{
+    static std::unordered_map<uint64, std::unordered_map<uint32, LootCredit>> counts;
+    return counts;
+}
+
+void PruneLootCredits(std::unordered_map<uint32, LootCredit>& credits, std::chrono::steady_clock::time_point now)
+{
+    for (auto it = credits.begin(); it != credits.end();)
+        it = now - it->second.UpdatedAt >= LootCreditLifetime ? credits.erase(it) : std::next(it);
+}
 
 // Recent OnLootItem counts, keyed by player guid and item entry. ShareQuestItem consumes from this so a
 // module cannot mint a quest item the named player did not just loot. World thread only.
@@ -78,6 +99,28 @@ void ShareQuestItem(Player* looter, ModuleWire::ActionRequestMsg const& request,
         return;
     }
     uint32 const shareCount = std::min(request.Count, *looted);
+    uint64 const playerGuid = looter->GetGUID().GetCounter();
+    auto& credits = LootedCounts();
+    auto playerIt = credits.find(playerGuid);
+    if (playerIt == credits.end())
+    {
+        reply.Reason = "player has not recently looted that quest item";
+        return;
+    }
+    PruneLootCredits(playerIt->second, std::chrono::steady_clock::now());
+    if (playerIt->second.empty())
+    {
+        credits.erase(playerIt);
+        reply.Reason = "player has not recently looted that quest item";
+        return;
+    }
+    auto itemIt = playerIt->second.find(request.ItemEntry);
+    if (itemIt == playerIt->second.end() || itemIt->second.Count == 0)
+    {
+        reply.Reason = "player has not recently looted that quest item";
+        return;
+    }
+    uint32 const shareCount = std::min(request.Count, itemIt->second.Count);
 
     Group* group = looter->GetGroup();
     if (!group)
@@ -108,7 +151,22 @@ void ShareQuestItem(Player* looter, ModuleWire::ActionRequestMsg const& request,
     }
 
     if (given)
-        *looted -= std::min(*looted, shareCount);
+    {
+        auto creditPlayer = credits.find(playerGuid);
+        if (creditPlayer != credits.end())
+        {
+            auto creditItem = creditPlayer->second.find(request.ItemEntry);
+            if (creditItem != creditPlayer->second.end())
+            {
+                creditItem->second.Count -= std::min(creditItem->second.Count, shareCount);
+                if (creditItem->second.Count == 0)
+                    creditPlayer->second.erase(creditItem);
+            }
+            if (creditPlayer->second.empty())
+                credits.erase(creditPlayer);
+        }
+    }
+
     reply.Recipients = given;
     reply.Success = true;
     TC_LOG_DEBUG("modules.actions", "shared quest item {} x{} from player {} with {} party member(s)",
@@ -586,9 +644,18 @@ void NoteModuleLoot(uint64 playerGuid, uint32 itemEntry, uint32 count)
 {
     if (!playerGuid || !itemEntry || !count)
         return;
-    uint32& total = LootedCounts()[playerGuid][itemEntry];
-    uint32 const room = std::numeric_limits<uint32>::max() - total;
-    total += std::min(count, room);
+    auto& playerCredits = LootedCounts()[playerGuid];
+    auto const now = std::chrono::steady_clock::now();
+    PruneLootCredits(playerCredits, now);
+    LootCredit& credit = playerCredits[itemEntry];
+    uint32 const room = std::numeric_limits<uint32>::max() - credit.Count;
+    credit.Count += std::min(count, room);
+    credit.UpdatedAt = now;
+}
+
+void ForgetModuleLoot(uint64 playerGuid)
+{
+    LootedCounts().erase(playerGuid);
 }
 
 void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, std::string const& moduleName,

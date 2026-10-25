@@ -3,6 +3,9 @@
 #include "BotMgr.h"
 #include "BotProfessions.h"
 #include "BotTaxi.h"
+#include "AreaTrigger.h"
+#include "Config.h"
+#include "DynamicObject.h"
 #include "ObjectAccessor.h"
 #include "Cell.h"
 #include "Corpse.h"
@@ -587,6 +590,64 @@ void FillProfessions(Player& bot, BotSnapshot& entry)
     }
 }
 
+// Layout 21: the harmful-looking things on the ground near the bot: dynamic objects (a spell's persistent area: Flamestrike, Blizzard, a poison cloud) and area
+// triggers, within kGroundEffectRangeYards. The one the bot stands in (or is nearest the edge of) comes first. Only with Bot.Snapshot.GroundEffects = 1, because it is
+// a grid search for every bot on every snapshot. hostile: the caster is hostile to the bot, so a party member's own Blizzard is not something to run from.
+void FillGroundEffects(Player& bot, BotSnapshot& entry)
+{
+    static bool const enabled = sConfigMgr->GetBoolDefault("Bot.Snapshot.GroundEffects", false);
+    if (!enabled || !bot.IsInWorld())
+        return;
+
+    std::list<WorldObject*> found;
+    Trinity::AllWorldObjectsInRange check(&bot, forever_module::kGroundEffectRangeYards);
+    Trinity::WorldObjectListSearcher<Trinity::AllWorldObjectsInRange> searcher(&bot, found, check, GRID_MAP_TYPE_MASK_DYNAMICOBJECT | GRID_MAP_TYPE_MASK_AREATRIGGER);
+    Cell::VisitGridObjects(&bot, searcher, forever_module::kGroundEffectRangeYards);
+
+    struct Candidate
+    {
+        forever_module::GroundEffect Effect;
+        float EdgeDistance;     // yards from the bot to the effect's edge; negative inside it
+    };
+    std::vector<Candidate> candidates;
+    for (WorldObject* object : found)
+    {
+        Candidate c;
+        c.Effect.x = object->GetPositionX();
+        c.Effect.y = object->GetPositionY();
+        c.Effect.z = object->GetPositionZ();
+        Unit* caster = nullptr;
+        if (DynamicObject* dynamic = object->ToDynObject())
+        {
+            c.Effect.spell_id = dynamic->GetSpellId();
+            c.Effect.radius = dynamic->GetRadius();
+            c.Effect.kind = 1;
+            caster = dynamic->GetCaster();
+        }
+        else if (AreaTrigger* trigger = object->ToAreaTrigger())
+        {
+            if (trigger->IsRemoved())
+                continue;
+            c.Effect.spell_id = trigger->GetSpellId();
+            c.Effect.radius = trigger->GetMaxSearchRadius();
+            c.Effect.kind = 2;
+            caster = trigger->GetCaster();
+        }
+        else
+            continue;
+        if (!c.Effect.spell_id)
+            continue;
+        c.Effect.hostile = caster && caster->IsHostileTo(&bot) ? 1 : 0;
+        c.EdgeDistance = bot.GetExactDist2d(c.Effect.x, c.Effect.y) - c.Effect.radius;
+        candidates.push_back(c);
+    }
+    std::sort(candidates.begin(), candidates.end(), [](Candidate const& a, Candidate const& b) { return a.EdgeDistance < b.EdgeDistance; });
+    size_t const count = std::min(candidates.size(), forever_module::kMaxGroundEffects);
+    for (size_t i = 0; i < count; ++i)
+        entry.ground_effects[i] = candidates[i].Effect;
+    entry.ground_effect_count = uint8(count);
+}
+
 // Fills the nearest-vendor fields (layout 6, M6), the nearest-repairman fields (layout 9) and the guids of all three NPCs
 // (layout 13: vendor_guid, repair_guid, auctioneer_guid). The position is 2D for the distance:
 // vendors sit at different heights in the same town, and the walk is on the ground. Only vendors the bot's faction is not hostile to
@@ -1003,7 +1064,7 @@ bool EncodeUnitRef(Unit const& unit, uint64& ref)
 }
 
 ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNearby, std::vector<NearbyUnit>& cachedNearby,
-                                   BotSnapshotWatch& watch)
+                                   BotSnapshotWatch& watch, NearbySnapshotScratch& scratch)
 {
     ModuleSnapshotBot result;
 
@@ -1061,6 +1122,7 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
     FillAuras(bot, entry);
     FillPet(bot, entry);
     FillMoneyAndBags(bot, entry);
+    FillGroundEffects(bot, entry);
 
     // Layout 13: why the bot lost the target it had on the previous tick. The reason is worked out once, on the tick the
     // victim goes away, and kept until the bot picks a new one, so the module reads it on the tick that carries
@@ -1083,22 +1145,29 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
     // Between refreshes the bot's own entry is current, and its nearby units are the ones from the last refresh.
     if (!refreshNearby && !cachedNearby.empty())
     {
-        result.Nearby = cachedNearby;
-        if (result.Nearby.size() > maxNearby)
-            result.Nearby.resize(maxNearby);
+        result.Nearby = std::span<NearbyUnit const>(cachedNearby).first(std::min<std::size_t>(cachedNearby.size(), maxNearby));
         return result;
     }
 
     // Every unit in range, split into players and creatures, each closest first. Dead creatures are kept (a boss's corpse is how a
     // scenario sees the boss die); dead players are not.
-    std::list<Unit*> inRange;
+    auto& inRange = scratch.InRange;
+    auto& players = scratch.Players;
+    auto& creatures = scratch.Creatures;
+    auto& corpses = scratch.Corpses;
+    auto& chosen = scratch.Chosen;
+    inRange.clear();
+    players.clear();
+    creatures.clear();
+    corpses.clear();
+    chosen.clear();
+    chosen.reserve(std::max(chosen.capacity(), size_t(maxNearby)));
     Trinity::AnyUnitInObjectRangeCheck check(&bot, NearbyRange, true, false);
     Trinity::UnitListSearcher<Trinity::AnyUnitInObjectRangeCheck> searcher(&bot, inRange, check);
     Cell::VisitAllObjects(&bot, searcher, NearbyRange);
 
-    std::vector<Unit*> players;
-    std::vector<Unit*> creatures;
-    std::vector<Unit*> corpses;
+    cachedNearby.clear();
+    cachedNearby.reserve(std::max(cachedNearby.capacity(), size_t(maxNearby)));
     for (Unit* unit : inRange)
     {
         if (unit == &bot)
@@ -1115,13 +1184,22 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
     {
         return bot.GetExactDist2dSq(a) < bot.GetExactDist2dSq(b);
     };
-    std::sort(players.begin(), players.end(), closerFirst);
-    std::sort(creatures.begin(), creatures.end(), closerFirst);
-    std::sort(corpses.begin(), corpses.end(), closerFirst);
+    // Only the nearest maxNearby units of each category can appear in this snapshot. Partial-sort
+    // that prefix instead of fully sorting potentially large crowds around a bot.
+    auto sortPrefix = [&](std::vector<Unit*>& units)
+    {
+        size_t const prefix = std::min<size_t>(units.size(), maxNearby);
+        if (prefix < units.size())
+            std::partial_sort(units.begin(), units.begin() + prefix, units.end(), closerFirst);
+        else
+            std::sort(units.begin(), units.end(), closerFirst);
+    };
+    sortPrefix(players);
+    sortPrefix(creatures);
+    sortPrefix(corpses);
 
     // The closest few players, then living creatures, then corpses, then any players that are left if there is still room. Corpses
     // come after the living so that they never take a slot a live target needs.
-    std::vector<Unit*> chosen;
     size_t const playerSlots = std::min<size_t>(kNearbyPlayerSlots, maxNearby);
     for (Unit* player : players)
     {
@@ -1163,10 +1241,10 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
         near.elite = unit->IsCreature() && unit->ToCreature()->IsElite() ? 1 : 0;
         near.casting = unit->IsNonMeleeSpellCast(false) ? 1 : 0;
         FillNearbyAuras(*unit, near); // layout 13
-        result.Nearby.push_back(near);
+        cachedNearby.push_back(near);
     }
 
-    cachedNearby = result.Nearby;
+    result.Nearby = cachedNearby;
     return result;
 }
 

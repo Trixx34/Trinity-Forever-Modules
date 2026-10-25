@@ -983,11 +983,16 @@ void ModuleMgr::OnWorldTick(uint64 tick)
 {
     // Runs on the world thread (doc 04 §4). Copy the regions out under the lock; publishing needs no lock.
     std::vector<std::pair<ModuleId, std::shared_ptr<ModuleTier2Region>>> regions;
+    std::unordered_set<uint64> ownedByAnyModule;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         for (auto const& entry : _modules)
+        {
             if (entry.second.Tier2 && entry.second.Session && entry.second.Session->IsAccepted())
                 regions.emplace_back(entry.first, entry.second.Tier2);
+            for (uint64 guid : _owners.BotsOf(entry.first))
+                ownedByAnyModule.insert(guid);
+        }
     }
 
     for (auto const& [id, region] : regions)
@@ -1015,7 +1020,7 @@ void ModuleMgr::OnWorldTick(uint64 tick)
                 // Staggered by guid: each bot refreshes on one tick in refreshEvery, so the cost is spread over the ticks.
                 bool const refresh = refreshEvery <= 1 || (tick + guid) % refreshEvery == 0;
                 ModuleSnapshotBot entry = BuildSnapshotBot(*bot, region->GetBounds().MaxNearbyUnits, refresh,
-                                                            _nearbyCache[guid], _snapshotWatch[guid]);
+                                                            _nearbyCache[guid], _snapshotWatch[guid], _nearbyScratch);
                 if (auto result = _actionResults.find(guid); result != _actionResults.end())
                 {
                     entry.Bot.last_action_type = result->second.Type;
@@ -1025,15 +1030,6 @@ void ModuleMgr::OnWorldTick(uint64 tick)
                 }
                 bots.push_back(std::move(entry));
             }
-            // Forget the nearby cache of bots this module no longer controls.
-            // (a set: with thousands of bots a search of the list per cache entry was quadratic on every snapshot)
-            std::unordered_set<uint64> const ownedSet(owned.begin(), owned.end());
-            for (auto it = _nearbyCache.begin(); it != _nearbyCache.end();)
-                it = ownedSet.contains(it->first) ? std::next(it) : _nearbyCache.erase(it);
-            // And the same for what the last snapshot remembered about the target a bot had (layout 13).
-            for (auto it = _snapshotWatch.begin(); it != _snapshotWatch.end();)
-                it = ownedSet.contains(it->first) ? std::next(it) : _snapshotWatch.erase(it);
-
             region->PublishSnapshot(tick, bots);
         }
 
@@ -1041,6 +1037,13 @@ void ModuleMgr::OnWorldTick(uint64 tick)
         if (region->ReadNewActions(actions))
             ApplyModuleActions(id, actions);
     }
+
+    // These caches are keyed by bot guid and shared across module regions. Prune once against the
+    // complete ownership set; pruning against one module's list would evict another module's entries.
+    for (auto it = _nearbyCache.begin(); it != _nearbyCache.end();)
+        it = ownedByAnyModule.contains(it->first) ? std::next(it) : _nearbyCache.erase(it);
+    for (auto it = _snapshotWatch.begin(); it != _snapshotWatch.end();)
+        it = ownedByAnyModule.contains(it->first) ? std::next(it) : _snapshotWatch.erase(it);
 
     RunPendingControls();
     RunPendingActions();
