@@ -4,7 +4,7 @@
  * either side fails here.
  *
  * Not part of the worldserver build. Build and run it against an SDK build tree, for example:
- *   g++ -std=c++17 -Isrc/common -Isrc/server/game/Modules \
+ *   g++ -std=c++17 -Isrc/common -Isrc/server/game/Modules -Isrc/server/game/Bots \
  *       -I<sdk>/include -I<sdk-build>/generated/forever_module \
  *       src/server/game/Modules/ModuleWire.cpp \
  *       src/server/game/Modules/tests/ModuleWireInterop.cpp \
@@ -12,12 +12,14 @@
  *       -lprotobuf -o module_wire_interop && ./module_wire_interop
  */
 
+#include "BotTalentSpec.h"
 #include "ModuleWire.h"
 
 #include "envelope.pb.h"
 #include "actions.pb.h"
 #include "control.pb.h"
 #include "events.pb.h"
+#include "forever_module/talent_spec.h"
 #include "handshake.pb.h"
 
 #include <cstdio>
@@ -550,7 +552,34 @@ int main()
         ModuleWire::ActionRequestMsg core;
         CHECK(ModuleWire::Decode(bytes, core));
         CHECK(core.MessageId == 200 + role && core.Kind == ModuleWire::ActionKind::SpendBotTalents);
-        CHECK(core.BotGuid == 42 && core.TalentRole == role);
+        CHECK(core.BotGuid == 42 && core.TalentRole == role && core.TalentSpec == 0); // no spec on the wire: 0 (protocol 17 callers)
+    }
+    // ... with a spec (protocol 18): every spec value of the SDK table decodes, with role and bot guid unchanged.
+    for (std::uint32_t spec = 1; spec <= forever_module::kLastTalentSpec; ++spec)
+    {
+        forever_module::ActionRequest sdk;
+        sdk.set_message_id(300 + spec);
+        forever_module::SpendBotTalentsAction* talents = sdk.mutable_spend_bot_talents();
+        talents->set_bot_guid(77);
+        talents->set_role(spec % 4);
+        talents->set_spec(spec);
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+
+        ModuleWire::ActionRequestMsg core;
+        CHECK(ModuleWire::Decode(bytes, core));
+        CHECK(core.MessageId == 300 + spec && core.Kind == ModuleWire::ActionKind::SpendBotTalents);
+        CHECK(core.BotGuid == 77 && core.TalentRole == spec % 4 && core.TalentSpec == spec);
+    }
+    // The core's spec table (Bots/BotTalentSpec.h) equals the SDK's (talent_spec.h): id, class and key of every row.
+    CHECK(BotTalentSpec::LastSpec == forever_module::kLastTalentSpec);
+    for (std::uint32_t id = 1; id <= forever_module::kLastTalentSpec; ++id)
+    {
+        forever_module::TalentSpecInfo const* sdkInfo = forever_module::GetTalentSpecInfo(static_cast<forever_module::TalentSpec>(id));
+        BotTalentSpec::Info const* coreInfo = BotTalentSpec::Get(id);
+        CHECK(sdkInfo && coreInfo);
+        if (sdkInfo && coreInfo)
+            CHECK(sdkInfo->ClassId == coreInfo->ClassId && std::string(sdkInfo->Key) == coreInfo->Key && coreInfo->Spec == id);
     }
 
     // SDK -> core: BotTradeAction (field 21), every operation.

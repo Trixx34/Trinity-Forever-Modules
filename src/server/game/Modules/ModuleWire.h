@@ -263,8 +263,10 @@ struct ActionRequestMsg
     uint32 TradeOp = 0;
     uint32 TradeSlot = 0;
     uint64 Copper = 0;
-    // SpendBotTalentsAction (field 22): BotGuid spends its talent points as TalentRole (0 none, 1 tank, 2 healer, 3 dps).
+    // SpendBotTalentsAction (field 22): BotGuid spends its talent points as TalentRole (0 none, 1 tank, 2 healer, 3 dps) and TalentSpec (0 none, or
+    // 1 to 28: Bots/BotTalentSpec.h; protocol 18).
     uint32 TalentRole = 0;
+    uint32 TalentSpec = 0;
 };
 
 // One item of a BotTrade kListBags reply (actions.proto TradeBagItem).

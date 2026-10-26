@@ -1958,10 +1958,13 @@ Bot.Limit.MaxDbQueue = 5000
 #    Bot.Talents.Profiles
 #        Default:     ""
 #        Path of a talent profile file (scripts/gen-talent-profile-file.py in forever-ops), read once at startup. One line per
-#        "<classId> <tank|healer|dps> <nodeId>:<ranks>,...": the node ids are server ids (Bot.Dump.Talents). A bot whose module
-#        has said its role (SpendBotTalentsAction) spends its points along the profile for its (class, role), in order, as far as
-#        its level allows; with no profile for it, the greedy allocator above runs. While this is set, a bot spends no talents at
-#        level-up until its module has said its role. Points already spent are never taken back (no respec yet).
+#        "<classId> <key> <nodeId>:<ranks>,...": the node ids are server ids (Bot.Dump.Talents). The key is a role (tank, healer,
+#        dps) or one of the class's spec keys (protocol 18): warrior arms fury prot; paladin holy prot ret; hunter bm mm sv; rogue
+#        assassination combat subtlety; priest disc holy shadow; shaman ele enh resto; mage arcane fire frost; warlock affliction
+#        demonology destruction; druid balance feral_tank feral_cat resto. A bot whose module has said its role and spec
+#        (SpendBotTalentsAction) spends its points along the profile for its (class, spec), else its (class, role), in order, as far
+#        as its level allows; with neither, the greedy allocator above runs. While this is set, a bot spends no talents at level-up
+#        until its module has said its role. Points already spent are never taken back (no respec yet).
 #
 #    Bot.Talents.PointsPerLevelOffset
 #        Default:     9

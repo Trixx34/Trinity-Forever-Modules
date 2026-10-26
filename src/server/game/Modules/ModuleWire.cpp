@@ -817,7 +817,7 @@ bool Decode(std::string_view bytes, ActionRequestMsg& out)
         }
         else if (field == 22 && wire == WireLengthDelimited)
         {
-            // SpendBotTalentsAction (22): bot_guid=1, role=2.
+            // SpendBotTalentsAction (22): bot_guid=1, role=2, spec=3.
             std::string_view actionBytes;
             if (!r.ReadBytes(actionBytes))
                 return false;
@@ -830,14 +830,16 @@ bool Decode(std::string_view bytes, ActionRequestMsg& out)
                 if (!a.ReadTag(af, aw))
                     return false;
                 uint64 value = 0;
-                if (aw == WireVarint && (af == 1 || af == 2))
+                if (aw == WireVarint && (af == 1 || af == 2 || af == 3))
                 {
                     if (!a.ReadVarint(value))
                         return false;
                     if (af == 1)
                         out.BotGuid = value;
-                    else
+                    else if (af == 2)
                         out.TalentRole = static_cast<uint32>(value);
+                    else
+                        out.TalentSpec = static_cast<uint32>(value);
                 }
                 else if (!a.Skip(aw))
                     return false;

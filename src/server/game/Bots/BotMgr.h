@@ -65,10 +65,11 @@ class TC_GAME_API BotMgr
         // would teach it and raises its weapon skills and Defense to what a player of its level has. Bot.Learn.* switch the parts.
         static void OnBotLevelChanged(Player& bot);
 
-        // A module says which role a bot plays (SpendBotTalentsAction; 1 tank, 2 healer, 3 dps, 0 none): the role is remembered for the
-        // bot's later level-ups and its talent points are spent now from the (class, role) profile in Bot.Talents.Profiles, or by the
-        // greedy allocator when there is none. Returns null when it ran, else why it did not (in combat, below level 10, switched off).
-        static char const* SetTalentRole(Player& bot, uint8 role);
+        // A module says which role (SpendBotTalentsAction; 1 tank, 2 healer, 3 dps, 0 none) and spec (BotTalentSpec.h, 1 to 28, 0 none; protocol 18) a
+        // bot plays: both are remembered for the bot's later level-ups and its talent points are spent now from the (class, spec) profile in
+        // Bot.Talents.Profiles, else the (class, role) one, else by the greedy allocator. Returns null when it ran, else why it did not (in
+        // combat, below level 10, switched off).
+        static char const* SetTalentRole(Player& bot, uint8 role, uint8 spec = 0);
 
         BotMgr(BotMgr const&) = delete;
         BotMgr(BotMgr&&) = delete;
