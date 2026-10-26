@@ -2002,6 +2002,24 @@ Bot.Learn.TrainerSpells = 1
 Bot.Learn.CombatSkills = 1
 Bot.Learn.Talents = 1
 
+#    Bot.Hunter.PetGrant
+#        Default:     1
+#        A hunter bot of level 10 or more with no pet that did not tame one within Bot.Hunter.PetGraceSec seconds (counted from when it was
+#        first seen without one, out of combat) is given a pet: a beast of Bot.Hunter.PetEntries picked at random, at the owner's level.
+#        The module's taming (Tame Beast) comes first; this is the fallback. 0 = never.
+#
+#    Bot.Hunter.PetGraceSec
+#        Default:     120
+#
+#    Bot.Hunter.PetEntries
+#        Default:     "3425,2069,3243,2071,2237"
+#        Creature entries (beasts, comma separated) a granted pet is picked from; entries with no creature template are ignored.
+#        The default is cats (Savannah Prowler, Moonstalker, Savannah Highmane, Moonstalker Matriarch, Moonstalker Sire).
+
+Bot.Hunter.PetGrant = 1
+Bot.Hunter.PetGraceSec = 120
+Bot.Hunter.PetEntries = "3425,2069,3243,2071,2237"
+
 #    Bot.Pet.NoUpkeep
 #        Default:     1
 #        A hunter bot's pet loses no happiness and no loyalty (a bot never feeds it). Without this the pet of a bot turns unhappy

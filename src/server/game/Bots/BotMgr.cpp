@@ -23,6 +23,7 @@
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
+#include "Pet.h"
 #include "Player.h"
 #include "RealmList.h"
 #include "Random.h"
@@ -351,6 +352,13 @@ void BotMgr::LoadRegistry()
     _loginTimeoutMs = uint32(std::max<int32>(1000, sConfigMgr->GetIntDefault("Bot.Login.TimeoutMs", 60000)));
     _reloginDelayMs = uint32(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Relogin.DelayMs", 2000)));
     _mailCollect = sConfigMgr->GetBoolDefault("Bot.Mail.Collect", true);
+    _hunterPetGrant = sConfigMgr->GetBoolDefault("Bot.Hunter.PetGrant", true);
+    _hunterPetGraceMs = uint32(std::clamp<int32>(sConfigMgr->GetIntDefault("Bot.Hunter.PetGraceSec", 120), 0, 3600)) * 1000;
+    _hunterPetEntries.clear();
+    std::string const petEntries = sConfigMgr->GetStringDefault("Bot.Hunter.PetEntries", "3425,2069,3243,2071,2237");
+    for (std::string_view token : Trinity::Tokenize(petEntries, ',', false))
+        if (Optional<uint32> const entry = Trinity::StringTo<uint32>(token); entry && sObjectMgr->GetCreatureTemplate(*entry))
+            _hunterPetEntries.push_back(*entry);
     _mailCollectEveryMs = uint32(std::clamp<int32>(sConfigMgr->GetIntDefault("Bot.Mail.CollectEverySec", 30), 5, 3600)) * 1000;
     _spreadSpacing = std::max(0.0f, sConfigMgr->GetFloatDefault("Bot.Spread.SpacingYards", 3.0f));
     _spreadMaxRadius = std::max(0.0f, sConfigMgr->GetFloatDefault("Bot.Spread.MaxRadiusYards", 200.0f));
@@ -842,6 +850,56 @@ void BotMgr::Update(uint32 diff)
     ProcessLogins(diff);
     PumpTeleports();
     CollectMail();
+    GrantHunterPets();
+}
+
+// A hunter bot gets its pet by taming a beast (Tame Beast, a 20 s channel next to a wild beast), which a bot in a dungeon party hardly ever gets to do.
+// One that is still without a pet Bot.Hunter.PetGraceSec seconds after it was first seen so (level 10 or more, out of combat, in the world) is given one: a
+// beast of Bot.Hunter.PetEntries, picked at random, at the owner's level, saved as its current pet and brought out. Not for an alt (a player's own character).
+void BotMgr::GrantHunterPets()
+{
+    if (!_hunterPetGrant || _hunterPetEntries.empty() || _uptimeMs - _hunterPetCheckAtMs < 5000)
+        return;
+    _hunterPetCheckAtMs = _uptimeMs;
+    for (auto& [guid, bot] : _bots)
+    {
+        if (bot.State != BOT_ONLINE || !bot.Session || bot.Alt)
+            continue;
+        Player* player = bot.Session->GetPlayer();
+        if (!player || player->GetClass() != CLASS_HUNTER || player->GetLevel() < 10 || !player->IsInWorld() || !player->IsAlive() || player->IsInCombat() ||
+            player->IsBeingTeleported())
+            continue;
+        bool hasPet = !player->GetPetGUID().IsEmpty();
+        if (PetStable const* stable = player->GetPetStable())
+        {
+            hasPet = hasPet || stable->CurrentPetIndex.has_value();
+            for (Optional<PetStable::PetInfo> const& active : stable->ActivePets)
+                hasPet = hasPet || active.has_value();
+        }
+        if (hasPet)
+        {
+            _hunterNoPetSinceMs.erase(guid);
+            continue;
+        }
+        auto const [since, first] = _hunterNoPetSinceMs.try_emplace(guid, _uptimeMs);
+        if (_uptimeMs - since->second < _hunterPetGraceMs)
+            continue;
+        uint32 const entry = _hunterPetEntries[urand(0, uint32(_hunterPetEntries.size()) - 1)];
+        Pet* pet = player->CreateTamedPetFrom(entry, 0);
+        if (!pet)
+        {
+            TC_LOG_ERROR("server.worldserver", "BotMgr: hunter {} could not be given a pet (creature {})", player->GetName(), entry);
+            since->second = _uptimeMs;   // try again after another grace period
+            continue;
+        }
+        // what Spell::EffectTameCreature does once the pet exists
+        pet->GetMap()->AddToMap(pet->ToCreature());
+        player->SetMinion(pet, true);
+        pet->SavePetToDB(PET_SAVE_AS_CURRENT);
+        player->PetSpellInitialize();
+        _hunterNoPetSinceMs.erase(guid);
+        TC_LOG_INFO("server.worldserver", "BotMgr: hunter {} was given a pet (creature {}, level {}) after {} s without one.", player->GetName(), entry, player->GetLevel(), _hunterPetGraceMs / 1000);
+    }
 }
 
 // What an auction pays a bot arrives as mail (the sale of a listing, an item it bought, a listing that ran out). Nothing opens a mailbox for a bot, so

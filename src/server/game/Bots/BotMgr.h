@@ -137,6 +137,7 @@ class TC_GAME_API BotMgr
         void PollLogins(); // advances the logins in flight: finishes or fails them
         void PollCreates(); // runs the save callbacks of characters that finished committing
         void CollectMail(); // takes the delivered mail of every online bot, at most every Bot.Mail.CollectEverySec seconds
+        void GrantHunterPets(); // a hunter bot with no pet that did not tame one within Bot.Hunter.PetGraceSec is given one (Bot.Hunter.PetGrant)
         void PumpTeleports(); // answers the teleport steps a client would (suspend token, world port, teleport ack) for the bots
         void FinishCreate(uint64 guid, bool success);
         void FinishLogin(BotInfo& bot);
@@ -162,6 +163,11 @@ class TC_GAME_API BotMgr
         bool _mailCollect = true;
         uint32 _mailCollectEveryMs = 30000;
         uint32 _mailCollectAtMs = 0;
+        bool _hunterPetGrant = true;
+        uint32 _hunterPetGraceMs = 120000;
+        uint32 _hunterPetCheckAtMs = 0;
+        std::vector<uint32> _hunterPetEntries;                    // creature entries a granted pet is picked from (Bot.Hunter.PetEntries)
+        std::unordered_map<uint64, uint32> _hunterNoPetSinceMs;   // bot guid counter -> uptime at which it was first seen without a pet
         bool _registryLoaded = false;
 
         // Login rate: a token bucket, one login per token, refilled at Bot.Login.MaxPerSecond.
