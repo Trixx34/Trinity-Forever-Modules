@@ -1999,6 +1999,13 @@ Bot.Learn.TrainerSpells = 1
 Bot.Learn.CombatSkills = 1
 Bot.Learn.Talents = 1
 
+#    Bot.Pet.NoUpkeep
+#        Default:     1
+#        A hunter bot's pet loses no happiness and no loyalty (a bot never feeds it). Without this the pet of a bot turns unhappy
+#        after about half an hour and, being Rebellious after the taming, runs away for good ten minutes later. 0 = vanilla rules.
+
+Bot.Pet.NoUpkeep = 1
+
 #    Bot.Dump.Abilities
 #        Default:     0
 #        1 = the first bot created for each race and class also logs the spells a character of that kind has at levels 1, 5, 10 ... 60,

@@ -20,6 +20,7 @@
 #include "CharmInfo.h"
 #include "Chat.h"
 #include "Common.h"
+#include "Config.h"
 #include "DatabaseEnv.h"
 #include "DB2Stores.h"
 #include "Group.h"
@@ -689,8 +690,16 @@ void Pet::Update(uint32 diff)
                 }
             }
 
+            // A bot never feeds its pet, so without this its pet turns unhappy after about half an hour and, being Rebellious, runs away for
+            // good ten minutes later (a dungeon run lasts an hour). Pets of bots keep their happiness and loyalty (Bot.Pet.NoUpkeep, default 1).
+            bool const botOwned = [this]
+            {
+                Player const* owner = GetOwner();
+                return owner && owner->GetSession() && owner->GetSession()->IsBot() && sConfigMgr->GetBoolDefault("Bot.Pet.NoUpkeep", true);
+            }();
+
             // Classic 1.60: hunter pets slowly lose happiness, 1.5 times as fast in combat (VMaNGOS Pet::LooseHappiness)
-            if (HasHappiness())
+            if (HasHappiness() && !botOwned)
             {
                 if (m_happinessTimer > diff)
                     m_happinessTimer -= diff;
@@ -702,7 +711,7 @@ void Pet::Update(uint32 diff)
             }
 
             // Classic 1.60: loyalty every 12 s by happiness: happy +20, content +10, unhappy -20 (VMaNGOS Pet::TickLoyaltyChange)
-            if (HasLoyalty())
+            if (HasLoyalty() && !botOwned)
             {
                 if (m_loyaltyTimer > diff)
                     m_loyaltyTimer -= diff;
