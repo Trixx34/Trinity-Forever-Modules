@@ -84,7 +84,9 @@ uint32 WorldSession::CollectMailAsBot()
         player->SaveInventoryAndGoldToDB(trans);
         player->_SaveMail(trans);
         CharacterDatabase.CommitTransaction(trans);
-        if (money || items)
+        if (money)
+            TC_LOG_INFO("server.worldserver", "BotMgr: bot {} took {} copper and {} item(s) from its mail.", player->GetName(), money, items);
+        else if (items)
             TC_LOG_DEBUG("server.worldserver", "BotMgr: bot {} took {} copper and {} item(s) from its mail.", player->GetName(), money, items);
     }
     return touched;
