@@ -694,16 +694,30 @@ bool ArmorTooHeavy(Player const& bot, ItemTemplate const& item)
     return BotGearRules::ArmorTooHeavy(bot.GetClass(), bot.GetLevel(), item.GetClass(), item.GetSubClass(), item.GetInventoryType());
 }
 
-// What a class wants from its gear, as item-mod stats: the stats it uses, in no order.
-std::vector<int32> PreferredStats(uint8 classId)
+// What a class wants from its gear, as item-mod stats: the stats it uses, in no order. `profile` (bits 2-4 of AutoGearAction's
+// flags, from MOD-Forever-Bots' combat_rotation.cpp GearProfileFor) is spec-aware when the module sent one; 0 is also the
+// encoding a module build that predates this falls back to, so it still gets this class's old, class-only default.
+enum class GearProfile : uint32 { StrStam = 0, AgiStam = 1, IntSpiritStam = 2, IntCrit = 3, IntSpiritHaste = 4 };
+
+std::vector<int32> PreferredStats(uint8 classId, GearProfile profile)
 {
-    switch (classId)
+    switch (profile)
     {
-        case CLASS_WARRIOR:
-        case CLASS_PALADIN: return { ITEM_MOD_STRENGTH, ITEM_MOD_STAMINA };
-        case CLASS_HUNTER: return { ITEM_MOD_AGILITY, ITEM_MOD_STAMINA };
-        case CLASS_ROGUE: return { ITEM_MOD_AGILITY, ITEM_MOD_STRENGTH, ITEM_MOD_STAMINA };
-        default: return { ITEM_MOD_INTELLECT, ITEM_MOD_SPIRIT, ITEM_MOD_STAMINA }; // priest, shaman, mage, warlock, druid
+        case GearProfile::AgiStam: return { ITEM_MOD_AGILITY, ITEM_MOD_STAMINA };
+        case GearProfile::IntCrit: return { ITEM_MOD_INTELLECT, ITEM_MOD_CRIT_RATING, ITEM_MOD_STAMINA };
+        case GearProfile::IntSpiritHaste: return { ITEM_MOD_INTELLECT, ITEM_MOD_SPIRIT, ITEM_MOD_HASTE_RATING, ITEM_MOD_STAMINA };
+        case GearProfile::IntSpiritStam: return { ITEM_MOD_INTELLECT, ITEM_MOD_SPIRIT, ITEM_MOD_STAMINA };
+        case GearProfile::StrStam:
+        default:
+            // profile 0 doubles as "no profile sent" (an old module build): fall back to the previous class-only rule.
+            switch (classId)
+            {
+                case CLASS_WARRIOR:
+                case CLASS_PALADIN: return { ITEM_MOD_STRENGTH, ITEM_MOD_STAMINA };
+                case CLASS_HUNTER: return { ITEM_MOD_AGILITY, ITEM_MOD_STAMINA };
+                case CLASS_ROGUE: return { ITEM_MOD_AGILITY, ITEM_MOD_STRENGTH, ITEM_MOD_STAMINA };
+                default: return { ITEM_MOD_INTELLECT, ITEM_MOD_SPIRIT, ITEM_MOD_STAMINA }; // priest, shaman, mage, warlock, druid
+            }
     }
 }
 
@@ -842,6 +856,11 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
         reason = "bot is in combat";
         return BotActionStatus::kRefused;
     }
+    if (bot.IsCharmed())
+    {
+        reason = "bot is charmed";
+        return BotActionStatus::kRefused;
+    }
     if (sBotMgr->IsActiveAlt(bot.GetGUID().GetCounter()))
     {
         reason = "an alt is a player's own character and is not dressed";
@@ -853,8 +872,15 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
         return BotActionStatus::kApplied;
     }
 
+    // Player::CanEquipItem refuses every item (EQUIP_ERR_CLIENT_LOCKED_OUT) while a non-instant generic or channeled spell is
+    // mid-cast, the same guard the real client's UI enforces. A bot has no client round-trip to clear this after an interrupted
+    // or aborted cast, so without this a bot could get stuck failing every single gear pick, forever, with no further sign of
+    // why beyond "equip_error=40" in the log (2026-10-28: this is exactly what was seen -- every pick for one bot failed this
+    // way). IsInCombat() above does not cover it: a cast can outlast combat ending, or start and abort outside combat entirely.
+    bot.InterruptNonMeleeSpells(true);
+
     bool const tank = (flags & 1) != 0;
-    std::vector<int32> const preferred = PreferredStats(bot.GetClass());
+    std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile((flags >> 2) & 7));
     std::map<uint8, GearPick> bySlot;          // armour and ranged, by equipment slot
     GearPick twoHand, shield, holdable;
     std::vector<std::pair<int32, ItemTemplate const*>> oneHand;   // main-hand weapons (one-hand, main hand)
