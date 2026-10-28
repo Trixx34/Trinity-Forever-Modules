@@ -697,7 +697,7 @@ bool ArmorTooHeavy(Player const& bot, ItemTemplate const& item)
 // What a class wants from its gear, as item-mod stats: the stats it uses, in no order. `profile` (bits 2-4 of AutoGearAction's
 // flags, from MOD-Forever-Bots' combat_rotation.cpp GearProfileFor) is spec-aware when the module sent one; 0 is also the
 // encoding a module build that predates this falls back to, so it still gets this class's old, class-only default.
-enum class GearProfile : uint32 { StrStam = 0, AgiStam = 1, IntSpiritStam = 2, IntCrit = 3, IntSpiritHaste = 4 };
+enum class GearProfile : uint32 { StrStam = 0, AgiStam = 1, IntSpiritStam = 2, IntCrit = 3, IntSpiritHaste = 4, StrStamDef = 5, AgiStamDef = 6 };
 
 std::vector<int32> PreferredStats(uint8 classId, GearProfile profile)
 {
@@ -707,6 +707,11 @@ std::vector<int32> PreferredStats(uint8 classId, GearProfile profile)
         case GearProfile::IntCrit: return { ITEM_MOD_INTELLECT, ITEM_MOD_CRIT_RATING, ITEM_MOD_STAMINA };
         case GearProfile::IntSpiritHaste: return { ITEM_MOD_INTELLECT, ITEM_MOD_SPIRIT, ITEM_MOD_HASTE_RATING, ITEM_MOD_STAMINA };
         case GearProfile::IntSpiritStam: return { ITEM_MOD_INTELLECT, ITEM_MOD_SPIRIT, ITEM_MOD_STAMINA };
+        // A shield tank (protection warrior/paladin): stamina to survive, dodge/parry/defense/block to avoid and mitigate hits.
+        case GearProfile::StrStamDef: return { ITEM_MOD_STRENGTH, ITEM_MOD_STAMINA, ITEM_MOD_DODGE_RATING, ITEM_MOD_PARRY_RATING,
+            ITEM_MOD_DEFENSE_SKILL_RATING, ITEM_MOD_BLOCK_RATING };
+        // A feral tank druid: no shield, so no block/parry gear stat to chase (bear form has no parry either).
+        case GearProfile::AgiStamDef: return { ITEM_MOD_AGILITY, ITEM_MOD_STAMINA, ITEM_MOD_DODGE_RATING, ITEM_MOD_DEFENSE_SKILL_RATING };
         case GearProfile::StrStam:
         default:
             // profile 0 doubles as "no profile sent" (an old module build): fall back to the previous class-only rule.
