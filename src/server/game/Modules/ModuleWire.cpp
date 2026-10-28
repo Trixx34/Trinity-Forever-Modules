@@ -254,7 +254,8 @@ std::string EncodeEventNotifyItemLooted(std::string_view hookName, ItemLootedEve
     return out;
 }
 
-std::string EncodeEventNotifyAuctionListing(std::string_view hookName, AuctionListingEvent const& event)
+// The AuctionListingEvent message (events.proto), as the body of the notify and of ActionReply.listings.
+static std::string EncodeAuctionListingBody(AuctionListingEvent const& event)
 {
     std::string payload;
     AppendVarintField(payload, 1, event.AuctionGuid);
@@ -269,10 +270,24 @@ std::string EncodeEventNotifyAuctionListing(std::string_view hookName, AuctionLi
     AppendVarintField(payload, 9, event.TotalMatches);
     AppendVarintField(payload, 10, event.PlayerGuid);
     AppendVarintField(payload, 11, event.RequestId);
+    if (event.InventoryType)
+        AppendVarintField(payload, 12, event.InventoryType);
+    if (event.Quality)
+        AppendVarintField(payload, 13, event.Quality);
+    if (event.RequiredLevel)
+        AppendVarintField(payload, 14, event.RequiredLevel);
+    if (event.ItemLevel)
+        AppendVarintField(payload, 15, event.ItemLevel);
+    if (event.UpgradeScore)
+        AppendVarintField(payload, 16, event.UpgradeScore);
+    return payload;
+}
 
+std::string EncodeEventNotifyAuctionListing(std::string_view hookName, AuctionListingEvent const& event)
+{
     std::string out;
     AppendBytesField(out, 1, hookName);
-    AppendBytesField(out, static_cast<uint32>(NotifyKind::PlayerAuctionResult), payload);
+    AppendBytesField(out, static_cast<uint32>(NotifyKind::PlayerAuctionResult), EncodeAuctionListingBody(event));
     return out;
 }
 
@@ -674,7 +689,7 @@ bool Decode(std::string_view bytes, ActionRequestMsg& out)
         else if ((field == 18 || field == 19) && wire == WireLengthDelimited)
         {
             // BuyItemAction (18): vendor_guid=1, item_entry=2, count=3.
-            // AuctionHouseAction (19): op=1, auctioneer_guid=2, item_guid=3, auction_guid=4, item_entry=5, count=6, bid=7, buyout=8.
+            // AuctionHouseAction (19): op=1, auctioneer_guid=2, item_guid=3, auction_guid=4, item_entry=5, count=6, bid=7, buyout=8, player_guid=9, then 10 to 15 (the filter).
             std::string_view actionBytes;
             if (!r.ReadBytes(actionBytes))
                 return false;
@@ -759,6 +774,21 @@ bool Decode(std::string_view bytes, ActionRequestMsg& out)
                     if (!a.ReadVarint(value))
                         return false;
                     out.PlayerGuid = value; // player_guid: the bot acting (a browse's searcher, a bid's buyer)
+                }
+                else if (field == 19 && af >= 10 && af <= 15 && aw == WireVarint)
+                {
+                    // the browse by filter (protocol 19): inventory_type=10, min_level=11, max_level=12, max_results=13, max_buyout=14, only_upgrades=15
+                    if (!a.ReadVarint(value))
+                        return false;
+                    switch (af)
+                    {
+                        case 10: out.AuctionInventoryType = static_cast<uint32>(value); break;
+                        case 11: out.AuctionMinLevel = static_cast<uint32>(value); break;
+                        case 12: out.AuctionMaxLevel = static_cast<uint32>(value); break;
+                        case 13: out.AuctionMaxResults = static_cast<uint32>(value); break;
+                        case 14: out.AuctionMaxBuyout = static_cast<uint32>(value); break;
+                        default: out.AuctionOnlyUpgrades = value != 0; break;
+                    }
                 }
                 else if (!a.Skip(aw))
                     return false;
@@ -997,6 +1027,8 @@ std::string Encode(ActionReplyMsg const& msg)
             AppendBytesField(body, 4, item.Name);
         AppendBytesField(out, 12, body);
     }
+    for (AuctionListingEvent const& listing : msg.Listings)
+        AppendBytesField(out, 13, EncodeAuctionListingBody(listing));
     return out;
 }
 

@@ -844,6 +844,36 @@ uint32 EquipBagUpgrades(Player& bot)
     return equipped;
 }
 
+int32 BotGearUpgradeScore(Player& bot, ItemTemplate const& item)
+{
+    if (item.GetClass() != ITEM_CLASS_WEAPON && item.GetClass() != ITEM_CLASS_ARMOR)
+        return 0;
+    InventoryType const type = item.GetInventoryType();
+    uint8 const first = EquipSlotFor(type);
+    if (type == INVTYPE_BODY || first == NULL_SLOT)
+        return 0;
+    if (item.GetBaseRequiredLevel() > int32(bot.GetLevel()) || bot.CanUseItem(&item) != EQUIP_ERR_OK || ArmorTooHeavy(bot, item))
+        return 0;
+    // A two-hander would also take the off hand out of use: no judgement, no purchase.
+    if (type == INVTYPE_2HWEAPON && bot.GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_OFFHAND))
+        return 0;
+
+    // Where the item goes: one slot, or the weaker of the two for rings and trinkets (an empty one first).
+    Item* worn = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, first);
+    if ((type == INVTYPE_FINGER || type == INVTYPE_TRINKET) && worn)
+    {
+        Item* second = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, uint8(first + 1));
+        if (!second || second->GetTemplate()->GetBaseItemLevel() < worn->GetTemplate()->GetBaseItemLevel())
+            worn = second;
+    }
+    if (worn && worn->GetTemplate()->GetBaseItemLevel() >= item.GetBaseItemLevel())
+        return 0;
+
+    std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile::StrStam);
+    int32 const gain = GearScore(preferred, item) - (worn ? GearScore(preferred, *worn->GetTemplate()) : 0);
+    return gain > 0 ? gain : 0;
+}
+
 BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
 {
     // spell_id bit 2: only wear what is better in the bags (EquipBagUpgrades), no pass over the item pool. The module asks for this on its own

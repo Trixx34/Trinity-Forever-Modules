@@ -20,6 +20,8 @@
 #include "CharacterCache.h"
 #include "CreatureData.h"
 #include "CellImpl.h"
+#include "GameTime.h"
+#include "ModuleBotActions.h"
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
 #include "Player.h"
@@ -366,6 +368,82 @@ void BuyItemAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg const& re
     reply.Success = true;
 }
 
+// A browse by filter (protocol 19; SDK AuctionHouseAction.inventory_type): the listings of one inventory type that the bot could buy outright, cheapest
+// buyout first, in the reply. A listing needs a buyout, is not the bot's own and is not a stack (the stack is one commodity). The score says how much
+// better the item is than what the bot wears there (BotGearUpgradeScore); only_upgrades drops the listings with none. The score is worked out for the
+// cheapest listings only, until the limit is met, since it asks the bot about each item.
+void BrowseAuctionsByFilter(Player& bot, AuctionHouseObject* ah, ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply)
+{
+    constexpr uint32 DefaultResults = 10;
+    constexpr uint32 MaxResults = 50;
+    uint32 const limit = request.AuctionMaxResults ? std::min(request.AuctionMaxResults, MaxResults) : DefaultResults;
+
+    struct Match
+    {
+        AuctionPosting const* Posting;
+        ItemTemplate const* Proto;
+        uint64 Buyout;
+    };
+    std::vector<Match> matches;
+    for (auto it = ah->GetAuctionsBegin(); it != ah->GetAuctionsEnd(); ++it)
+    {
+        AuctionPosting const& posting = it->second;
+        if (posting.Items.empty() || !posting.BuyoutOrUnitPrice || posting.IsCommodity())
+            continue;
+        if (posting.Owner == bot.GetGUID() || posting.OwnerAccount == bot.GetSession()->GetAccountGUID())
+            continue;
+        ItemTemplate const* proto = posting.Items[0]->GetTemplate();
+        if (!proto || uint32(proto->GetInventoryType()) != request.AuctionInventoryType)
+            continue;
+        int32 const required = proto->GetBaseRequiredLevel();
+        if ((request.AuctionMinLevel && required < int32(request.AuctionMinLevel)) || (request.AuctionMaxLevel && required > int32(request.AuctionMaxLevel)))
+            continue;
+        if (request.AuctionMaxBuyout && posting.BuyoutOrUnitPrice > request.AuctionMaxBuyout)
+            continue;
+        matches.push_back({ &posting, proto, posting.BuyoutOrUnitPrice });
+    }
+    std::sort(matches.begin(), matches.end(), [](Match const& a, Match const& b)
+    {
+        return a.Buyout != b.Buyout ? a.Buyout < b.Buyout : a.Posting->Id < b.Posting->Id;
+    });
+
+    uint32 const total = static_cast<uint32>(matches.size());
+    auto const now = GameTime::GetSystemTime();
+    for (Match const& match : matches)
+    {
+        if (reply.Listings.size() >= limit)
+            break;
+        uint32 const score = static_cast<uint32>(BotGearUpgradeScore(bot, *match.Proto));
+        if (request.AuctionOnlyUpgrades && !score)
+            continue;
+
+        AuctionPosting const& posting = *match.Posting;
+        ModuleWire::AuctionListingEvent event;
+        event.AuctionGuid = posting.Id;
+        event.ItemEntry = match.Proto->GetId();
+        event.Count = posting.GetTotalItemCount();
+        event.Bid = posting.BidAmount;
+        event.Buyout = match.Buyout;
+        int64 const leftMs = std::chrono::duration_cast<std::chrono::milliseconds>(posting.EndTime - now).count();
+        event.TimeLeftMin = leftMs > 0 ? static_cast<uint32>(leftMs / 60000) : 0;
+        std::string sellerName;
+        sCharacterCache->GetCharacterNameByGuid(posting.Owner, sellerName);
+        event.Seller = sellerName;
+        event.TotalMatches = total;
+        event.PlayerGuid = request.PlayerGuid;
+        event.RequestId = request.MessageId;
+        event.InventoryType = request.AuctionInventoryType;
+        event.Quality = match.Proto->GetQuality();
+        event.RequiredLevel = match.Proto->GetBaseRequiredLevel() > 0 ? static_cast<uint32>(match.Proto->GetBaseRequiredLevel()) : 0;
+        event.ItemLevel = match.Proto->GetBaseItemLevel();
+        event.UpgradeScore = score;
+        reply.Listings.push_back(std::move(event));
+    }
+    reply.Success = true;
+    TC_LOG_DEBUG("modules.actions", "browsed auctions by filter (inventory type {}): {} candidate(s), {} returned", request.AuctionInventoryType, total,
+                 reply.Listings.size());
+}
+
 void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply)
 {
     switch (request.AuctionOp)
@@ -382,6 +460,19 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
                 return;
             }
             AuctionHouseObject* ah = sAuctionMgr->GetAuctionsMap(auctioneer->GetCreatureTemplate()->faction);
+
+            // A browse by filter (no item entry, an inventory type) answers in the reply for the acting bot; the item entry browse below is unchanged.
+            if (!request.ItemEntry && request.AuctionInventoryType)
+            {
+                // The buyout needs the bot at the auctioneer, so a browse for a purchase does too (and a bot far away costs no scan of the house).
+                if (!browser->GetNPCIfCanInteractWith(auctioneer->GetGUID(), UNIT_NPC_FLAG_AUCTIONEER, UNIT_NPC_FLAG_2_NONE))
+                {
+                    reply.Reason = "auctioneer not found or cannot interact with it";
+                    return;
+                }
+                BrowseAuctionsByFilter(*browser, ah, request, reply);
+                return;
+            }
 
             // The locale comes from the player who asked, who must be on the auctioneer's map.
             Player* anyPlayer = browser;
@@ -475,6 +566,28 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
                                       ? (request.Buyout ? request.Buyout : request.Bid)
                                       : request.Bid;
             placeBid.BidAmount = amount;
+
+            // The place-bid handler refuses silently, so the reasons that can be known first are given here.
+            if (request.AuctionOp == 2)
+            {
+                bool const stack = auction->IsCommodity();
+                uint64 const buyoutPrice = stack ? auction->BuyoutOrUnitPrice * auction->GetTotalItemCount() : auction->BuyoutOrUnitPrice;
+                if (!auction->BuyoutOrUnitPrice)
+                {
+                    reply.Reason = "auction has no buyout";
+                    return;
+                }
+                if (amount != buyoutPrice && !(stack && amount == auction->BuyoutOrUnitPrice))
+                {
+                    reply.Reason = "buyout price changed";
+                    return;
+                }
+            }
+            if (auction->Bidder != player->GetGUID() && !player->HasEnoughMoney(uint64(amount)))
+            {
+                reply.Reason = "not enough money";
+                return;
+            }
 
             uint64 before = player->GetMoney();
             player->GetSession()->HandleAuctionPlaceBid(placeBid);
