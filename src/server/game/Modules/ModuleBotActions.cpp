@@ -1,4 +1,5 @@
 #include "ModuleBotActions.h"
+#include "ModuleGroupRules.h"
 #include "ModuleMgr.h"
 #include "BotProfessions.h"
 #include "BotTaxi.h"
@@ -1458,10 +1459,17 @@ BotActionStatus AssignSubgroup(Player& bot, uint64 targetRef, uint8 subgroup, st
         reason = "subgroup assign target is not in the bot's raid";
         return BotActionStatus::kInvalidTarget;
     }
-    if (!group->HasFreeSlotSubGroup(subgroup))
+    // The policy retries a subgroup assignment until it observes the result on a later snapshot. Classify the existing
+    // membership before capacity: an already-correct assignment must succeed even when its subgroup is full.
+    switch (ModuleGroupRules::ClassifySubgroupMove(group->GetMemberGroup(target->GetGUID()), subgroup, group->HasFreeSlotSubGroup(subgroup)))
     {
-        reason = "subgroup is full";
-        return BotActionStatus::kRefused;
+        case ModuleGroupRules::SubgroupMove::AlreadyAssigned:
+            return BotActionStatus::kApplied;
+        case ModuleGroupRules::SubgroupMove::Full:
+            reason = "subgroup is full";
+            return BotActionStatus::kRefused;
+        case ModuleGroupRules::SubgroupMove::Move:
+            break;
     }
     group->ChangeMembersGroup(target->GetGUID(), subgroup);
     return BotActionStatus::kApplied;
@@ -2663,7 +2671,18 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
                 // the existing generic kGroup fields the same way kVendor/kPetCommand already overload spell_id, so
                 // this needed no SDK protocol bump (the BotAction struct itself is unchanged).
                 case 4: status = ConvertGroupToRaid(bot, reason); break;
-                case 5: status = AssignSubgroup(bot, action.target_guid, static_cast<uint8>(action.dest_x), reason); break;
+                case 5:
+                {
+                    uint8 subgroup = 0;
+                    if (!ModuleGroupRules::TryDecodeSubgroup(action.dest_x, MAX_RAID_SUBGROUPS, subgroup))
+                    {
+                        reason = "subgroup out of range or not an integer";
+                        status = BotActionStatus::kInvalidTarget;
+                        break;
+                    }
+                    status = AssignSubgroup(bot, action.target_guid, subgroup, reason);
+                    break;
+                }
                 default: reason = "unknown party action " + std::to_string(action.spell_id); break;
             }
             // Diagnostic: the bot module only sees "refused", so the reason is logged here.
