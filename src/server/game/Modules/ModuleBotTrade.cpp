@@ -1,5 +1,6 @@
 #include "ModuleBotTrade.h"
 #include "BotMgr.h"
+#include "BotTalentSpec.h"
 #include "Config.h"
 #include "Item.h"
 #include "ItemTemplate.h"
@@ -161,15 +162,25 @@ void ExecuteSpeak(ModuleWire::ActionRequestMsg const& request, ModuleWire::Actio
 
 void ExecuteSpendTalents(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module)
 {
-    if (request.TalentRole > 3)
+    if (request.TalentRole > BotTalentSpec::LastRole)
     {
         reply.Reason = "role must be 0 to 3";
+        return;
+    }
+    if (request.TalentSpec > BotTalentSpec::LastSpec)
+    {
+        reply.Reason = "spec must be 0 to 28";
         return;
     }
     Player* bot = FindControlledBot(request.BotGuid, module, reply);
     if (!bot)
         return;
-    if (char const* why = BotMgr::SetTalentRole(*bot, static_cast<uint8>(request.TalentRole)))
+    if (request.TalentSpec && BotTalentSpec::Get(request.TalentSpec)->ClassId != bot->GetClass())
+    {
+        reply.Reason = "the spec does not belong to the bot's class";
+        return;
+    }
+    if (char const* why = BotMgr::SetTalentRole(*bot, static_cast<uint8>(request.TalentRole), static_cast<uint8>(request.TalentSpec)))
     {
         reply.Reason = why;
         return;

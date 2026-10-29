@@ -1958,10 +1958,13 @@ Bot.Limit.MaxDbQueue = 5000
 #    Bot.Talents.Profiles
 #        Default:     ""
 #        Path of a talent profile file (scripts/gen-talent-profile-file.py in forever-ops), read once at startup. One line per
-#        "<classId> <tank|healer|dps> <nodeId>:<ranks>,...": the node ids are server ids (Bot.Dump.Talents). A bot whose module
-#        has said its role (SpendBotTalentsAction) spends its points along the profile for its (class, role), in order, as far as
-#        its level allows; with no profile for it, the greedy allocator above runs. While this is set, a bot spends no talents at
-#        level-up until its module has said its role. Points already spent are never taken back (no respec yet).
+#        "<classId> <key> <nodeId>:<ranks>,...": the node ids are server ids (Bot.Dump.Talents). The key is a role (tank, healer,
+#        dps) or one of the class's spec keys (protocol 18): warrior arms fury prot; paladin holy prot ret; hunter bm mm sv; rogue
+#        assassination combat subtlety; priest disc holy shadow; shaman ele enh resto; mage arcane fire frost; warlock affliction
+#        demonology destruction; druid balance feral_tank feral_cat resto. A bot whose module has said its role and spec
+#        (SpendBotTalentsAction) spends its points along the profile for its (class, spec), else its (class, role), in order, as far
+#        as its level allows; with neither, the greedy allocator above runs. While this is set, a bot spends no talents at level-up
+#        until its module has said its role. Points already spent are never taken back (no respec yet).
 #
 #    Bot.Talents.PointsPerLevelOffset
 #        Default:     9
@@ -1998,6 +2001,31 @@ Bot.Loot.Roll.GreedOnOther = 0
 Bot.Learn.TrainerSpells = 1
 Bot.Learn.CombatSkills = 1
 Bot.Learn.Talents = 1
+
+#    Bot.Hunter.PetGrant
+#        Default:     1
+#        A hunter bot of level 10 or more with no pet that did not tame one within Bot.Hunter.PetGraceSec seconds (counted from when it was
+#        first seen without one, out of combat) is given a pet: a beast of Bot.Hunter.PetEntries picked at random, at the owner's level.
+#        The module's taming (Tame Beast) comes first; this is the fallback. 0 = never.
+#
+#    Bot.Hunter.PetGraceSec
+#        Default:     120
+#
+#    Bot.Hunter.PetEntries
+#        Default:     "3425,2069,3243,2071,2237"
+#        Creature entries (beasts, comma separated) a granted pet is picked from; entries with no creature template are ignored.
+#        The default is cats (Savannah Prowler, Moonstalker, Savannah Highmane, Moonstalker Matriarch, Moonstalker Sire).
+
+Bot.Hunter.PetGrant = 1
+Bot.Hunter.PetGraceSec = 120
+Bot.Hunter.PetEntries = "3425,2069,3243,2071,2237"
+
+#    Bot.Pet.NoUpkeep
+#        Default:     1
+#        A hunter bot's pet loses no happiness and no loyalty (a bot never feeds it). Without this the pet of a bot turns unhappy
+#        after about half an hour and, being Rebellious after the taming, runs away for good ten minutes later. 0 = vanilla rules.
+
+Bot.Pet.NoUpkeep = 1
 
 #    Bot.Dump.Abilities
 #        Default:     0
@@ -3620,6 +3648,24 @@ Network.SkipBuildAuthKeyCheck = 0
 #        Default:     1500
 
 Network.EnterEncryptedModeDelay = 1500
+
+#
+#    Network.ConnectionsPerIp
+#        Description: Open game connections allowed from one address. A player uses two (realm and instance). Connections
+#                     from this PC (127.0.0.1) are never limited. Raise it when many players share one internet address
+#                     (LAN party, one household).
+#        Default:     16
+#                     0 - (No limit)
+
+Network.ConnectionsPerIp = 16
+
+#
+#    Network.AuthTimeout
+#        Description: Seconds a new game connection has to log in before it is closed.
+#        Default:     60
+#                     0 - (No limit)
+
+Network.AuthTimeout = 60
 
 #
 ###################################################################################################

@@ -48,6 +48,23 @@ enum eAuctionHouse
     AH_MINIMUM_DEPOSIT = 100
 };
 
+// One line in the log for an auction that ends and belongs to a bot (a character logged in through the bot manager), so the bot economy can be
+// followed from the log. Only called when an auction completes; a bot that is not online is not logged.
+static void LogBotAuctionOutcome(AuctionPosting const* auction, char const* outcome, uint64 price)
+{
+    if (auction->Items.empty())
+        return;
+
+    Player const* owner = ObjectAccessor::FindConnectedPlayer(auction->Owner);
+    if (!owner || !owner->GetSession() || !owner->GetSession()->IsBot())
+        return;
+
+    if (price)
+        TC_LOG_INFO("server.worldserver", "BotMgr: bot {} auction {} item {} count {} price {}", owner->GetName(), outcome, auction->Items[0]->GetEntry(), auction->GetTotalItemCount(), price);
+    else
+        TC_LOG_INFO("server.worldserver", "BotMgr: bot {} auction {} item {} count {}", owner->GetName(), outcome, auction->Items[0]->GetEntry(), auction->GetTotalItemCount());
+}
+
 AuctionsBucketKey::AuctionsBucketKey(WorldPackets::AuctionHouse::AuctionBucketKey const& key) :
     ItemId(key.ItemID), ItemLevel(key.ItemLevel), BattlePetSpeciesId(key.BattlePetSpeciesID.value_or(0)),
     SuffixItemNameDescriptionId(key.ItemSuffix.value_or(0))
@@ -1680,6 +1697,10 @@ bool AuctionHouseObject::BuyCommodity(CharacterDatabaseTransaction trans, Player
             owner->GetSession()->SendAuctionClosedNotification(auction, (float)sWorld->getIntConfig(CONFIG_MAIL_DELIVERY_DELAY), true);
         }
 
+        if (Player const* seller = ObjectAccessor::FindConnectedPlayer(auction->Owner))
+            if (seller->GetSession() && seller->GetSession()->IsBot())
+                TC_LOG_INFO("server.worldserver", "BotMgr: bot {} auction sold item {} count {} price {}", seller->GetName(), itemId, boughtFromAuction, auction->BuyoutOrUnitPrice * boughtFromAuction);
+
         MailDraft(AuctionHouseMgr::BuildCommodityAuctionMailSubject(AuctionMailType::Sold, itemId, boughtFromAuction),
             AuctionHouseMgr::BuildAuctionSoldMailBody(player->GetGUID(), auction->BuyoutOrUnitPrice * boughtFromAuction, boughtFromAuction, depositPart, auctionHouseCut))
             .AddMoney(profit)
@@ -1834,6 +1855,8 @@ void AuctionHouseObject::SendAuctionWon(AuctionPosting const* auction, Player* b
 //call this method to send mail to auction owner, when auction is successful, it does not clear ram
 void AuctionHouseObject::SendAuctionSold(AuctionPosting const* auction, Player* owner, CharacterDatabaseTransaction trans) const
 {
+    LogBotAuctionOutcome(auction, "sold", auction->BidAmount);
+
     if (!owner)
         owner = ObjectAccessor::FindConnectedPlayer(auction->Owner);
 
@@ -1861,6 +1884,8 @@ void AuctionHouseObject::SendAuctionSold(AuctionPosting const* auction, Player* 
 
 void AuctionHouseObject::SendAuctionExpired(AuctionPosting const* auction, CharacterDatabaseTransaction trans) const
 {
+    LogBotAuctionOutcome(auction, "expired", 0);
+
     Player* owner = ObjectAccessor::FindConnectedPlayer(auction->Owner);
     // owner exist
     if ((owner || sCharacterCache->HasCharacterCacheEntry(auction->Owner)) && !sAuctionBotConfig->IsBotChar(auction->Owner))
@@ -1892,6 +1917,8 @@ void AuctionHouseObject::SendAuctionExpired(AuctionPosting const* auction, Chara
 
 void AuctionHouseObject::SendAuctionRemoved(AuctionPosting const* auction, Player* owner, CharacterDatabaseTransaction trans) const
 {
+    LogBotAuctionOutcome(auction, "cancelled", 0);
+
     auto itemItr = auction->Items.begin();
     while (itemItr != auction->Items.end())
     {

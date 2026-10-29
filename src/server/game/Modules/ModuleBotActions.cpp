@@ -694,16 +694,35 @@ bool ArmorTooHeavy(Player const& bot, ItemTemplate const& item)
     return BotGearRules::ArmorTooHeavy(bot.GetClass(), bot.GetLevel(), item.GetClass(), item.GetSubClass(), item.GetInventoryType());
 }
 
-// What a class wants from its gear, as item-mod stats: the stats it uses, in no order.
-std::vector<int32> PreferredStats(uint8 classId)
+// What a class wants from its gear, as item-mod stats: the stats it uses, in no order. `profile` (bits 2-4 of AutoGearAction's
+// flags, from MOD-Forever-Bots' combat_rotation.cpp GearProfileFor) is spec-aware when the module sent one; 0 is also the
+// encoding a module build that predates this falls back to, so it still gets this class's old, class-only default.
+enum class GearProfile : uint32 { StrStam = 0, AgiStam = 1, IntSpiritStam = 2, IntCrit = 3, IntSpiritHaste = 4, StrStamDef = 5, AgiStamDef = 6 };
+
+std::vector<int32> PreferredStats(uint8 classId, GearProfile profile)
 {
-    switch (classId)
+    switch (profile)
     {
-        case CLASS_WARRIOR:
-        case CLASS_PALADIN: return { ITEM_MOD_STRENGTH, ITEM_MOD_STAMINA };
-        case CLASS_HUNTER: return { ITEM_MOD_AGILITY, ITEM_MOD_STAMINA };
-        case CLASS_ROGUE: return { ITEM_MOD_AGILITY, ITEM_MOD_STRENGTH, ITEM_MOD_STAMINA };
-        default: return { ITEM_MOD_INTELLECT, ITEM_MOD_SPIRIT, ITEM_MOD_STAMINA }; // priest, shaman, mage, warlock, druid
+        case GearProfile::AgiStam: return { ITEM_MOD_AGILITY, ITEM_MOD_STAMINA };
+        case GearProfile::IntCrit: return { ITEM_MOD_INTELLECT, ITEM_MOD_CRIT_RATING, ITEM_MOD_STAMINA };
+        case GearProfile::IntSpiritHaste: return { ITEM_MOD_INTELLECT, ITEM_MOD_SPIRIT, ITEM_MOD_HASTE_RATING, ITEM_MOD_STAMINA };
+        case GearProfile::IntSpiritStam: return { ITEM_MOD_INTELLECT, ITEM_MOD_SPIRIT, ITEM_MOD_STAMINA };
+        // A shield tank (protection warrior/paladin): stamina to survive, dodge/parry/defense/block to avoid and mitigate hits.
+        case GearProfile::StrStamDef: return { ITEM_MOD_STRENGTH, ITEM_MOD_STAMINA, ITEM_MOD_DODGE_RATING, ITEM_MOD_PARRY_RATING,
+            ITEM_MOD_DEFENSE_SKILL_RATING, ITEM_MOD_BLOCK_RATING };
+        // A feral tank druid: no shield, so no block/parry gear stat to chase (bear form has no parry either).
+        case GearProfile::AgiStamDef: return { ITEM_MOD_AGILITY, ITEM_MOD_STAMINA, ITEM_MOD_DODGE_RATING, ITEM_MOD_DEFENSE_SKILL_RATING };
+        case GearProfile::StrStam:
+        default:
+            // profile 0 doubles as "no profile sent" (an old module build): fall back to the previous class-only rule.
+            switch (classId)
+            {
+                case CLASS_WARRIOR:
+                case CLASS_PALADIN: return { ITEM_MOD_STRENGTH, ITEM_MOD_STAMINA };
+                case CLASS_HUNTER: return { ITEM_MOD_AGILITY, ITEM_MOD_STAMINA };
+                case CLASS_ROGUE: return { ITEM_MOD_AGILITY, ITEM_MOD_STRENGTH, ITEM_MOD_STAMINA };
+                default: return { ITEM_MOD_INTELLECT, ITEM_MOD_SPIRIT, ITEM_MOD_STAMINA }; // priest, shaman, mage, warlock, druid
+            }
     }
 }
 
@@ -825,6 +844,36 @@ uint32 EquipBagUpgrades(Player& bot)
     return equipped;
 }
 
+int32 BotGearUpgradeScore(Player& bot, ItemTemplate const& item)
+{
+    if (item.GetClass() != ITEM_CLASS_WEAPON && item.GetClass() != ITEM_CLASS_ARMOR)
+        return 0;
+    InventoryType const type = item.GetInventoryType();
+    uint8 const first = EquipSlotFor(type);
+    if (type == INVTYPE_BODY || first == NULL_SLOT)
+        return 0;
+    if (item.GetBaseRequiredLevel() > int32(bot.GetLevel()) || bot.CanUseItem(&item) != EQUIP_ERR_OK || ArmorTooHeavy(bot, item))
+        return 0;
+    // A two-hander would also take the off hand out of use: no judgement, no purchase.
+    if (type == INVTYPE_2HWEAPON && bot.GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_OFFHAND))
+        return 0;
+
+    // Where the item goes: one slot, or the weaker of the two for rings and trinkets (an empty one first).
+    Item* worn = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, first);
+    if ((type == INVTYPE_FINGER || type == INVTYPE_TRINKET) && worn)
+    {
+        Item* second = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, uint8(first + 1));
+        if (!second || second->GetTemplate()->GetBaseItemLevel() < worn->GetTemplate()->GetBaseItemLevel())
+            worn = second;
+    }
+    if (worn && worn->GetTemplate()->GetBaseItemLevel() >= item.GetBaseItemLevel())
+        return 0;
+
+    std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile::StrStam);
+    int32 const gain = GearScore(preferred, item) - (worn ? GearScore(preferred, *worn->GetTemplate()) : 0);
+    return gain > 0 ? gain : 0;
+}
+
 BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
 {
     // spell_id bit 2: only wear what is better in the bags (EquipBagUpgrades), no pass over the item pool. The module asks for this on its own
@@ -842,6 +891,11 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
         reason = "bot is in combat";
         return BotActionStatus::kRefused;
     }
+    if (bot.IsCharmed())
+    {
+        reason = "bot is charmed";
+        return BotActionStatus::kRefused;
+    }
     if (sBotMgr->IsActiveAlt(bot.GetGUID().GetCounter()))
     {
         reason = "an alt is a player's own character and is not dressed";
@@ -853,8 +907,15 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
         return BotActionStatus::kApplied;
     }
 
+    // Player::CanEquipItem refuses every item (EQUIP_ERR_CLIENT_LOCKED_OUT) while a non-instant generic or channeled spell is
+    // mid-cast, the same guard the real client's UI enforces. A bot has no client round-trip to clear this after an interrupted
+    // or aborted cast, so without this a bot could get stuck failing every single gear pick, forever, with no further sign of
+    // why beyond "equip_error=40" in the log (2026-10-28: this is exactly what was seen -- every pick for one bot failed this
+    // way). IsInCombat() above does not cover it: a cast can outlast combat ending, or start and abort outside combat entirely.
+    bot.InterruptNonMeleeSpells(true);
+
     bool const tank = (flags & 1) != 0;
-    std::vector<int32> const preferred = PreferredStats(bot.GetClass());
+    std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile((flags >> 2) & 7));
     std::map<uint8, GearPick> bySlot;          // armour and ranged, by equipment slot
     GearPick twoHand, shield, holdable;
     std::vector<std::pair<int32, ItemTemplate const*>> oneHand;   // main-hand weapons (one-hand, main hand)
@@ -1338,6 +1399,72 @@ BotActionStatus LeaveParty(Player& bot, std::string& reason)
     }
     reason = "bot is not in a party";
     return BotActionStatus::kRefused;
+}
+
+// 40-man raid support (doc 108): converts the bot's own party to a raid (Group::ConvertToRaid, already fully
+// implemented -- GROUP_FLAG_RAID, the 8 subgroup counters, persistence, the client notice). Only the leader or an
+// assistant may do it, same as an invite. Idempotent: asking again once it is already a raid is not an error, since
+// the module polls membership each tick and may see its own earlier success a tick late.
+BotActionStatus ConvertGroupToRaid(Player& bot, std::string& reason)
+{
+    Group* group = bot.GetGroup();
+    if (!group)
+    {
+        reason = "bot is not in a party";
+        return BotActionStatus::kRefused;
+    }
+    if (!group->IsLeader(bot.GetGUID()) && !group->IsAssistant(bot.GetGUID()))
+    {
+        reason = "bot is not the party leader";
+        return BotActionStatus::kRefused;
+    }
+    if (group->isRaidGroup())
+        return BotActionStatus::kApplied;
+    group->ConvertToRaid();
+    return BotActionStatus::kApplied;
+}
+
+// 40-man raid support (doc 108): moves the player named by targetRef into the given subgroup (0-7) of the bot's own
+// raid, via Group::ChangeMembersGroup -- the same engine call the client's raid-roster drag does. Only the raid
+// leader or an assistant may reassign a member, and only within a group that is already a raid (a 5-man party has
+// one subgroup and nothing to assign).
+BotActionStatus AssignSubgroup(Player& bot, uint64 targetRef, uint8 subgroup, std::string& reason)
+{
+    if (subgroup >= MAX_RAID_SUBGROUPS)
+    {
+        reason = "subgroup out of range";
+        return BotActionStatus::kInvalidTarget;
+    }
+    Group* group = bot.GetGroup();
+    if (!group || !group->isRaidGroup())
+    {
+        reason = "bot is not in a raid group";
+        return BotActionStatus::kRefused;
+    }
+    if (!group->IsLeader(bot.GetGUID()) && !group->IsAssistant(bot.GetGUID()))
+    {
+        reason = "bot is not the raid leader";
+        return BotActionStatus::kRefused;
+    }
+    if (forever_module::UnitRefType(targetRef) != uint8(HighGuid::Player))
+    {
+        reason = "subgroup assign target is not a player";
+        return BotActionStatus::kInvalidTarget;
+    }
+    uint32 const counter = forever_module::UnitRefCounter(targetRef);
+    Player* target = ObjectAccessor::FindPlayerByLowGUID(counter);
+    if (!target || !group->IsMember(target->GetGUID()))
+    {
+        reason = "subgroup assign target is not in the bot's raid";
+        return BotActionStatus::kInvalidTarget;
+    }
+    if (!group->HasFreeSlotSubGroup(subgroup))
+    {
+        reason = "subgroup is full";
+        return BotActionStatus::kRefused;
+    }
+    group->ChangeMembersGroup(target->GetGUID(), subgroup);
+    return BotActionStatus::kApplied;
 }
 
 // Loots a corpse the way the client does: through the bot's own session handlers (open the loot, take each item, take the money,
@@ -2532,6 +2659,11 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
                 case 1: status = InviteToParty(bot, action.target_guid, reason, module); break;
                 case 2: status = AcceptPartyInvite(bot, reason); break;
                 case 3: status = LeaveParty(bot, reason); break;
+                // 4/5: 40-man raid support (doc 108). No new ActionType or wire field: spell_id 4 and dest_x reuse
+                // the existing generic kGroup fields the same way kVendor/kPetCommand already overload spell_id, so
+                // this needed no SDK protocol bump (the BotAction struct itself is unchanged).
+                case 4: status = ConvertGroupToRaid(bot, reason); break;
+                case 5: status = AssignSubgroup(bot, action.target_guid, static_cast<uint8>(action.dest_x), reason); break;
                 default: reason = "unknown party action " + std::to_string(action.spell_id); break;
             }
             // Diagnostic: the bot module only sees "refused", so the reason is logged here.

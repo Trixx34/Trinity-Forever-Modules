@@ -7,7 +7,7 @@ UPDATE `gameobject_template` SET `Data0` = 0 WHERE `entry` = 623295 AND `type` =
 
 DELETE FROM `conditions`
 WHERE `SourceTypeOrReferenceId` = 15 AND `SourceGroup` = 42472 AND `SourceEntry` = 0
-  AND `SourceId` = 0 AND `ConditionTypeOrReference` = 47 AND `ConditionValue1` = 94897;
+  AND `SourceId` = 0 AND `ConditionTypeOrReference` IN (47, 2);
 INSERT INTO `conditions`
   (`SourceTypeOrReferenceId`,`SourceGroup`,`SourceEntry`,`SourceId`,`ElseGroup`,
    `ConditionTypeOrReference`,`ConditionTarget`,`ConditionValue1`,`ConditionValue2`,

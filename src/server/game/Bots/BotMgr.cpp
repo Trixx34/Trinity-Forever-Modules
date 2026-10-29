@@ -4,6 +4,7 @@
 
 #include "BotMgr.h"
 #include "BotProfessions.h"
+#include "BotTalentSpec.h"
 #include "BotTaxi.h"
 #include "AccountMgr.h"
 #include "CharacterCache.h"
@@ -22,6 +23,7 @@
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
+#include "Pet.h"
 #include "Player.h"
 #include "RealmList.h"
 #include "Random.h"
@@ -274,10 +276,12 @@ void DumpTalents(std::string const& path)
     TC_LOG_INFO("server.worldserver", "BotMgr: wrote {} talent node entries to {}", lines, path);
 }
 
-// Talent profiles (Bot.Talents.Profiles, a file from scripts/gen-talent-profile-file.py): one line per (class id, role),
-// "<classId> <role> <nodeId>:<ranks>,<nodeId>:<ranks>,...", read once at startup. Roles are 1 tank, 2 healer, 3 dps.
+// Talent profiles (Bot.Talents.Profiles, a file from scripts/gen-talent-profile-file.py): one line per (class id, key),
+// "<classId> <key> <nodeId>:<ranks>,<nodeId>:<ranks>,...", read once at startup. The key is a role (tank, healer, dps) or, since protocol 18, one of the
+// class's spec keys (BotTalentSpec.h: arms, bm, feral_cat, ...). The map key is the pair (class id, BotTalentSpec profile key byte).
 std::map<std::pair<uint32, uint8>, std::vector<TraitMgr::ProfileStep>> g_talentProfiles;
-std::unordered_map<uint64, uint8> g_talentRoles; // bot guid counter -> the role a module last gave it (world thread only)
+// bot guid counter -> the (role, spec) a module last gave it (world thread only)
+std::unordered_map<uint64, std::pair<uint8, uint8>> g_talentRoles;
 
 void LoadTalentProfiles(std::string const& path)
 {
@@ -296,11 +300,11 @@ void LoadTalentProfiles(std::string const& path)
             continue;
         std::vector<std::string_view> const parts = Trinity::Tokenize(line, ' ', false);
         Optional<uint32> const classId = parts.size() == 3 ? Trinity::StringTo<uint32>(parts[0]) : Optional<uint32>();
-        uint8 role = 0;
-        if (parts.size() == 3)
-            role = parts[1] == "tank" ? 1 : parts[1] == "healer" ? 2 : parts[1] == "dps" ? 3 : 0;
+        uint8 key = 0;
+        if (classId && *classId)
+            key = BotTalentSpec::ProfileKeyFromName(*classId, parts[1]);
         std::vector<TraitMgr::ProfileStep> steps;
-        bool ok = classId && *classId && role;
+        bool ok = classId && *classId && key;
         if (ok)
         {
             for (std::string_view step : Trinity::Tokenize(parts[2], ',', false))
@@ -319,10 +323,10 @@ void LoadTalentProfiles(std::string const& path)
         }
         if (!ok)
         {
-            TC_LOG_ERROR("server.worldserver", "BotMgr: {} line {} is not '<classId> <tank|healer|dps> <node>:<ranks>,...', skipped", path, lineNo);
+            TC_LOG_ERROR("server.worldserver", "BotMgr: {} line {} is not '<classId> <tank|healer|dps|a spec key of that class> <node>:<ranks>,...', skipped", path, lineNo);
             continue;
         }
-        g_talentProfiles[{ *classId, role }] = std::move(steps);
+        g_talentProfiles[{ *classId, key }] = std::move(steps);
     }
     TC_LOG_INFO("server.worldserver", "BotMgr: loaded {} talent profile(s) from {}", g_talentProfiles.size(), path);
 }
@@ -348,6 +352,13 @@ void BotMgr::LoadRegistry()
     _loginTimeoutMs = uint32(std::max<int32>(1000, sConfigMgr->GetIntDefault("Bot.Login.TimeoutMs", 60000)));
     _reloginDelayMs = uint32(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Relogin.DelayMs", 2000)));
     _mailCollect = sConfigMgr->GetBoolDefault("Bot.Mail.Collect", true);
+    _hunterPetGrant = sConfigMgr->GetBoolDefault("Bot.Hunter.PetGrant", true);
+    _hunterPetGraceMs = uint32(std::clamp<int32>(sConfigMgr->GetIntDefault("Bot.Hunter.PetGraceSec", 120), 0, 3600)) * 1000;
+    _hunterPetEntries.clear();
+    std::string const petEntries = sConfigMgr->GetStringDefault("Bot.Hunter.PetEntries", "3425,2069,3243,2071,2237");
+    for (std::string_view token : Trinity::Tokenize(petEntries, ',', false))
+        if (Optional<uint32> const entry = Trinity::StringTo<uint32>(token); entry && sObjectMgr->GetCreatureTemplate(*entry))
+            _hunterPetEntries.push_back(*entry);
     _mailCollectEveryMs = uint32(std::clamp<int32>(sConfigMgr->GetIntDefault("Bot.Mail.CollectEverySec", 30), 5, 3600)) * 1000;
     _spreadSpacing = std::max(0.0f, sConfigMgr->GetFloatDefault("Bot.Spread.SpacingYards", 3.0f));
     _spreadMaxRadius = std::max(0.0f, sConfigMgr->GetFloatDefault("Bot.Spread.MaxRadiusYards", 200.0f));
@@ -839,6 +850,56 @@ void BotMgr::Update(uint32 diff)
     ProcessLogins(diff);
     PumpTeleports();
     CollectMail();
+    GrantHunterPets();
+}
+
+// A hunter bot gets its pet by taming a beast (Tame Beast, a 20 s channel next to a wild beast), which a bot in a dungeon party hardly ever gets to do.
+// One that is still without a pet Bot.Hunter.PetGraceSec seconds after it was first seen so (level 10 or more, out of combat, in the world) is given one: a
+// beast of Bot.Hunter.PetEntries, picked at random, at the owner's level, saved as its current pet and brought out. Not for an alt (a player's own character).
+void BotMgr::GrantHunterPets()
+{
+    if (!_hunterPetGrant || _hunterPetEntries.empty() || _uptimeMs - _hunterPetCheckAtMs < 5000)
+        return;
+    _hunterPetCheckAtMs = _uptimeMs;
+    for (auto& [guid, bot] : _bots)
+    {
+        if (bot.State != BOT_ONLINE || !bot.Session || bot.Alt)
+            continue;
+        Player* player = bot.Session->GetPlayer();
+        if (!player || player->GetClass() != CLASS_HUNTER || player->GetLevel() < 10 || !player->IsInWorld() || !player->IsAlive() || player->IsInCombat() ||
+            player->IsBeingTeleported())
+            continue;
+        bool hasPet = !player->GetPetGUID().IsEmpty();
+        if (PetStable const* stable = player->GetPetStable())
+        {
+            hasPet = hasPet || stable->CurrentPetIndex.has_value();
+            for (Optional<PetStable::PetInfo> const& active : stable->ActivePets)
+                hasPet = hasPet || active.has_value();
+        }
+        if (hasPet)
+        {
+            _hunterNoPetSinceMs.erase(guid);
+            continue;
+        }
+        auto const [since, first] = _hunterNoPetSinceMs.try_emplace(guid, _uptimeMs);
+        if (_uptimeMs - since->second < _hunterPetGraceMs)
+            continue;
+        uint32 const entry = _hunterPetEntries[urand(0, uint32(_hunterPetEntries.size()) - 1)];
+        Pet* pet = player->CreateTamedPetFrom(entry, 0);
+        if (!pet)
+        {
+            TC_LOG_ERROR("server.worldserver", "BotMgr: hunter {} could not be given a pet (creature {})", player->GetName(), entry);
+            since->second = _uptimeMs;   // try again after another grace period
+            continue;
+        }
+        // what Spell::EffectTameCreature does once the pet exists
+        pet->GetMap()->AddToMap(pet->ToCreature());
+        player->SetMinion(pet, true);
+        pet->SavePetToDB(PET_SAVE_AS_CURRENT);
+        player->PetSpellInitialize();
+        _hunterNoPetSinceMs.erase(guid);
+        TC_LOG_INFO("server.worldserver", "BotMgr: hunter {} was given a pet (creature {}, level {}) after {} s without one.", player->GetName(), entry, player->GetLevel(), _hunterPetGraceMs / 1000);
+    }
 }
 
 // What an auction pays a bot arrives as mail (the sale of a listing, an item it bought, a listing that ran out). Nothing opens a mailbox for a bot, so
@@ -1069,11 +1130,11 @@ void BotMgr::SpreadBot(Player& bot)
     }
 }
 
-// Spends a bot's unspent talent points (Bot.Learn.Talents). With a profile for the bot's (class, role) the points follow it in order, as
+// Spends a bot's unspent talent points (Bot.Learn.Talents). With a profile for the bot's (class, spec) or else (class, role) the points follow it in order, as
 // many as the level allows (level minus Bot.Talents.PointsPerLevelOffset, default 9: a guess from the core's comment, one point per
 // level from 10). Without a profile the class defaults for the tab are guesses at the usual leveling spec (the tabs are numbered in the
 // order of their currencies, which the log line shows); Bot.Talents.Tab.<classId> overrides one. Returns null when it ran, else why not.
-static char const* SpendTalents(Player& bot, uint8 role)
+static char const* SpendTalents(Player& bot, uint8 role, uint8 spec)
 {
     static bool const enabled = sConfigMgr->GetBoolDefault("Bot.Learn.Talents", true);
     if (!enabled)
@@ -1090,7 +1151,7 @@ static char const* SpendTalents(Player& bot, uint8 role)
     std::string summary;
     int32 added = 0;
 
-    auto const profile = g_talentProfiles.find({ classId, role });
+    auto const profile = BotTalentSpec::FindProfile(g_talentProfiles, classId, role, spec);
     if (profile != g_talentProfiles.end())
     {
         static int32 const offset = sConfigMgr->GetIntDefault("Bot.Talents.PointsPerLevelOffset", 9);
@@ -1107,7 +1168,7 @@ static char const* SpendTalents(Player& bot, uint8 role)
         return nullptr;
 
     bot.UpdateTraitConfig(std::move(config), 0, false);
-    TC_LOG_INFO("server.worldserver", "BotMgr: {} (class {}, role {}, level {}) spent talents: {}", bot.GetName(), classId, uint32(role), uint32(bot.GetLevel()), summary);
+    TC_LOG_INFO("server.worldserver", "BotMgr: {} (class {}, role {}, spec {}, level {}) spent talents: {}", bot.GetName(), classId, uint32(role), uint32(spec), uint32(bot.GetLevel()), summary);
     return nullptr;
 }
 
@@ -1153,26 +1214,27 @@ void BotMgr::OnBotLevelChanged(Player& bot)
         }
     }
 
-    // With profiles loaded a bot waits for its module to say its role (SetTalentRole): points spent now, before the role is known, could
-    // not be taken back (no respec yet). After that, each level-up spends with the remembered role.
+    // With profiles loaded a bot waits for its module to say its role and spec (SetTalentRole): points spent now, before they are known, could
+    // not be taken back (no respec yet). After that, each level-up spends with the remembered role and spec.
     if (g_talentProfiles.empty())
-        SpendTalents(bot, 0);
-    else if (auto const role = g_talentRoles.find(bot.GetGUID().GetCounter()); role != g_talentRoles.end())
-        SpendTalents(bot, role->second);
+        SpendTalents(bot, 0, 0);
+    else if (auto const known = g_talentRoles.find(bot.GetGUID().GetCounter()); known != g_talentRoles.end())
+        SpendTalents(bot, known->second.first, known->second.second);
 
     if (taught || raised)
         TC_LOG_INFO("server.worldserver", "BotMgr: {} (level {}) learned {} trainer spell(s), raised {} skill(s).", bot.GetName(),
             uint32(bot.GetLevel()), taught, raised);
 }
 
-char const* BotMgr::SetTalentRole(Player& bot, uint8 role)
+char const* BotMgr::SetTalentRole(Player& bot, uint8 role, uint8 spec)
 {
     uint64 const guid = bot.GetGUID().GetCounter();
     auto const known = g_talentRoles.find(guid);
-    if (known != g_talentRoles.end() && known->second != role)
-        TC_LOG_INFO("server.worldserver", "BotMgr: {} changed talent role {} -> {}; the points already spent stay (no respec yet)", bot.GetName(), uint32(known->second), uint32(role));
-    g_talentRoles[guid] = role;
-    return SpendTalents(bot, role);
+    if (known != g_talentRoles.end() && (known->second.first != role || known->second.second != spec))
+        TC_LOG_INFO("server.worldserver", "BotMgr: {} changed talent role {} spec {} -> role {} spec {}; the points already spent stay (no respec yet)", bot.GetName(),
+            uint32(known->second.first), uint32(known->second.second), uint32(role), uint32(spec));
+    g_talentRoles[guid] = { role, spec };
+    return SpendTalents(bot, role, spec);
 }
 
 void BotMgr::FinishLogin(BotInfo& bot)

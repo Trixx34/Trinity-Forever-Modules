@@ -65,10 +65,11 @@ class TC_GAME_API BotMgr
         // would teach it and raises its weapon skills and Defense to what a player of its level has. Bot.Learn.* switch the parts.
         static void OnBotLevelChanged(Player& bot);
 
-        // A module says which role a bot plays (SpendBotTalentsAction; 1 tank, 2 healer, 3 dps, 0 none): the role is remembered for the
-        // bot's later level-ups and its talent points are spent now from the (class, role) profile in Bot.Talents.Profiles, or by the
-        // greedy allocator when there is none. Returns null when it ran, else why it did not (in combat, below level 10, switched off).
-        static char const* SetTalentRole(Player& bot, uint8 role);
+        // A module says which role (SpendBotTalentsAction; 1 tank, 2 healer, 3 dps, 0 none) and spec (BotTalentSpec.h, 1 to 28, 0 none; protocol 18) a
+        // bot plays: both are remembered for the bot's later level-ups and its talent points are spent now from the (class, spec) profile in
+        // Bot.Talents.Profiles, else the (class, role) one, else by the greedy allocator. Returns null when it ran, else why it did not (in
+        // combat, below level 10, switched off).
+        static char const* SetTalentRole(Player& bot, uint8 role, uint8 spec = 0);
 
         BotMgr(BotMgr const&) = delete;
         BotMgr(BotMgr&&) = delete;
@@ -136,6 +137,7 @@ class TC_GAME_API BotMgr
         void PollLogins(); // advances the logins in flight: finishes or fails them
         void PollCreates(); // runs the save callbacks of characters that finished committing
         void CollectMail(); // takes the delivered mail of every online bot, at most every Bot.Mail.CollectEverySec seconds
+        void GrantHunterPets(); // a hunter bot with no pet that did not tame one within Bot.Hunter.PetGraceSec is given one (Bot.Hunter.PetGrant)
         void PumpTeleports(); // answers the teleport steps a client would (suspend token, world port, teleport ack) for the bots
         void FinishCreate(uint64 guid, bool success);
         void FinishLogin(BotInfo& bot);
@@ -161,6 +163,11 @@ class TC_GAME_API BotMgr
         bool _mailCollect = true;
         uint32 _mailCollectEveryMs = 30000;
         uint32 _mailCollectAtMs = 0;
+        bool _hunterPetGrant = true;
+        uint32 _hunterPetGraceMs = 120000;
+        uint32 _hunterPetCheckAtMs = 0;
+        std::vector<uint32> _hunterPetEntries;                    // creature entries a granted pet is picked from (Bot.Hunter.PetEntries)
+        std::unordered_map<uint64, uint32> _hunterNoPetSinceMs;   // bot guid counter -> uptime at which it was first seen without a pet
         bool _registryLoaded = false;
 
         // Login rate: a token bucket, one login per token, refilled at Bot.Login.MaxPerSecond.

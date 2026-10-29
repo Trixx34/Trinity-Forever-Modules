@@ -46,8 +46,8 @@ void NotifyCompleted(Player* a, Player* b);
 void ExecuteSpeak(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module);
 void ExecuteTrade(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module);
 
-// SpendBotTalentsAction: the module says the bot's role (1 tank, 2 healer, 3 dps, 0 none) and the bot spends its talent points by the
-// profile for its (class, role) (BotMgr::SetTalentRole). Refuses a bot the module does not control. Not a failure when the bot has no
-// profile: the greedy allocator runs. A refusal (in combat, below level 10) says why, and the module asks again later.
+// SpendBotTalentsAction: the module says the bot's role (1 tank, 2 healer, 3 dps, 0 none) and spec (1 to 28, 0 none; protocol 18) and the bot
+// spends its talent points by the profile for its (class, spec) or else (class, role) (BotMgr::SetTalentRole). Refuses a bot the module does not
+// control and a spec that is not of the bot's class. Not a failure when the bot has no profile: the greedy allocator runs. A refusal (in combat, below level 10) says why, and the module asks again later.
 void ExecuteSpendTalents(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module);
 }

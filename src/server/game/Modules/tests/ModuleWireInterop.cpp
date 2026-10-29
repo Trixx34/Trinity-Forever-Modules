@@ -4,7 +4,7 @@
  * either side fails here.
  *
  * Not part of the worldserver build. Build and run it against an SDK build tree, for example:
- *   g++ -std=c++17 -Isrc/common -Isrc/server/game/Modules \
+ *   g++ -std=c++17 -Isrc/common -Isrc/server/game/Modules -Isrc/server/game/Bots \
  *       -I<sdk>/include -I<sdk-build>/generated/forever_module \
  *       src/server/game/Modules/ModuleWire.cpp \
  *       src/server/game/Modules/tests/ModuleWireInterop.cpp \
@@ -12,12 +12,14 @@
  *       -lprotobuf -o module_wire_interop && ./module_wire_interop
  */
 
+#include "BotTalentSpec.h"
 #include "ModuleWire.h"
 
 #include "envelope.pb.h"
 #include "actions.pb.h"
 #include "control.pb.h"
 #include "events.pb.h"
+#include "forever_module/talent_spec.h"
 #include "handshake.pb.h"
 
 #include <cstdio>
@@ -550,7 +552,34 @@ int main()
         ModuleWire::ActionRequestMsg core;
         CHECK(ModuleWire::Decode(bytes, core));
         CHECK(core.MessageId == 200 + role && core.Kind == ModuleWire::ActionKind::SpendBotTalents);
-        CHECK(core.BotGuid == 42 && core.TalentRole == role);
+        CHECK(core.BotGuid == 42 && core.TalentRole == role && core.TalentSpec == 0); // no spec on the wire: 0 (protocol 17 callers)
+    }
+    // ... with a spec (protocol 18): every spec value of the SDK table decodes, with role and bot guid unchanged.
+    for (std::uint32_t spec = 1; spec <= forever_module::kLastTalentSpec; ++spec)
+    {
+        forever_module::ActionRequest sdk;
+        sdk.set_message_id(300 + spec);
+        forever_module::SpendBotTalentsAction* talents = sdk.mutable_spend_bot_talents();
+        talents->set_bot_guid(77);
+        talents->set_role(spec % 4);
+        talents->set_spec(spec);
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+
+        ModuleWire::ActionRequestMsg core;
+        CHECK(ModuleWire::Decode(bytes, core));
+        CHECK(core.MessageId == 300 + spec && core.Kind == ModuleWire::ActionKind::SpendBotTalents);
+        CHECK(core.BotGuid == 77 && core.TalentRole == spec % 4 && core.TalentSpec == spec);
+    }
+    // The core's spec table (Bots/BotTalentSpec.h) equals the SDK's (talent_spec.h): id, class and key of every row.
+    CHECK(BotTalentSpec::LastSpec == forever_module::kLastTalentSpec);
+    for (std::uint32_t id = 1; id <= forever_module::kLastTalentSpec; ++id)
+    {
+        forever_module::TalentSpecInfo const* sdkInfo = forever_module::GetTalentSpecInfo(static_cast<forever_module::TalentSpec>(id));
+        BotTalentSpec::Info const* coreInfo = BotTalentSpec::Get(id);
+        CHECK(sdkInfo && coreInfo);
+        if (sdkInfo && coreInfo)
+            CHECK(sdkInfo->ClassId == coreInfo->ClassId && std::string(sdkInfo->Key) == coreInfo->Key && coreInfo->Spec == id);
     }
 
     // SDK -> core: BotTradeAction (field 21), every operation.
@@ -587,6 +616,89 @@ int main()
         CHECK(sdk.success() && sdk.message_id() == 9 && sdk.bag_items_size() == 2);
         CHECK(sdk.bag_items(0).item_guid() == 1001 && sdk.bag_items(0).entry() == 2589 && sdk.bag_items(0).count() == 20);
         CHECK(sdk.bag_items(0).name() == "Linen Cloth" && sdk.bag_items(1).name() == "Hearthstone");
+    }
+
+    // SDK -> core: AuctionHouseAction browse by filter (actions.proto field 19, fields 10 to 15; protocol 19).
+    {
+        forever_module::ActionRequest sdk;
+        sdk.set_message_id(61);
+        forever_module::AuctionHouseAction* ah = sdk.mutable_auction_house();
+        ah->set_op(forever_module::AuctionHouseAction::kBrowse);
+        ah->set_auctioneer_guid(9002);
+        ah->set_player_guid(42);
+        ah->set_inventory_type(7);
+        ah->set_min_level(5);
+        ah->set_max_level(15);
+        ah->set_max_results(8);
+        ah->set_max_buyout(4000);
+        ah->set_only_upgrades(true);
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+
+        ModuleWire::ActionRequestMsg core;
+        CHECK(ModuleWire::Decode(bytes, core));
+        CHECK(core.MessageId == 61 && core.Kind == ModuleWire::ActionKind::AuctionHouse && core.AuctionOp == 0 && core.AuctioneerGuid == 9002);
+        CHECK(core.PlayerGuid == 42 && core.ItemEntry == 0);
+        CHECK(core.AuctionInventoryType == 7 && core.AuctionMinLevel == 5 && core.AuctionMaxLevel == 15 && core.AuctionMaxResults == 8);
+        CHECK(core.AuctionMaxBuyout == 4000 && core.AuctionOnlyUpgrades);
+    }
+    // ... and the old browse by item entry leaves the filter empty.
+    {
+        forever_module::ActionRequest sdk;
+        sdk.set_message_id(62);
+        forever_module::AuctionHouseAction* ah = sdk.mutable_auction_house();
+        ah->set_op(forever_module::AuctionHouseAction::kBrowse);
+        ah->set_auctioneer_guid(9002);
+        ah->set_item_entry(2512);
+        ah->set_player_guid(42);
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+
+        ModuleWire::ActionRequestMsg core;
+        CHECK(ModuleWire::Decode(bytes, core));
+        CHECK(core.ItemEntry == 2512 && core.AuctionInventoryType == 0 && core.AuctionMaxResults == 0 && !core.AuctionOnlyUpgrades);
+    }
+
+    // core -> SDK: an ActionReply with listings (field 13) and an AuctionListingEvent notify with the new fields (12 to 16).
+    {
+        ModuleWire::AuctionListingEvent listing;
+        listing.AuctionGuid = 900;
+        listing.ItemEntry = 2000;
+        listing.Count = 1;
+        listing.Bid = 50;
+        listing.Buyout = 1500;
+        listing.TimeLeftMin = 90;
+        listing.Seller = "Seller";
+        listing.TotalMatches = 3;
+        listing.PlayerGuid = 42;
+        listing.RequestId = 61;
+        listing.InventoryType = 7;
+        listing.Quality = 2;
+        listing.RequiredLevel = 10;
+        listing.ItemLevel = 13;
+        listing.UpgradeScore = 31;
+
+        ModuleWire::ActionReplyMsg core;
+        core.MessageId = 61;
+        core.Success = true;
+        core.Listings.push_back(listing);
+        listing.AuctionGuid = 901;
+        listing.UpgradeScore = 0;
+        core.Listings.push_back(listing);
+        forever_module::ActionReply sdk;
+        CHECK(sdk.ParseFromString(ModuleWire::Encode(core)));
+        CHECK(sdk.success() && sdk.listings_size() == 2);
+        forever_module::AuctionListingEvent const& first = sdk.listings(0);
+        CHECK(first.auction_guid() == 900 && first.item_entry() == 2000 && first.count() == 1 && first.bid() == 50 && first.buyout() == 1500);
+        CHECK(first.time_left_min() == 90 && first.seller() == "Seller" && first.total_matches() == 3 && first.player_guid() == 42 && first.request_id() == 61);
+        CHECK(first.inventory_type() == 7 && first.quality() == 2 && first.required_level() == 10 && first.item_level() == 13 && first.upgrade_score() == 31);
+        CHECK(sdk.listings(1).auction_guid() == 901 && !sdk.listings(1).has_upgrade_score());
+
+        // the notify (the old browse) carries the same body
+        forever_module::EventNotify notify;
+        CHECK(notify.ParseFromString(ModuleWire::EncodeEventNotifyAuctionListing("PlayerScript.OnAuctionResult", listing)));
+        CHECK(notify.hook_name() == "PlayerScript.OnAuctionResult" && notify.has_player_auction_result());
+        CHECK(notify.player_auction_result().auction_guid() == 901 && notify.player_auction_result().item_level() == 13);
     }
 
     // core -> SDK: a BotTradeEvent (events.proto field 19) in an EventNotify.

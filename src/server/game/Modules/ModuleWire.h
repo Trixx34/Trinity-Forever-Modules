@@ -172,6 +172,12 @@ struct AuctionListingEvent
     uint32 TotalMatches = 0;
     uint64 PlayerGuid = 0; // requesting bot's raw character GUID; 0 for real-player-originated results
     uint64 RequestId = 0;  // ActionRequest.message_id that initiated this browse; 0 for unsolicited results
+    // Protocol 19 (a browse by filter fills them; 0 = not filled)
+    uint32 InventoryType = 0;
+    uint32 Quality = 0;
+    uint32 RequiredLevel = 0;
+    uint32 ItemLevel = 0;
+    uint32 UpgradeScore = 0; // how much better the item is for the requesting bot than what it wears there (BotGearUpgradeScore); 0 = no upgrade
 };
 
 std::string EncodeEventNotifyAuctionListing(std::string_view hookName, AuctionListingEvent const& event);
@@ -248,6 +254,13 @@ struct ActionRequestMsg
     uint64 AuctionGuid = 0;
     uint32 Bid = 0;
     uint32 Buyout = 0;
+    // AuctionHouseAction browse by filter (protocol 19): used when ItemEntry is 0 and AuctionInventoryType is not 0.
+    uint32 AuctionInventoryType = 0;
+    uint32 AuctionMinLevel = 0;
+    uint32 AuctionMaxLevel = 0;
+    uint32 AuctionMaxResults = 0;
+    uint32 AuctionMaxBuyout = 0;
+    bool AuctionOnlyUpgrades = false;
     // SendPlayerMessage, and Log's text
     std::string Text;
     // Log: 0 info, 1 warning, 2 error
@@ -263,8 +276,10 @@ struct ActionRequestMsg
     uint32 TradeOp = 0;
     uint32 TradeSlot = 0;
     uint64 Copper = 0;
-    // SpendBotTalentsAction (field 22): BotGuid spends its talent points as TalentRole (0 none, 1 tank, 2 healer, 3 dps).
+    // SpendBotTalentsAction (field 22): BotGuid spends its talent points as TalentRole (0 none, 1 tank, 2 healer, 3 dps) and TalentSpec (0 none, or
+    // 1 to 28: Bots/BotTalentSpec.h; protocol 18).
     uint32 TalentRole = 0;
+    uint32 TalentSpec = 0;
 };
 
 // One item of a BotTrade kListBags reply (actions.proto TradeBagItem).
@@ -294,6 +309,8 @@ struct ActionReplyMsg
     std::vector<std::string> Keys;
     // BotTrade kListBags: the items the bot can trade now (field 12)
     std::vector<TradeBagItemMsg> BagItems;
+    // AuctionHouse kBrowse by filter: the matching listings, cheapest buyout first (field 13, protocol 19)
+    std::vector<AuctionListingEvent> Listings;
 };
 
 bool Decode(std::string_view bytes, ActionRequestMsg& out);
