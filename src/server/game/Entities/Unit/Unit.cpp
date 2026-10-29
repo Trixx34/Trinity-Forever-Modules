@@ -71,6 +71,7 @@
 #include "PetFollowSpeed.h"
 #include "PetPackets.h"
 #include "PhasingHandler.h"
+#include "ModuleBotSnapshot.h"
 #include "Player.h"
 #include "PlayerAI.h"
 #include "QuestDef.h"
@@ -834,6 +835,9 @@ bool Unit::HasBreakableByDamageCrowdControlAura(Unit const* excludeCasterChannel
     uint32 damageTaken = damage;
     if (attacker)
         damageTaken = damage / victim->GetHealthMultiplierForTarget(attacker);
+
+    // the bots' damage log (layout 22): the hit as the core applies it, before the mitigation below
+    RecordBotDamage(*victim, attacker, spellProto ? spellProto->Id : 0, damage);
 
     // call script hooks
     {

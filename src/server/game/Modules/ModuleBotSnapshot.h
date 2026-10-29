@@ -50,6 +50,13 @@ struct NearbySnapshotScratch
     std::vector<Unit*> Chosen;
 };
 
+// Records a hit a bot took (Unit::DealDamage calls this for every hit). Only a bot with a damage log keeps it: the logs are made on the
+// bot's first snapshot, so the hits kept are the ones of the bots a module controls. amount 0 is not a hit. spellId 0 is a melee or auto attack.
+void RecordBotDamage(Unit const& victim, Unit const* attacker, uint32 spellId, uint32 amount);
+
+// Frees the damage log of a bot that has logged out. Takes the same counter as ClearVendorLookup.
+void ClearBotDamageLog(uint64 botCounter);
+
 // Frees the nearest-vendor lookup cache entry for a bot that has logged out. Without this the cache grows
 // to one entry per ever-created bot; calling this on logout keeps it bounded to currently-online bots.
 void ClearVendorLookup(uint64 botCounter);

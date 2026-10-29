@@ -281,6 +281,16 @@ struct VendorLookup
 // ClearVendorLookup on bot logout so the map never grows beyond the number of currently-online bots.
 std::unordered_map<uint64, VendorLookup> g_vendorLookups;
 
+// Layout 22: the hits each bot took, newest last in a ring of kMaxDamageHits. Keyed by character counter, made on the bot's first snapshot
+// (BuildSnapshotBot) and erased on logout (ClearBotDamageLog), so the map stays bounded to online bots.
+struct BotDamageLog
+{
+    forever_module::DamageHit Hits[forever_module::kMaxDamageHits];
+    std::size_t Next = 0;        // the slot the next hit goes into
+    std::uint32_t Sequence = 0;  // hits recorded so far; the newest hit has this sequence
+};
+std::unordered_map<uint64, BotDamageLog> g_botDamageLogs;
+
 // Layout 16: the vendors a bot is sent to must be ones it can walk to. The nearest in a straight line is often across a river, a cliff or a
 // city wall. The few nearest candidates of each kind are checked against the navmesh, nearest first, and the first with a route is used. A path
 // calculation is not cheap, so only kSupplyPathChecksPerTick of them are made in one world update; when they run out the choice waits for the
@@ -1139,6 +1149,13 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
     }
     entry.last_target_lost_reason = watch.LostReason;
 
+    // Layout 22: the last hits the bot took, oldest first. The log is made here, on the bot's first snapshot.
+    BotDamageLog& damage = g_botDamageLogs[bot.GetGUID().GetCounter()];
+    entry.damage_sequence = damage.Sequence;
+    entry.damage_hit_count = uint8(std::min<uint32>(damage.Sequence, forever_module::kMaxDamageHits));
+    for (uint8 i = 0; i < entry.damage_hit_count; ++i)
+        entry.damage_hits[i] = damage.Hits[(damage.Next + forever_module::kMaxDamageHits - entry.damage_hit_count + i) % forever_module::kMaxDamageHits];
+
     if (maxNearby == 0)
         return result;
 
@@ -1260,4 +1277,32 @@ void ClearVendorLookup(uint64 botCounter)
 {
     ModuleBotSupplies::ForgetReagent(botCounter);
     g_vendorLookups.erase(botCounter);
+}
+
+void RecordBotDamage(Unit const& victim, Unit const* attacker, uint32 spellId, uint32 amount)
+{
+    if (amount == 0 || !victim.IsPlayer())
+        return;
+    auto const log = g_botDamageLogs.find(victim.GetGUID().GetCounter());
+    if (log == g_botDamageLogs.end())
+        return;
+
+    BotDamageLog& damage = log->second;
+    forever_module::DamageHit& hit = damage.Hits[damage.Next];
+    hit = forever_module::DamageHit{};
+    if (attacker)
+    {
+        uint64 ref = 0;
+        if (EncodeUnitRef(*attacker, ref))
+            hit.source_guid = ref;
+    }
+    hit.spell_id = spellId;
+    hit.amount = amount;
+    hit.sequence = ++damage.Sequence;
+    damage.Next = (damage.Next + 1) % forever_module::kMaxDamageHits;
+}
+
+void ClearBotDamageLog(uint64 botCounter)
+{
+    g_botDamageLogs.erase(botCounter);
 }

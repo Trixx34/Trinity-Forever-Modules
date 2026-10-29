@@ -1296,6 +1296,7 @@ void BotMgr::LogoutBot(BotInfo& bot, char const* reason)
 
     // Release the vendor-lookup cache entry so the map stays bounded to online bots.
     ClearVendorLookup(bot.Guid);
+    ClearBotDamageLog(bot.Guid);
 
     TC_LOG_INFO("server.worldserver", "BotMgr: bot {} (guid {}) logged out ({}).", bot.Name, bot.Guid, reason);
 }
