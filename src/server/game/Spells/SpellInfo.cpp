@@ -672,6 +672,18 @@ SpellEffectValue SpellEffectInfo::CalcValue(WorldObject const* caster /*= nullpt
 // Only the spells new to Forever carry percentages (Living Storm Shock 1259652: 10 -> 16..18), all in the modern id range.
 static constexpr uint32 CLASSIC_FIRST_SCALED_SPELL_ID = 1000000;
 
+// Legacy creature spells whose SpellEffect.db2 base points are fractional, which UsesClassicFlatBasePoints reads as a percentage of the expected creature spell damage, but whose
+// percentage is far above the vanilla damage: the base points are not usable as a flat value either (3098.896 would be 3099 damage). Their vanilla flat value is set here.
+// Returns 0 for every other spell. GAMEPLAY TUNING, pending the owner's confirmation (see the commit message).
+//   Onyxian Warder Fire Nova 20203, effect 0: 3098.896 -> 63.86 (creature auto attack dps at level 63) * 30.989 = 1979 +-12%, 1942 mean over 134 hits on the 2026-10-29 raid test,
+//   against 464 flat; 40 bots standing in its 20 yard radius died at 7 a minute.
+static float ClassicCreatureSpellFlatPoints(uint32 spellId, SpellEffIndex effectIndex)
+{
+    if (spellId == 20203 && effectIndex == EFFECT_0)
+        return 464.0f;
+    return 0.0f;
+}
+
 bool SpellEffectInfo::UsesClassicFlatBasePoints(WorldObject const* caster) const
 {
     if (caster && caster->GetAffectingPlayer())
@@ -749,6 +761,9 @@ SpellEffectValue SpellEffectInfo::CalcBaseValue(WorldObject const* caster, Unit 
     }
     else
     {
+        if (float const flat = ClassicCreatureSpellFlatPoints(_spellInfo->Id, EffectIndex); flat != 0.0f && !(caster && caster->GetAffectingPlayer()))
+            return flat;
+
         float value = BasePoints;
         ExpectedStatType stat = GetScalingExpectedStat();
         // Classic 1.60: base points of player and legacy creature spells are flat vanilla values (Fireball rank 1: 18 +-22% =
