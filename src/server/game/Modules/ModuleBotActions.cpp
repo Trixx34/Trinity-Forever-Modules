@@ -1401,6 +1401,72 @@ BotActionStatus LeaveParty(Player& bot, std::string& reason)
     return BotActionStatus::kRefused;
 }
 
+// 40-man raid support (doc 108): converts the bot's own party to a raid (Group::ConvertToRaid, already fully
+// implemented -- GROUP_FLAG_RAID, the 8 subgroup counters, persistence, the client notice). Only the leader or an
+// assistant may do it, same as an invite. Idempotent: asking again once it is already a raid is not an error, since
+// the module polls membership each tick and may see its own earlier success a tick late.
+BotActionStatus ConvertGroupToRaid(Player& bot, std::string& reason)
+{
+    Group* group = bot.GetGroup();
+    if (!group)
+    {
+        reason = "bot is not in a party";
+        return BotActionStatus::kRefused;
+    }
+    if (!group->IsLeader(bot.GetGUID()) && !group->IsAssistant(bot.GetGUID()))
+    {
+        reason = "bot is not the party leader";
+        return BotActionStatus::kRefused;
+    }
+    if (group->isRaidGroup())
+        return BotActionStatus::kApplied;
+    group->ConvertToRaid();
+    return BotActionStatus::kApplied;
+}
+
+// 40-man raid support (doc 108): moves the player named by targetRef into the given subgroup (0-7) of the bot's own
+// raid, via Group::ChangeMembersGroup -- the same engine call the client's raid-roster drag does. Only the raid
+// leader or an assistant may reassign a member, and only within a group that is already a raid (a 5-man party has
+// one subgroup and nothing to assign).
+BotActionStatus AssignSubgroup(Player& bot, uint64 targetRef, uint8 subgroup, std::string& reason)
+{
+    if (subgroup >= MAX_RAID_SUBGROUPS)
+    {
+        reason = "subgroup out of range";
+        return BotActionStatus::kInvalidTarget;
+    }
+    Group* group = bot.GetGroup();
+    if (!group || !group->isRaidGroup())
+    {
+        reason = "bot is not in a raid group";
+        return BotActionStatus::kRefused;
+    }
+    if (!group->IsLeader(bot.GetGUID()) && !group->IsAssistant(bot.GetGUID()))
+    {
+        reason = "bot is not the raid leader";
+        return BotActionStatus::kRefused;
+    }
+    if (forever_module::UnitRefType(targetRef) != uint8(HighGuid::Player))
+    {
+        reason = "subgroup assign target is not a player";
+        return BotActionStatus::kInvalidTarget;
+    }
+    uint32 const counter = forever_module::UnitRefCounter(targetRef);
+    Player* target = ObjectAccessor::FindPlayerByLowGUID(counter);
+    if (!target || !group->IsMember(target->GetGUID()))
+    {
+        reason = "subgroup assign target is not in the bot's raid";
+        return BotActionStatus::kInvalidTarget;
+    }
+    if (!group->HasFreeSlotSubGroup(subgroup))
+    {
+        reason = "subgroup is full";
+        return BotActionStatus::kRefused;
+    }
+    group->ChangeMembersGroup(target->GetGUID(), subgroup);
+    return BotActionStatus::kApplied;
+}
+
 // Loots a corpse the way the client does: through the bot's own session handlers (open the loot, take each item, take the money,
 // release it), so the loot rights, the group rules and the bag space are the core's, not a copy of them here. The distance is the one
 // the loot handler uses for a corpse. A corpse that is empty, or whose items do not all fit, is not an error: the bot took what it could.
@@ -2593,6 +2659,11 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
                 case 1: status = InviteToParty(bot, action.target_guid, reason, module); break;
                 case 2: status = AcceptPartyInvite(bot, reason); break;
                 case 3: status = LeaveParty(bot, reason); break;
+                // 4/5: 40-man raid support (doc 108). No new ActionType or wire field: spell_id 4 and dest_x reuse
+                // the existing generic kGroup fields the same way kVendor/kPetCommand already overload spell_id, so
+                // this needed no SDK protocol bump (the BotAction struct itself is unchanged).
+                case 4: status = ConvertGroupToRaid(bot, reason); break;
+                case 5: status = AssignSubgroup(bot, action.target_guid, static_cast<uint8>(action.dest_x), reason); break;
                 default: reason = "unknown party action " + std::to_string(action.spell_id); break;
             }
             // Diagnostic: the bot module only sees "refused", so the reason is logged here.
