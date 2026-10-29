@@ -288,6 +288,8 @@ struct BotDamageLog
     forever_module::DamageHit Hits[forever_module::kMaxDamageHits];
     std::size_t Next = 0;        // the slot the next hit goes into
     std::uint32_t Sequence = 0;  // hits recorded so far; the newest hit has this sequence
+    std::uint32_t LifeStart = 0; // the sequence the current life started at: only hits after it are reported, so a death row lists the hits since the last death
+    bool WasDead = false;        // the previous snapshot found the bot dead (a corpse or a ghost)
 };
 std::unordered_map<uint64, BotDamageLog> g_botDamageLogs;
 
@@ -1151,8 +1153,17 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
 
     // Layout 22: the last hits the bot took, oldest first. The log is made here, on the bot's first snapshot.
     BotDamageLog& damage = g_botDamageLogs[bot.GetGUID().GetCounter()];
+    // A bot that is alive again after a snapshot that found it dead starts a new life: the hits of the earlier ones are no longer reported (the ring of 8 was cleared only on
+    // logout, so a death row listed hits from lives before it). The snapshots of the dead bot itself still carry the hits it died of. damage_sequence stays the running count.
+    if (!bot.IsAlive())
+        damage.WasDead = true;
+    else if (damage.WasDead)
+    {
+        damage.WasDead = false;
+        damage.LifeStart = damage.Sequence;
+    }
     entry.damage_sequence = damage.Sequence;
-    entry.damage_hit_count = uint8(std::min<uint32>(damage.Sequence, forever_module::kMaxDamageHits));
+    entry.damage_hit_count = uint8(std::min<uint32>(damage.Sequence - damage.LifeStart, forever_module::kMaxDamageHits));
     for (uint8 i = 0; i < entry.damage_hit_count; ++i)
         entry.damage_hits[i] = damage.Hits[(damage.Next + forever_module::kMaxDamageHits - entry.damage_hit_count + i) % forever_module::kMaxDamageHits];
 
