@@ -23,6 +23,13 @@
 #include "ObjectMgr.h"
 #include "SpellInfo.h"
 #include <cstring> // std::memset
+#include <memory>
+#include <vector>
+
+// The item templates point at these entries for the life of the test process; the owners below keep
+// them reachable so the sanitizers do not report them as leaked at exit.
+static std::vector<std::unique_ptr<ItemEntry>> s_testItemEntries;
+static std::vector<std::unique_ptr<ItemSparseEntry>> s_testItemSparseEntries;
 
 /*static*/ void UnitTestDataLoader::LoadSpellImmunities(SpellInfo& spellInfo)
 {
@@ -32,13 +39,15 @@
 /*static*/ ItemTemplate& UnitTestDataLoader::GetItemTemplate(uint32 itemId, std::string_view name)
 {
     ItemTemplate& t = sObjectMgr->_itemTemplateStore[itemId];
-    ItemEntry* itemEntry = new ItemEntry();
+    s_testItemEntries.push_back(std::make_unique<ItemEntry>());
+    ItemEntry* itemEntry = s_testItemEntries.back().get();
     std::memset(itemEntry, 0, sizeof(ItemEntry));
     itemEntry->ID = itemId;
     itemEntry->ClassID = ITEM_CLASS_MISCELLANEOUS;
     t.BasicData = itemEntry;
 
-    ItemSparseEntry* itemSparse = new ItemSparseEntry();
+    s_testItemSparseEntries.push_back(std::make_unique<ItemSparseEntry>());
+    ItemSparseEntry* itemSparse = s_testItemSparseEntries.back().get();
     itemSparse->ID = itemId;
     for (char const*& display : itemSparse->Display.Str)
         display = "";
