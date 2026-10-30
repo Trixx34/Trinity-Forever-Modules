@@ -6,6 +6,7 @@
 #include "BotGearRules.h"
 #include "ModuleBotSnapshot.h"
 #include "ModuleBotSupplies.h"
+#include "ModuleBotSupplyRules.h"
 #include <cmath>
 #include <limits>
 #include "BotMgr.h"
@@ -191,8 +192,8 @@ constexpr uint32 kServiceSellJunkBit = 1024;       // SDK 0.16: also sell white 
 constexpr uint32 kServiceBuyMask = kServiceBuyAmmoBit | kServiceBuyFoodBit | kServiceBuyDrinkBit | kServiceBuyHealthPotionBit |
     kServiceBuyManaPotionBit | kServiceBuyBandageBit | kServiceBuyReagentBit;
 constexpr float kMaxSupplyTarget = 2000.0f; // a sanity bound on the counts a module asks for
-constexpr uint32 kQualityPoor = 0;      // grey
-constexpr uint32 kQualityCommon = 1;    // white: the lowest quality the bot equips
+constexpr uint32 kQualityPoor = ModuleBotSupplyRules::kQualityPoor;      // grey
+constexpr uint32 kQualityCommon = ModuleBotSupplyRules::kQualityCommon;  // white: the lowest quality the bot equips
 
 // The closest NPC in interaction range that has one of `flags` and that the bot can interact with, or nullptr.
 Creature* NearestServiceNpc(Player& bot, NPCFlags flags)
@@ -223,24 +224,13 @@ Creature* NearestServiceNpc(Player& bot, NPCFlags flags)
 // (consumables, projectiles, reagents), or wears or wields (weapons, armour): those have their own rules.
 bool IsWhiteJunk(Item const& item, ItemTemplate const& proto)
 {
-    if (proto.GetQuality() != kQualityCommon || proto.GetBonding() == BIND_QUEST || proto.GetStartQuest() != 0)
-        return false;
-    if (item.GetBagSlot() == INVENTORY_SLOT_BAG_0 && item.GetSlot() >= INVENTORY_SLOT_BAG_START && item.GetSlot() < INVENTORY_SLOT_BAG_END)
-        return false;
-    switch (proto.GetClass())
-    {
-        case ITEM_CLASS_TRADE_GOODS:
-        case ITEM_CLASS_CONTAINER:
-        case ITEM_CLASS_MISCELLANEOUS:
-            return true;
-        default:
-            return false;
-    }
+    bool const equippedBag = item.GetBagSlot() == INVENTORY_SLOT_BAG_0 && item.GetSlot() >= INVENTORY_SLOT_BAG_START && item.GetSlot() < INVENTORY_SLOT_BAG_END;
+    return ModuleBotSupplyRules::IsWhiteJunk(proto.GetQuality(), uint32(proto.GetBonding()), proto.GetStartQuest(), equippedBag, proto.GetClass());
 }
 
 // The pieces of each trade good (cloth, meat, leather...) a bot keeps when it sells its white junk: cloth is for First Aid, meat for Cooking, and the rest
 // can go to the auction house, so only what is above this is sold to the vendor. Whole stacks are kept until the total reaches it.
-constexpr uint32 kJunkKeepTradeGoods = 60;
+constexpr uint32 kJunkKeepTradeGoods = ModuleBotSupplyRules::kJunkKeepTradeGoods;
 
 // Sells every grey item in the bags to the vendor, and with `whiteJunk` the white junk of IsWhiteJunk too (of the trade goods only the surplus above
 // kJunkKeepTradeGoods of an entry). Returns how many stacks were sold.
@@ -264,11 +254,8 @@ uint32 SellGreyItems(Player& bot, bool whiteJunk = false)
         if (proto->GetClass() == ITEM_CLASS_TRADE_GOODS)
         {
             uint32& left = keepLeft.try_emplace(item->GetEntry(), kJunkKeepTradeGoods).first->second;
-            if (left > 0)
-            {
-                left = left > item->GetCount() ? left - item->GetCount() : 0;
+            if (ModuleBotSupplyRules::KeepTradeGoodStack(left, item->GetCount()))
                 return ItemSearchCallbackResult::Continue; // kept: a working supply
-            }
         }
         grey.push_back(item);
         return ItemSearchCallbackResult::Continue;
@@ -672,8 +659,7 @@ std::vector<ItemTemplate const*> const& GearCandidates()
             }
             std::string name = proto.GetName(DEFAULT_LOCALE) ? proto.GetName(DEFAULT_LOCALE) : "";
             std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-            if (name.empty() || name.find("deprecated") != std::string::npos || name.find("test") == 0 ||
-                name.find("unused") != std::string::npos || name.find("[ph]") != std::string::npos || name.rfind("zz", 0) == 0)
+            if (ModuleBotSupplyRules::IsPlaceholderItemName(name))
             {
                 ++stats.Placeholder;
                 continue;
@@ -740,9 +726,9 @@ int32 GearScore(std::vector<int32> const& preferred, ItemTemplate const& item)
             continue;
         bool const wanted = std::find(preferred.begin(), preferred.end(), stat) != preferred.end();
         bool const primary = stat == ITEM_MOD_STRENGTH || stat == ITEM_MOD_AGILITY || stat == ITEM_MOD_INTELLECT || stat == ITEM_MOD_SPIRIT;
-        stats += wanted ? amount : (primary ? -3 * amount : 0);
+        stats += ModuleBotSupplyRules::StatScore(wanted, primary, amount);
     }
-    return int32(item.GetBaseItemLevel()) * 10 + stats;
+    return ModuleBotSupplyRules::CombineGearScore(int32(item.GetBaseItemLevel()), stats);
 }
 
 struct GearPick
@@ -753,7 +739,7 @@ struct GearPick
 
 void Consider(GearPick& pick, ItemTemplate const& item, int32 score)
 {
-    if (!pick.Item || score > pick.Score)
+    if (ModuleBotSupplyRules::ShouldReplacePick(pick.Item != nullptr, pick.Score, score))
         pick = { &item, score };
 }
 
@@ -776,7 +762,7 @@ GearResult GiveAndEquip(Player& bot, ItemTemplate const& item, uint8 slot, uint3
 {
     equipError = 0;
     Item* current = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-    if (current && current->GetTemplate()->GetBaseItemLevel() >= item.GetBaseItemLevel())
+    if (current && !ModuleBotSupplyRules::IsItemLevelUpgrade(current->GetTemplate()->GetBaseItemLevel(), item.GetBaseItemLevel()))
         return GearResult::KeptBetter;
 
     ItemPosCountVec destination;
@@ -833,7 +819,7 @@ uint32 EquipBagUpgrades(Player& bot)
             continue;
         uint8 const slot = uint8(destination & 255);
         Item* worn = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-        if (worn && worn->GetTemplate()->GetBaseItemLevel() >= proto->GetBaseItemLevel())
+        if (worn && !ModuleBotSupplyRules::IsItemLevelUpgrade(worn->GetTemplate()->GetBaseItemLevel(), proto->GetBaseItemLevel()))
             continue;
         bot.SwapItem(item->GetPos(), destination);
         if (bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot) == item)
@@ -868,19 +854,19 @@ int32 BotGearUpgradeScore(Player& bot, ItemTemplate const& item)
         if (!second || second->GetTemplate()->GetBaseItemLevel() < worn->GetTemplate()->GetBaseItemLevel())
             worn = second;
     }
-    if (worn && worn->GetTemplate()->GetBaseItemLevel() >= item.GetBaseItemLevel())
+    if (worn && !ModuleBotSupplyRules::IsItemLevelUpgrade(worn->GetTemplate()->GetBaseItemLevel(), item.GetBaseItemLevel()))
         return 0;
 
     std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile::StrStam);
     int32 const gain = GearScore(preferred, item) - (worn ? GearScore(preferred, *worn->GetTemplate()) : 0);
-    return gain > 0 ? gain : 0;
+    return ModuleBotSupplyRules::PositiveGain(gain);
 }
 
 BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
 {
     // spell_id bit 2: only wear what is better in the bags (EquipBagUpgrades), no pass over the item pool. The module asks for this on its own
     // schedule and after a trade, so a bot wears what it was given or looted whether or not an auto gear pass is due.
-    bool const bagOnly = (flags & 2) != 0;
+    bool const bagOnly = ModuleBotSupplyRules::AutoGearIsBagOnly(flags);
     static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Actions.AutoGear", true);
     static bool const upgradesAllowed = sConfigMgr->GetBoolDefault("Bot.Actions.EquipUpgrades", true);
     if (bagOnly ? !upgradesAllowed : !allowed)
@@ -916,8 +902,8 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
     // way). IsInCombat() above does not cover it: a cast can outlast combat ending, or start and abort outside combat entirely.
     bot.InterruptNonMeleeSpells(true);
 
-    bool const tank = (flags & 1) != 0;
-    std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile((flags >> 2) & 7));
+    bool const tank = ModuleBotSupplyRules::AutoGearIsTank(flags);
+    std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile(ModuleBotSupplyRules::AutoGearProfileOf(flags)));
     std::map<uint8, GearPick> bySlot;          // armour and ranged, by equipment slot
     GearPick twoHand, shield, holdable;
     std::vector<std::pair<int32, ItemTemplate const*>> oneHand;   // main-hand weapons (one-hand, main hand)
@@ -2271,23 +2257,13 @@ BotActionStatus ConsumeAction(Player& bot, BotAction const& action, std::string&
         reason = "Bot.Actions.Supplies is off";
         return BotActionStatus::kRefused;
     }
-    ModuleBotSupplies::Kind kind = ModuleBotSupplies::Kind::None;
-    if (action.spell_id == 1)
-        kind = ModuleBotSupplies::Kind::Food;
-    else if (action.spell_id == 2)
-        kind = ModuleBotSupplies::Kind::Drink;
-    else if (action.spell_id == 3)
-        kind = ModuleBotSupplies::Kind::HealthPotion;
-    else if (action.spell_id == 4)
-        kind = ModuleBotSupplies::Kind::ManaPotion;
-    else if (action.spell_id == 5)
-        kind = ModuleBotSupplies::Kind::Bandage;
-    else
+    ModuleBotSupplies::Kind const kind = ModuleBotSupplyRules::ConsumeKindFor(action.spell_id);
+    if (kind == ModuleBotSupplies::Kind::None)
     {
         reason = "unknown consume kind " + std::to_string(action.spell_id);
         return BotActionStatus::kRefused;
     }
-    bool const potion = kind == ModuleBotSupplies::Kind::HealthPotion || kind == ModuleBotSupplies::Kind::ManaPotion;
+    bool const potion = ModuleBotSupplyRules::IsPotionKind(kind);
     if (!bot.IsAlive() || (bot.IsInCombat() && !potion))
     {
         reason = bot.IsAlive() ? "bot is in combat" : "bot is dead";

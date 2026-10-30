@@ -164,20 +164,11 @@ bool BuyableWithMoney(VendorItem const& vendorItem, ItemTemplate const* proto)
 // How many of `entry` fit in the bags, up to `count`: the bags' room is not a simple number (partial stacks), so it is asked.
 uint32 FitCount(Player& bot, uint32 entry, uint32 count)
 {
-    ItemPosCountVec destination;
-    if (bot.CanStoreNewItem(NULL_BAG, NULL_SLOT, destination, entry, count) == EQUIP_ERR_OK)
-        return count;
-    uint32 low = 0, high = count;
-    while (low < high)
+    return ModuleBotSupplyRules::LargestFitting(count, [&bot, entry](uint32 pieces)
     {
-        uint32 const mid = low + (high - low + 1) / 2;
-        destination.clear();
-        if (bot.CanStoreNewItem(NULL_BAG, NULL_SLOT, destination, entry, mid) == EQUIP_ERR_OK)
-            low = mid;
-        else
-            high = mid - 1;
-    }
-    return low;
+        ItemPosCountVec destination;
+        return bot.CanStoreNewItem(NULL_BAG, NULL_SLOT, destination, entry, pieces) == EQUIP_ERR_OK;
+    });
 }
 
 // The vendor item the bot should buy of one kind, or nullptr: the best the bot may use at its level. slot is its place on the vendor's list.
@@ -247,14 +238,8 @@ Pick BestAt(Player& bot, Creature* vendor, Want want)
         // Better: a higher required level, then a dearer item (it restores or hits more), then the lower entry so the choice is stable.
         bool better = !best.Proto;
         if (!better)
-        {
-            if (proto->GetBaseRequiredLevel() != best.Proto->GetBaseRequiredLevel())
-                better = proto->GetBaseRequiredLevel() > best.Proto->GetBaseRequiredLevel();
-            else if (proto->GetBuyPrice() != best.Proto->GetBuyPrice())
-                better = proto->GetBuyPrice() > best.Proto->GetBuyPrice();
-            else
-                better = proto->GetId() < best.Proto->GetId();
-        }
+            better = ModuleBotSupplyRules::IsBetterVendorPick(proto->GetBaseRequiredLevel(), proto->GetBuyPrice(), proto->GetId(),
+                best.Proto->GetBaseRequiredLevel(), best.Proto->GetBuyPrice(), best.Proto->GetId());
         if (better)
             best = { vendorItem, proto, slot };
     }
@@ -268,14 +253,12 @@ uint32 BuyMore(Player& bot, Creature* vendor, Pick const& pick, uint32 need, uin
         return 0;
 
     // The price is per BuyCount pieces; rounding up and ignoring discounts keeps the estimate on the safe side.
-    uint64 const perPiece = (uint64(pick.Proto->GetBuyPrice()) + pick.Proto->GetBuyCount() - 1) / pick.Proto->GetBuyCount();
-    uint32 count = need;
-    if (perPiece > 0)
-        count = uint32(std::min<uint64>(count, Spendable(bot.GetMoney(), reserve) / perPiece));
+    uint64 const perPiece = ModuleBotSupplyRules::PerPieceCopper(pick.Proto->GetBuyPrice(), pick.Proto->GetBuyCount());
+    uint32 count = ModuleBotSupplyRules::AffordableCount(need, Spendable(bot.GetMoney(), reserve), perPiece);
     count = FitCount(bot, pick.Proto->GetId(), count);
 
     // A refusal is most often the money (a discount or a rounding the estimate missed): try a smaller number a few times.
-    for (uint32 attempt = 0; count > 0 && attempt < 3; ++attempt, count = count * 3 / 4)
+    for (uint32 attempt = 0; count > 0 && attempt < ModuleBotSupplyRules::kBuyAttempts; ++attempt, count = ModuleBotSupplyRules::ShrinkBuyCount(count))
     {
         uint64 const before = bot.GetMoney();
         uint32 const carried = bot.GetItemCount(pick.Proto->GetId());
@@ -481,8 +464,8 @@ Item* BestCarried(Player& bot, Kind kind)
         if (!Usable(bot, proto, kind))
             return ItemSearchCallbackResult::Continue;
         // The best is the highest required level (it restores most); a smaller stack is eaten first so the stacks do not linger.
-        if (!best || proto->GetBaseRequiredLevel() > best->GetTemplate()->GetBaseRequiredLevel() ||
-            (proto->GetBaseRequiredLevel() == best->GetTemplate()->GetBaseRequiredLevel() && item->GetCount() < best->GetCount()))
+        if (!best || ModuleBotSupplyRules::IsBetterCarried(proto->GetBaseRequiredLevel(), item->GetCount(),
+                best->GetTemplate()->GetBaseRequiredLevel(), best->GetCount()))
             best = item;
         return ItemSearchCallbackResult::Continue;
     });
@@ -501,7 +484,7 @@ Bought Buy(Player& bot, Creature* vendor, Targets const& targets)
         if (pick.Proto)
         {
             uint32 const carried = bot.GetItemCount(pick.Proto->GetId());
-            bought.Ammo = BuyMore(bot, vendor, pick, targets.Ammo > carried ? targets.Ammo - carried : 0, bought.Copper, 0);
+            bought.Ammo = BuyMore(bot, vendor, pick, ModuleBotSupplyRules::NeedToBuy(targets.Ammo, carried), bought.Copper, 0);
             // Ammunition the bot shoots now is replaced by the better kind it just bought; with none selected the new one is selected.
             if (bought.Ammo > 0)
             {
@@ -520,7 +503,7 @@ Bought Buy(Player& bot, Creature* vendor, Targets const& targets)
             return;
         Pick const pick = BestAt(bot, vendor, want);
         uint32 const carried = CountCarried(bot, kind);
-        result = BuyMore(bot, vendor, pick, target > carried ? target - carried : 0, bought.Copper, reserve);
+        result = BuyMore(bot, vendor, pick, ModuleBotSupplyRules::NeedToBuy(target, carried), bought.Copper, reserve);
     };
     buyKind(Want::Food, Kind::Food, targets.Food, bought.Food);
     if (mana)
@@ -541,7 +524,7 @@ Bought Buy(Player& bot, Creature* vendor, Targets const& targets)
                     !sConditionMgr->IsObjectMeetingVendorItemConditions(vendor->GetEntry(), vendorItem->item, &bot, vendor))
                     continue;
                 uint32 const carried = bot.GetItemCount(proto->GetId());
-                bought.Reagent = BuyMore(bot, vendor, { vendorItem, proto, slot }, targets.Reagent > carried ? targets.Reagent - carried : 0,
+                bought.Reagent = BuyMore(bot, vendor, { vendorItem, proto, slot }, ModuleBotSupplyRules::NeedToBuy(targets.Reagent, carried),
                     bought.Copper, reserve);
                 break;
             }
