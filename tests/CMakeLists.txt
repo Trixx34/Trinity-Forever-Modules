@@ -32,3 +32,6 @@ set_target_properties(tests
     PROPERTIES
       FOLDER
         "tests")
+
+# Tier-0 guards (layout/protocol sync with the SDK, header self-containment): tests/ModuleGuards.cmake
+include(${CMAKE_CURRENT_SOURCE_DIR}/ModuleGuards.cmake)

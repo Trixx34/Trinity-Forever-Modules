@@ -14,6 +14,17 @@
 
 using namespace forever_module;
 
+// ABI pins for the structs shared with the module through shared memory. The SDK pins the same numbers (src/tier2_session.cpp); a field added or
+// reordered on one side only changes a size here or there and stops the build instead of corrupting the region at run time. If one of these fires
+// on purpose: bump kTier2LayoutVersion and kProtocolVersion in both repositories and update this list together with the SDK's.
+static_assert(sizeof(BotSnapshot) == 1136, "BotSnapshot changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(sizeof(NearbyUnit) == 48, "NearbyUnit changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(sizeof(GroundEffect) == 24, "GroundEffect changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(sizeof(BotAction) == 40, "BotAction changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(sizeof(Tier2RegionHeader) == 56, "Tier2RegionHeader changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(sizeof(WorldTickSnapshotHeader) == 16, "WorldTickSnapshotHeader changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(sizeof(ActionQueueHeader) == 16, "ActionQueueHeader changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+
 ModuleTier2Region::ModuleTier2Region(std::string name, Bounds bounds)
     : _name(std::move(name)), _bounds(bounds)
 {
