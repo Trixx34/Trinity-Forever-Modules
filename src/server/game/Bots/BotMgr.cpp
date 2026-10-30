@@ -3,6 +3,7 @@
  */
 
 #include "BotMgr.h"
+#include "BotMgrRules.h"
 #include "BotProfessions.h"
 #include "BotTalentSpec.h"
 #include "BotTaxi.h"
@@ -75,8 +76,7 @@ std::string GenerateBotName()
     for (uint32 middles = urand(0, 2); middles > 0; --middles)
         name += RandomOf(NameMiddle);
     name += RandomOf(NameEnd);
-    if (name.size() > 12)
-        name.resize(12);
+    BotMgrRules::ClipName(name);
     normalizePlayerName(name);
     return name;
 }
@@ -105,30 +105,6 @@ BotMgr* BotMgr::instance()
 
 namespace
 {
-
-// Seconds since local midnight for "HH:MM" or "HH:MM:SS"; -1 if the text is not a clock time.
-int32 ParseClockSeconds(std::string const& text)
-{
-    if (text.size() != 5 && text.size() != 8)
-        return -1;
-    if (text[2] != ':' || (text.size() == 8 && text[5] != ':'))
-        return -1;
-
-    auto field = [&text](size_t pos, int32 max) -> int32
-    {
-        if (text[pos] < '0' || text[pos] > '9' || text[pos + 1] < '0' || text[pos + 1] > '9')
-            return -1;
-        int32 const value = (text[pos] - '0') * 10 + (text[pos + 1] - '0');
-        return value <= max ? value : -1;
-    };
-
-    int32 const hours = field(0, 23);
-    int32 const minutes = field(3, 59);
-    int32 const seconds = text.size() == 8 ? field(6, 59) : 0;
-    if (hours < 0 || minutes < 0 || seconds < 0)
-        return -1;
-    return hours * 3600 + minutes * 60 + seconds;
-}
 
 // Bots stand on a sunflower spiral around their race's start: slot s is at radius spacing * sqrt(s) and angle s times the
 // golden angle, so neighbouring slots are a fixed distance apart and no two bots share a point. A bot's slot comes from its
@@ -348,40 +324,38 @@ void BotMgr::LoadRegistry()
     if (std::string const profileFile = sConfigMgr->GetStringDefault("Bot.Talents.Profiles", ""); !profileFile.empty())
         LoadTalentProfiles(profileFile);
 
-    _loginMaxPerTick = uint32(std::max<int32>(1, sConfigMgr->GetIntDefault("Bot.Login.MaxPerTick", 5)));
-    _loginTimeoutMs = uint32(std::max<int32>(1000, sConfigMgr->GetIntDefault("Bot.Login.TimeoutMs", 60000)));
-    _reloginDelayMs = uint32(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Relogin.DelayMs", 2000)));
+    _loginMaxPerTick = BotMgrRules::LoginMaxPerTick(sConfigMgr->GetIntDefault("Bot.Login.MaxPerTick", BotMgrRules::DEF_LOGIN_MAX_PER_TICK));
+    _loginTimeoutMs = BotMgrRules::LoginTimeoutMs(sConfigMgr->GetIntDefault("Bot.Login.TimeoutMs", BotMgrRules::DEF_LOGIN_TIMEOUT_MS));
+    _reloginDelayMs = BotMgrRules::ReloginDelayMs(sConfigMgr->GetIntDefault("Bot.Relogin.DelayMs", BotMgrRules::DEF_RELOGIN_DELAY_MS));
     _mailCollect = sConfigMgr->GetBoolDefault("Bot.Mail.Collect", true);
     _hunterPetGrant = sConfigMgr->GetBoolDefault("Bot.Hunter.PetGrant", true);
-    _hunterPetGraceMs = uint32(std::clamp<int32>(sConfigMgr->GetIntDefault("Bot.Hunter.PetGraceSec", 120), 0, 3600)) * 1000;
+    _hunterPetGraceMs = BotMgrRules::HunterPetGraceMs(sConfigMgr->GetIntDefault("Bot.Hunter.PetGraceSec", BotMgrRules::DEF_HUNTER_PET_GRACE_SEC));
     _hunterPetEntries.clear();
     std::string const petEntries = sConfigMgr->GetStringDefault("Bot.Hunter.PetEntries", "3425,2069,3243,2071,2237");
     for (std::string_view token : Trinity::Tokenize(petEntries, ',', false))
         if (Optional<uint32> const entry = Trinity::StringTo<uint32>(token); entry && sObjectMgr->GetCreatureTemplate(*entry))
             _hunterPetEntries.push_back(*entry);
-    _mailCollectEveryMs = uint32(std::clamp<int32>(sConfigMgr->GetIntDefault("Bot.Mail.CollectEverySec", 30), 5, 3600)) * 1000;
-    _spreadSpacing = std::max(0.0f, sConfigMgr->GetFloatDefault("Bot.Spread.SpacingYards", 3.0f));
-    _spreadMaxRadius = std::max(0.0f, sConfigMgr->GetFloatDefault("Bot.Spread.MaxRadiusYards", 200.0f));
-    _loginPerSecond = uint32(std::max<int32>(1, sConfigMgr->GetIntDefault("Bot.Login.MaxPerSecond", 10)));
-    _limitMaxBots = uint32(std::max<int32>(1, sConfigMgr->GetIntDefault("Bot.Limit.MaxBots", 1500)));
-    _limitMaxWorldDiffMs = uint32(std::max<int32>(10, sConfigMgr->GetIntDefault("Bot.Limit.MaxWorldDiffMs", 250)));
-    _limitMaxDbQueue = uint32(std::max<int32>(1, sConfigMgr->GetIntDefault("Bot.Limit.MaxDbQueue", 5000)));
+    _mailCollectEveryMs = BotMgrRules::MailCollectEveryMs(sConfigMgr->GetIntDefault("Bot.Mail.CollectEverySec", BotMgrRules::DEF_MAIL_COLLECT_EVERY_SEC));
+    _spreadSpacing = BotMgrRules::SpreadYards(sConfigMgr->GetFloatDefault("Bot.Spread.SpacingYards", BotMgrRules::DEF_SPREAD_SPACING_YARDS));
+    _spreadMaxRadius = BotMgrRules::SpreadYards(sConfigMgr->GetFloatDefault("Bot.Spread.MaxRadiusYards", BotMgrRules::DEF_SPREAD_MAX_RADIUS_YARDS));
+    _loginPerSecond = BotMgrRules::LoginPerSecond(sConfigMgr->GetIntDefault("Bot.Login.MaxPerSecond", BotMgrRules::DEF_LOGIN_MAX_PER_SECOND));
+    _limitMaxBots = BotMgrRules::LimitMaxBots(sConfigMgr->GetIntDefault("Bot.Limit.MaxBots", BotMgrRules::DEF_LIMIT_MAX_BOTS));
+    _limitMaxWorldDiffMs = BotMgrRules::LimitMaxWorldDiffMs(sConfigMgr->GetIntDefault("Bot.Limit.MaxWorldDiffMs", BotMgrRules::DEF_LIMIT_MAX_WORLD_DIFF_MS));
+    _limitMaxDbQueue = BotMgrRules::LimitMaxDbQueue(sConfigMgr->GetIntDefault("Bot.Limit.MaxDbQueue", BotMgrRules::DEF_LIMIT_MAX_DB_QUEUE));
 
     // The run's stop time is the first such local clock time after startup. At that point no bot is created, and the
     // server shuts down through the normal shutdown path, so the bots are saved and logged out.
     std::string const stopText = sConfigMgr->GetStringDefault("Bot.Run.StopTime", "");
     if (!stopText.empty())
     {
-        int32 const stopSec = ParseClockSeconds(stopText);
+        int32 const stopSec = BotMgrRules::ParseClockSeconds(stopText);
         if (stopSec < 0)
         {
             TC_LOG_ERROR("server.worldserver", "Bot.Run.StopTime '{}' is not HH:MM or HH:MM:SS; the run has no stop time.", stopText);
         }
         else
         {
-            int32 untilStop = (stopSec - LocalSecondsOfDay() + 86400) % 86400;
-            if (untilStop == 0)
-                untilStop = 86400;
+            int32 const untilStop = BotMgrRules::SecondsUntilStop(stopSec, LocalSecondsOfDay());
             _stopConfigured = true;
             _stopAtMs = uint32(untilStop) * 1000;
             TC_LOG_INFO("server.worldserver", "Bot run stops at {} local, in {} minutes.", stopText, untilStop / 60);
@@ -476,8 +450,8 @@ uint32 TeachTrainerSpells(Player& bot)
 // saw hundreds of thousands of "bags full" refusals). Returns how many bags were put on. Bot.Bags.Item = 0 turns it off.
 uint32 GiveBags(Player& bot)
 {
-    static uint32 const itemId = uint32(std::max<int64>(0, sConfigMgr->GetIntDefault("Bot.Bags.Item", 3914)));
-    static uint32 const wanted = uint32(std::clamp<int64>(sConfigMgr->GetIntDefault("Bot.Bags.Count", 4), 0, INVENTORY_SLOT_BAG_END - INVENTORY_SLOT_BAG_START));
+    static uint32 const itemId = BotMgrRules::BagsItem(sConfigMgr->GetIntDefault("Bot.Bags.Item", BotMgrRules::DEF_BAGS_ITEM));
+    static uint32 const wanted = BotMgrRules::BagsCount(sConfigMgr->GetIntDefault("Bot.Bags.Count", BotMgrRules::DEF_BAGS_COUNT), INVENTORY_SLOT_BAG_END - INVENTORY_SLOT_BAG_START);
     if (!itemId)
         return 0;
 
@@ -503,7 +477,7 @@ uint32 GiveStarterAmmo(Player& bot)
     if (!bot.NeedsAmmo())
         return 0;
 
-    static uint32 const stacks = uint32(std::clamp<int64>(sConfigMgr->GetIntDefault("Bot.Hunter.StartAmmo.Stacks", 1), 1, 10));
+    static uint32 const stacks = BotMgrRules::HunterStartAmmoStacks(sConfigMgr->GetIntDefault("Bot.Hunter.StartAmmo.Stacks", BotMgrRules::DEF_HUNTER_START_AMMO_STACKS));
     ItemTemplate const* chosen = nullptr;
     for (auto const& [entry, proto] : sObjectMgr->GetItemTemplateStore())
     {
@@ -623,15 +597,10 @@ uint64 BotMgr::CreateBot(uint8 raceId, uint8 classId, uint8 level, std::string& 
     createInfo.Class = classId;
     createInfo.Sex = uint8(urand(0, 1));
 
-    for (uint32 attempt = 0; attempt < 200; ++attempt)
+    createInfo.Name = BotMgrRules::PickFirstValidName(200, [] { return GenerateBotName(); }, [](std::string const& name)
     {
-        std::string name = GenerateBotName();
-        if (ObjectMgr::CheckPlayerName(name, LOCALE_enUS, true) != CHAR_NAME_SUCCESS || sObjectMgr->IsReservedName(name) || sCharacterCache->GetCharacterCacheByName(name))
-            continue;
-
-        createInfo.Name = std::move(name);
-        break;
-    }
+        return ObjectMgr::CheckPlayerName(name, LOCALE_enUS, true) == CHAR_NAME_SUCCESS && !sObjectMgr->IsReservedName(name) && !sCharacterCache->GetCharacterCacheByName(name);
+    });
 
     if (createInfo.Name.empty())
         return fail("no free valid bot name found");
@@ -946,17 +915,8 @@ void BotMgr::PumpTeleports()
 
 bool BotMgr::AcceptSpawn(std::string& reason)
 {
-    std::string refusal;
-    if (_stopRequested || (_stopConfigured && _uptimeMs >= _stopAtMs))
-        refusal = "the bot run's stop time has passed";
-    else if (_bots.size() >= _limitMaxBots)
-        refusal = "the bot limit of " + std::to_string(_limitMaxBots) + " is reached";
-    else if (_lastWorldDiffMs > _limitMaxWorldDiffMs)
-        refusal = "the world update interval is " + std::to_string(_lastWorldDiffMs) + " ms (limit " +
-                  std::to_string(_limitMaxWorldDiffMs) + " ms)";
-    else if (uint64(CharacterDatabase.QueueSize()) > _limitMaxDbQueue)
-        refusal = "the character database queue has " + std::to_string(CharacterDatabase.QueueSize()) + " statements (limit " +
-                  std::to_string(_limitMaxDbQueue) + ")";
+    std::string const refusal = BotMgrRules::SpawnRefusal(_stopRequested || BotMgrRules::StopTimeReached(_stopConfigured, _uptimeMs, _stopAtMs),
+        _bots.size(), _limitMaxBots, _lastWorldDiffMs, _limitMaxWorldDiffMs, uint64(CharacterDatabase.QueueSize()), _limitMaxDbQueue);
 
     if (refusal.empty())
     {
@@ -976,7 +936,7 @@ bool BotMgr::AcceptSpawn(std::string& reason)
 // At the stop time the run ends: a normal shutdown, so the world loop stops and Main.cpp logs every bot out.
 void BotMgr::CheckStopTime()
 {
-    if (!_stopConfigured || _stopRequested || _uptimeMs < _stopAtMs)
+    if (_stopRequested || !BotMgrRules::StopTimeReached(_stopConfigured, _uptimeMs, _stopAtMs))
         return;
 
     _stopRequested = true;
@@ -1046,7 +1006,7 @@ void BotMgr::ProcessLogins(uint32 diff)
 {
     // Logins start at Bot.Login.MaxPerSecond a second, at most one second's worth saved up, and at most
     // Bot.Login.MaxPerTick in one tick.
-    _loginTokens = std::min<double>(_loginTokens + double(diff) * _loginPerSecond / 1000.0, double(_loginPerSecond));
+    _loginTokens = BotMgrRules::RefillLoginTokens(_loginTokens, diff, _loginPerSecond);
 
     uint32 started = 0;
     while (!_loginQueue.empty() && started < _loginMaxPerTick && _loginTokens >= 1.0)
