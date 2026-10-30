@@ -32,3 +32,6 @@ set_target_properties(tests
     PROPERTIES
       FOLDER
         "tests")
+
+# Standalone module tests (src/server/game/Modules/tests): own executables registered with add_test
+include(${CMAKE_CURRENT_SOURCE_DIR}/ModuleStandaloneTests.cmake)
