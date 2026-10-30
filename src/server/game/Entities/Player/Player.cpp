@@ -2514,19 +2514,13 @@ void Player::InitTalentForLevel()
         ResetTalentSpecialization();
 
     int32 talentTiers = DB2Manager::GetNumTalentsAtLevel(level, Classes(GetClass()));
-    if (level < 15)
-    {
-        // Remove all talent points
-        ResetTalents(true);
-    }
-    else
-    {
-        if (!GetSession()->HasPermission(rbac::RBAC_PERM_SKIP_CHECK_MORE_TALENTS_THAN_ALLOWED))
-            for (int32 t = talentTiers; t < MAX_TALENT_TIERS; ++t)
-                for (uint32 c = 0; c < MAX_TALENT_COLUMNS; ++c)
-                    for (TalentEntry const* talent : sDB2Manager.GetTalentsByPosition(GetClass(), t, c))
-                        RemoveTalent(talent);
-    }
+    // Classic 1.60: a level change never respecs (vanilla only resets talents at a trainer). The retail-era "level < 15 ->
+    // ResetTalents" cleanup wiped the points a level 10-14 character had spent on every ding and spec activation.
+    if (level >= 15 && !GetSession()->HasPermission(rbac::RBAC_PERM_SKIP_CHECK_MORE_TALENTS_THAN_ALLOWED))
+        for (int32 t = talentTiers; t < MAX_TALENT_TIERS; ++t)
+            for (uint32 c = 0; c < MAX_TALENT_COLUMNS; ++c)
+                for (TalentEntry const* talent : sDB2Manager.GetTalentsByPosition(GetClass(), t, c))
+                    RemoveTalent(talent);
 
     SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::MaxTalentTiers), talentTiers);
 
@@ -15746,7 +15740,7 @@ void Player::CompleteQuest(uint32 quest_id)
 
         if (Quest const* qInfo = sObjectMgr->GetQuestTemplate(quest_id))
             if (qInfo->HasFlag(QUEST_FLAGS_TRACKING_EVENT))
-                RewardQuest(qInfo, LootItemType::Item, 0, this, false);
+                RewardQuest(qInfo, LootItemType::Item, 0, nullptr, false);   // no quest giver: keep the open gossip menu
     }
 
     if (sWorld->getBoolConfig(CONFIG_QUEST_ENABLE_QUEST_TRACKER)) // check if Quest Tracker is enabled
@@ -24327,6 +24321,10 @@ void Player::StartTaxiMovement(uint32 mountDisplayId, uint32 path, uint32 pathNo
 {
     // remove fake death
     RemoveAurasWithInterruptFlags(SpellAuraInterruptFlags::Interacting);
+
+    // Forever: classic dismisses the pet for the flight and Dismount() on landing resummons it; left out, the pet
+    // stays behind, falls out of visibility range and is removed with its reagent (soul shard) refunded.
+    UnsummonPetTemporaryIfAny();
 
     if (mountDisplayId)
         Mount(mountDisplayId);

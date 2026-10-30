@@ -982,8 +982,14 @@ void WorldSession::HandleCharCreateOpcode(WorldPackets::Character::CreateCharact
     }
 
     std::shared_ptr<WorldPackets::Character::CharacterCreateInfo> createInfo = charCreate.CreateInfo;
-    CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_CHECK_NAME);
+    // Classic 1.60: the same name (or the same surname) may be used by several characters,
+    // only the exact name + surname combination has to be unique (same 48 character limit as when saving)
+    if (utf8length(charCreate.CreateInfo->Surname) > 48)
+        charCreate.CreateInfo->Surname.clear();
+
+    CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_CHECK_NAME_SURNAME);
     stmt->setString(0, charCreate.CreateInfo->Name);
+    stmt->setString(1, charCreate.CreateInfo->Surname);
 
     _queryProcessor.AddCallback(CharacterDatabase.AsyncQuery(stmt)
         .WithChainingPreparedCallback([this](QueryCallback& queryCallback, PreparedQueryResult result)
@@ -1146,7 +1152,7 @@ void WorldSession::HandleCharCreateOpcode(WorldPackets::Character::CreateCharact
             }
 
             // Check name uniqueness in the same step as saving to database
-            if (sCharacterCache->GetCharacterCacheByName(createInfo->Name))
+            if (sCharacterCache->GetCharacterCacheByFullName(createInfo->Name, createInfo->Surname))
             {
                 SendCharCreate(CHAR_CREATE_NAME_IN_USE);
                 return;
@@ -2157,8 +2163,9 @@ void WorldSession::HandleCheckCharacterNameAvailability(WorldPackets::Character:
     }
 
     // Ensure that there is no character with the desired new name
-    CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_CHECK_NAME);
+    CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_CHECK_NAME_SURNAME);
     stmt->setString(0, checkCharacterNameAvailability.Name);
+    stmt->setString(1, utf8length(checkCharacterNameAvailability.Surname) > 48 ? std::string() : checkCharacterNameAvailability.Surname);
 
     _queryProcessor.AddCallback(CharacterDatabase.AsyncQuery(stmt)
         .WithPreparedCallback([this, sequenceIndex = checkCharacterNameAvailability.SequenceIndex](PreparedQueryResult result)
@@ -3279,9 +3286,11 @@ void WorldSession::HandleRandomizeCharNameOpcode(WorldPackets::Character::Genera
         return;
     }
 
+    // Classic 1.60: the client's character-create UI only fills its surname box when it generates the name itself, which
+    // it does (name and surname from NameGen for the selected race and sex) when the server reports no name. A server name
+    // would leave the surname empty.
     WorldPackets::Character::GenerateRandomCharacterNameResult result;
-    result.Success = true;
-    result.Name = sDB2Manager.GetNameGenEntry(packet.Race, packet.Sex);
+    result.Success = false;
 
     SendPacket(result.Write());
 }

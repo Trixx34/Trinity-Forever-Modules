@@ -538,7 +538,21 @@ private:
 
         PreventHitDefaultEffect(effIndex);
         caster->CastSpell(caster, _longBuffSpell, CastSpellExtraArgs(TRIGGERED_FULL_MASK).SetTriggeringSpell(GetSpell()));
+
+        // "Reading the Ley Lines" (92597) completes on criteria 109629: cast Read Ley Line while having Leyline Convergence
+        // (1271952). Nothing in the client data or the sniffed DB applies that aura (on the official server it comes from a
+        // server-side source that was not captured), so the quest could never complete. Give it next to the ley line and
+        // count the cast again now that the condition holds.
+        if (_spellFocus == SPELL_FOCUS_LEY_LINE)
+            if (Player* player = caster->ToPlayer())
+            {
+                player->CastSpell(player, SPELL_LEYLINE_CONVERGENCE, CastSpellExtraArgs(TRIGGERED_FULL_MASK).SetTriggeringSpell(GetSpell()));
+                player->UpdateCriteria(CriteriaType::CastSpell, GetSpellInfo()->Id);
+            }
     }
+
+    static constexpr uint32 SPELL_FOCUS_LEY_LINE = 2246;
+    static constexpr uint32 SPELL_LEYLINE_CONVERGENCE = 1271952;
 
     void Register() override
     {
@@ -969,6 +983,40 @@ class classic_spell_pri_vampiric_embrace : public AuraScript
     }
 };
 
+// 17 - Power Word: Shield (vanilla): the shield leaves Weakened Soul on the target for 15 sec, and a target with Weakened Soul cannot be
+// shielded again. The 1.60 data does not apply the debuff here, so the script applies it when the shield hits and refuses the cast
+// while the target has it.
+class classic_spell_pri_power_word_shield : public SpellScript
+{
+    static constexpr uint32 SPELL_WEAKENED_SOUL = 6788;
+
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_WEAKENED_SOUL });
+    }
+
+    SpellCastResult CheckCast()
+    {
+        Unit* target = GetExplTargetUnit();
+        if (target && target->HasAura(SPELL_WEAKENED_SOUL))
+            return SPELL_FAILED_BAD_TARGETS;
+
+        return SPELL_CAST_OK;
+    }
+
+    void HandleAfterHit()
+    {
+        if (Unit* target = GetHitUnit())
+            GetCaster()->CastSpell(target, SPELL_WEAKENED_SOUL, CastSpellExtraArgs(TRIGGERED_FULL_MASK).SetTriggeringSpell(GetSpell()));
+    }
+
+    void Register() override
+    {
+        OnCheckCast += SpellCheckCastFn(classic_spell_pri_power_word_shield::CheckCast);
+        AfterHit += SpellHitFn(classic_spell_pri_power_word_shield::HandleAfterHit);
+    }
+};
+
 // High Alert follows the map: recalculated when entering or leaving a battleground
 class classic_player_high_alert_map : public PlayerScript
 {
@@ -1222,6 +1270,127 @@ class classic_spell_warr_gore_drinker_enrage : public AuraScript
     }
 };
 
+// 324, 325, 905, 945, 8134, 10431, 10432 - Lightning Shield: every rank triggers the dummy 26545 in 1.60, so cast the rank's
+// damage spell on the attacker instead (26364-26370, 26363)
+class classic_spell_sha_lightning_shield : public AuraScript
+{
+    static uint32 GetDamageSpell(uint32 shieldId)
+    {
+        switch (shieldId)
+        {
+            case 324:   return 26364;
+            case 325:   return 26365;
+            case 905:   return 26366;
+            case 945:   return 26367;
+            case 8134:  return 26369;
+            case 10431: return 26370;
+            case 10432: return 26363;
+            default:    return 0;
+        }
+    }
+
+    bool Validate(SpellInfo const* spellInfo) override
+    {
+        return ValidateSpellInfo({ GetDamageSpell(spellInfo->Id) });
+    }
+
+    void HandleProc(AuraEffect const* aurEff, ProcEventInfo& eventInfo)
+    {
+        PreventDefaultAction();
+        if (Unit* attacker = eventInfo.GetActor())
+            GetTarget()->CastSpell(attacker, GetDamageSpell(GetId()), CastSpellExtraArgsInit{
+                .TriggerFlags = TRIGGERED_FULL_MASK,
+                .TriggeringAura = aurEff
+            });
+    }
+
+    void Register() override
+    {
+        OnEffectProc += AuraEffectProcFn(classic_spell_sha_lightning_shield::HandleProc, EFFECT_0, SPELL_AURA_PROC_TRIGGER_SPELL);
+    }
+};
+
+// 436519 - Flametongue Weapon: every rank's weapon enchantment (5, 4, 3, 523, 1665, 1666, 7567) applies this dummy proc aura
+// in 1.60. Each hit with the enchanted weapon deals the rank's Fire damage, "Flametongue Weapon Proc" points / 100 per second
+// of weapon speed (rank 1: 326, 4 to 13 damage), through Flametongue Attack (spell power is added by its coefficient)
+class classic_spell_sha_flametongue_weapon : public AuraScript
+{
+    struct FlametongueRank
+    {
+        uint32 EnchantId;
+        uint32 ProcSpellId;
+        uint32 AttackSpellId;
+    };
+
+    static constexpr std::array<FlametongueRank, 7> Ranks =
+    { {
+        { 5,    8026,  29469 },
+        { 4,    8028,  29470 },
+        { 3,    8029,  10444 },
+        { 523,  10445, 10444 },
+        { 1665, 16343, 10444 },
+        { 1666, 16344, 10444 },
+        { 7567, 16344, 10444 }
+    } };
+
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ 8026, 8028, 8029, 10445, 16343, 16344, 29469, 29470, 10444 });
+    }
+
+    Item* GetProcWeapon(ProcEventInfo& eventInfo) const
+    {
+        Player* player = GetTarget()->ToPlayer();
+        DamageInfo* damageInfo = eventInfo.GetDamageInfo();
+        if (!player || !damageInfo || !eventInfo.GetActionTarget())
+            return nullptr;
+
+        WeaponAttackType attackType = damageInfo->GetAttackType();
+        if (attackType != BASE_ATTACK && attackType != OFF_ATTACK)
+            return nullptr;
+
+        // with two enchanted weapons each aura only procs on hits with its own weapon
+        Item* weapon = player->GetWeaponForAttack(attackType, true);
+        if (!weapon || weapon->GetGUID() != GetAura()->GetCastItemGUID())
+            return nullptr;
+
+        return weapon;
+    }
+
+    bool CheckProc(ProcEventInfo& eventInfo)
+    {
+        return GetProcWeapon(eventInfo) != nullptr;
+    }
+
+    void HandleProc(AuraEffect const* aurEff, ProcEventInfo& eventInfo)
+    {
+        PreventDefaultAction();
+
+        Item* weapon = GetProcWeapon(eventInfo);
+        if (!weapon)
+            return;
+
+        uint32 enchantId = weapon->GetEnchantmentId(TEMP_ENCHANTMENT_SLOT);
+        auto rank = std::ranges::find(Ranks, enchantId, &FlametongueRank::EnchantId);
+        if (rank == Ranks.end())
+            return;
+
+        Unit* caster = GetTarget();
+        SpellInfo const* procInfo = sSpellMgr->AssertSpellInfo(rank->ProcSpellId, DIFFICULTY_NONE);
+        float const speed = weapon->GetTemplate()->GetDelay() / 1000.0f;
+        int32 const damage = std::max(1, int32(procInfo->GetEffect(EFFECT_0).CalcValue(caster) * speed / 100.0f));
+
+        caster->CastSpell(eventInfo.GetActionTarget(), rank->AttackSpellId, CastSpellExtraArgs(aurEff)
+            .AddSpellMod(SPELLVALUE_BASE_POINT0, damage));
+    }
+
+    void Register() override
+    {
+        DoCheckProc += AuraCheckProcFn(classic_spell_sha_flametongue_weapon::CheckProc);
+        OnEffectProc += AuraEffectProcFn(classic_spell_sha_flametongue_weapon::HandleProc, EFFECT_0, SPELL_AURA_DUMMY);
+    }
+};
+
 void AddSC_classic_spell_scripts()
 {
     RegisterSpellScript(classic_spell_warr_gore_drinker);
@@ -1230,6 +1399,7 @@ void AddSC_classic_spell_scripts()
     RegisterSpellScript(classic_spell_tauren_cultivate_herb);
     new classic_unit_tigers_fury();
     RegisterSpellScript(classic_spell_pri_vampiric_embrace);
+    RegisterSpellScript(classic_spell_pri_power_word_shield);
     RegisterSpellScript(classic_spell_pal_consecration);
     RegisterSpellScript(classic_spell_pal_seal_of_fury);
     RegisterSpellScript(classic_spell_pal_seal_of_fury_damage);
@@ -1254,4 +1424,6 @@ void AddSC_classic_spell_scripts()
     RegisterSpellScript(classic_spell_profession_book);
     RegisterSpellScript(classic_spell_ground_area_damage);
     RegisterSpellScript(classic_spell_heal_injured_druid);
+    RegisterSpellScript(classic_spell_sha_lightning_shield);
+    RegisterSpellScript(classic_spell_sha_flametongue_weapon);
 }
