@@ -1,4 +1,5 @@
 #include "ModuleBotSnapshot.h"
+#include "ModuleBotSnapshotRules.h"
 #include "ModuleBotSupplies.h"
 #include "BotMgr.h"
 #include "BotProfessions.h"
@@ -51,12 +52,12 @@ constexpr float NearbyRange = 40.0f;
 
 uint32 ClampToUint32(uint64 value)
 {
-    return static_cast<uint32>(std::min<uint64>(value, std::numeric_limits<uint32>::max()));
+    return ModuleBotSnapshotRules::ClampToUint32(value);
 }
 
 uint32 ClampToUint32(int64 value)
 {
-    return value <= 0 ? 0 : ClampToUint32(static_cast<uint64>(value));
+    return ModuleBotSnapshotRules::ClampToUint32(value);
 }
 
 // The bot's quest log (layout 8): the quest ids in its slots, the status, and the progress of the first objectives.
@@ -96,11 +97,7 @@ void FillQuestLog(Player& bot, forever_module::BotSnapshot& entry)
 // (not removed) with a remaining cooldown above zero.
 void FillCooldowns(Player& bot, SpellCooldown (&slots)[forever_module::kMaxTrackedCooldowns])
 {
-    struct Active
-    {
-        uint32 SpellId;
-        uint32 Remaining;
-    };
+    using Active = ModuleBotSnapshotRules::ActiveCooldown;
 
     std::vector<Active> active;
     SpellHistory const* history = bot.GetSpellHistory();
@@ -115,10 +112,10 @@ void FillCooldowns(Player& bot, SpellCooldown (&slots)[forever_module::kMaxTrack
         auto const remaining = history->GetRemainingCooldown(info).count();
         if (remaining <= 0)
             continue;
-        active.push_back({ spellId, uint32(std::min<int64>(remaining, std::numeric_limits<uint32>::max())) });
+        active.push_back({ spellId, ModuleBotSnapshotRules::ClampCooldownRemaining(remaining) });
     }
 
-    std::sort(active.begin(), active.end(), [](Active const& a, Active const& b) { return a.Remaining < b.Remaining; });
+    ModuleBotSnapshotRules::SortCooldowns(active);
     for (std::size_t i = 0; i < active.size() && i < forever_module::kMaxTrackedCooldowns; ++i)
         slots[i] = { active[i].SpellId, active[i].Remaining };
 }
@@ -654,7 +651,7 @@ void FillGroundEffects(Player& bot, BotSnapshot& entry)
         candidates.push_back(c);
     }
     std::sort(candidates.begin(), candidates.end(), [](Candidate const& a, Candidate const& b) { return a.EdgeDistance < b.EdgeDistance; });
-    size_t const count = std::min(candidates.size(), forever_module::kMaxGroundEffects);
+    size_t const count = ModuleBotSnapshotRules::CapCount(candidates.size(), forever_module::kMaxGroundEffects);
     for (size_t i = 0; i < count; ++i)
         entry.ground_effects[i] = candidates[i].Effect;
     entry.ground_effect_count = uint8(count);
@@ -834,22 +831,11 @@ void FillLifeState(Player& bot, BotSnapshot& entry)
 
 // AuraEntry::remaining_ms for an aura with no duration (a passive stance, a permanent buff). The module only tests it
 // against 0 ("is the aura running?"), so the exact sentinel does not matter as long as it is not 0.
-constexpr uint32 InfiniteAuraMs = std::numeric_limits<uint32>::max();
+constexpr uint32 InfiniteAuraMs = ModuleBotSnapshotRules::kInfiniteAuraMs;
 
 // NearbyUnit::aura_mask. The layout calls the bits "core-defined and fixed per layout" and the SDK does not publish them,
 // so this is the core's assignment, frozen with layout 13: a later layout may add bits, but must not move or repurpose
 // one. A module that hard-codes these has to check the layout version before it trusts them.
-enum AuraMaskBit : uint32
-{
-    kAuraMaskPeriodicDamage = 0x00000001,   // a DOT: SPELL_AURA_PERIODIC_DAMAGE
-    kAuraMaskPeriodicHeal   = 0x00000002,   // SPELL_AURA_PERIODIC_HEAL
-    kAuraMaskPoison         = 0x00000004,   // a poison or a disease (Dispel is DISPEL_POISON or DISPEL_DISEASE)
-    kAuraMaskCrowdControl   = 0x00000008,   // stun, fear or confusion
-    kAuraMaskRoot           = 0x00000010,   // rooted or snared
-    kAuraMaskSlow           = 0x00000020,   // SPELL_AURA_MOD_DECREASE_SPEED
-    kAuraMaskInvisibility   = 0x00000040,   // SPELL_AURA_MOD_INVISIBILITY
-    kAuraMaskAbsorb         = 0x00000080,   // a damage shield or an absorb
-};
 
 // What an aura tells a module about its holder: the spell, the time left and the summary bits. A Dot, a poison or a stun is
 // what a module acts on, so an aura with bits is preferred over one without when the snapshot has no room for both.
@@ -867,24 +853,19 @@ uint32 AuraMaskOf(SpellInfo const* info)
     if (!info)
         return 0;
 
-    uint32 mask = 0;
-    if (info->HasAura(SPELL_AURA_PERIODIC_DAMAGE))
-        mask |= kAuraMaskPeriodicDamage;
-    if (info->HasAura(SPELL_AURA_PERIODIC_HEAL))
-        mask |= kAuraMaskPeriodicHeal;
-    if (info->Dispel == DISPEL_POISON || info->Dispel == DISPEL_DISEASE)
-        mask |= kAuraMaskPoison;
-    if (info->HasAura(SPELL_AURA_MOD_STUN) || info->HasAura(SPELL_AURA_MOD_FEAR) || info->HasAura(SPELL_AURA_MOD_CONFUSE))
-        mask |= kAuraMaskCrowdControl;
-    if (info->Mechanic == MECHANIC_ROOT || info->Mechanic == MECHANIC_SNARE)
-        mask |= kAuraMaskRoot;
-    if (info->HasAura(SPELL_AURA_MOD_DECREASE_SPEED))
-        mask |= kAuraMaskSlow;
-    if (info->HasAura(SPELL_AURA_MOD_INVISIBILITY))
-        mask |= kAuraMaskInvisibility;
-    if (info->HasAura(SPELL_AURA_SCHOOL_ABSORB) || info->HasAura(SPELL_AURA_DAMAGE_SHIELD))
-        mask |= kAuraMaskAbsorb;
-    return mask;
+    ModuleBotSnapshotRules::AuraTraits traits;
+    traits.PeriodicDamage = info->HasAura(SPELL_AURA_PERIODIC_DAMAGE);
+    traits.PeriodicHeal = info->HasAura(SPELL_AURA_PERIODIC_HEAL);
+    traits.PoisonOrDisease = info->Dispel == DISPEL_POISON || info->Dispel == DISPEL_DISEASE;
+    traits.Stun = info->HasAura(SPELL_AURA_MOD_STUN);
+    traits.Fear = info->HasAura(SPELL_AURA_MOD_FEAR);
+    traits.Confuse = info->HasAura(SPELL_AURA_MOD_CONFUSE);
+    traits.RootOrSnareMechanic = info->Mechanic == MECHANIC_ROOT || info->Mechanic == MECHANIC_SNARE;
+    traits.Slow = info->HasAura(SPELL_AURA_MOD_DECREASE_SPEED);
+    traits.Invisibility = info->HasAura(SPELL_AURA_MOD_INVISIBILITY);
+    traits.SchoolAbsorb = info->HasAura(SPELL_AURA_SCHOOL_ABSORB);
+    traits.DamageShield = info->HasAura(SPELL_AURA_DAMAGE_SHIELD);
+    return ModuleBotSnapshotRules::BuildAuraMask(traits); // the bit values live there (frozen with layout 13)
 }
 
 // The auras a unit carries, at most `capacity` of them, in the order the snapshot reports them. Returns how many were
@@ -913,8 +894,8 @@ uint32 CollectAuras(Unit const& unit, AuraFact* out, uint32 capacity)
             if (wantMasked != (mask != 0))
                 continue;
 
-            uint32 const remaining = permanent ? InfiniteAuraMs : uint32(left);
-            uint32 const stacks = std::max<uint32>(1, aura->GetStackAmount());
+            uint32 const remaining = ModuleBotSnapshotRules::AuraRemainingMs(permanent, left);
+            uint32 const stacks = ModuleBotSnapshotRules::AuraStacks(aura->GetStackAmount());
 
             // The same spell again (another caster): keep the longer one, and never a second entry for it.
             uint32 slot = count;
@@ -1163,9 +1144,9 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
         damage.LifeStart = damage.Sequence;
     }
     entry.damage_sequence = damage.Sequence;
-    entry.damage_hit_count = uint8(std::min<uint32>(damage.Sequence - damage.LifeStart, forever_module::kMaxDamageHits));
+    entry.damage_hit_count = ModuleBotSnapshotRules::DamageHitCount(damage.Sequence, damage.LifeStart, forever_module::kMaxDamageHits);
     for (uint8 i = 0; i < entry.damage_hit_count; ++i)
-        entry.damage_hits[i] = damage.Hits[(damage.Next + forever_module::kMaxDamageHits - entry.damage_hit_count + i) % forever_module::kMaxDamageHits];
+        entry.damage_hits[i] = damage.Hits[ModuleBotSnapshotRules::DamageRingSlot(damage.Next, forever_module::kMaxDamageHits, entry.damage_hit_count, i)];
 
     if (maxNearby == 0)
         return result;
@@ -1173,7 +1154,7 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
     // Between refreshes the bot's own entry is current, and its nearby units are the ones from the last refresh.
     if (!refreshNearby && !cachedNearby.empty())
     {
-        result.Nearby = std::span<NearbyUnit const>(cachedNearby).first(std::min<std::size_t>(cachedNearby.size(), maxNearby));
+        result.Nearby = std::span<NearbyUnit const>(cachedNearby).first(ModuleBotSnapshotRules::CapCount(cachedNearby.size(), maxNearby));
         return result;
     }
 
@@ -1216,11 +1197,7 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
     // that prefix instead of fully sorting potentially large crowds around a bot.
     auto sortPrefix = [&](std::vector<Unit*>& units)
     {
-        size_t const prefix = std::min<size_t>(units.size(), maxNearby);
-        if (prefix < units.size())
-            std::partial_sort(units.begin(), units.begin() + prefix, units.end(), closerFirst);
-        else
-            std::sort(units.begin(), units.end(), closerFirst);
+        ModuleBotSnapshotRules::SortNearestPrefix(units, maxNearby, closerFirst);
     };
     sortPrefix(players);
     sortPrefix(creatures);
@@ -1228,29 +1205,7 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
 
     // The closest few players, then living creatures, then corpses, then any players that are left if there is still room. Corpses
     // come after the living so that they never take a slot a live target needs.
-    size_t const playerSlots = std::min<size_t>(kNearbyPlayerSlots, maxNearby);
-    for (Unit* player : players)
-    {
-        if (chosen.size() >= playerSlots)
-            break;
-        chosen.push_back(player);
-    }
-    size_t const leadingPlayers = chosen.size();
-    for (Unit* creature : creatures)
-    {
-        if (chosen.size() >= maxNearby)
-            break;
-        chosen.push_back(creature);
-    }
-    for (Unit* corpse : corpses)
-    {
-        if (chosen.size() >= maxNearby)
-            break;
-        chosen.push_back(corpse);
-    }
-    for (size_t i = leadingPlayers; i < players.size() && chosen.size() < maxNearby; ++i)
-        chosen.push_back(players[i]);
-    std::sort(chosen.begin(), chosen.end(), closerFirst);
+    ModuleBotSnapshotRules::ChooseNearby(players, creatures, corpses, chosen, maxNearby, kNearbyPlayerSlots, closerFirst);
 
     for (Unit* unit : chosen)
     {
@@ -1310,7 +1265,7 @@ void RecordBotDamage(Unit const& victim, Unit const* attacker, uint32 spellId, u
     hit.spell_id = spellId;
     hit.amount = amount;
     hit.sequence = ++damage.Sequence;
-    damage.Next = (damage.Next + 1) % forever_module::kMaxDamageHits;
+    damage.Next = ModuleBotSnapshotRules::NextDamageSlot(damage.Next, forever_module::kMaxDamageHits);
 }
 
 void ClearBotDamageLog(uint64 botCounter)
