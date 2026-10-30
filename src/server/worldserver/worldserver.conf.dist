@@ -1836,6 +1836,11 @@ Bot.Limit.MaxDbQueue = 5000
 #        1 = a module may make a bot use a game object near it (kUseObject): click a door, a lever or an altar, or use an item on it (a key, a charge of powder; the
 #            bot is given the item if it has none). For dungeon scenarios, where a bot party cannot open a locked door a player would. Off in normal play.
 #
+#    Bot.Actions.Gossip
+#        Default:     0
+#        1 = a module may make a bot talk to a creature and pick one of its gossip options (kGossip), which starts a scripted event such as an escort (the Disciple of
+#            Naralex in Wailing Caverns). For dungeon scenarios. Off in normal play.
+#
 #    Bot.Snapshot.GroundEffects
 #        Default:     0
 #        1 = the snapshot of each bot lists the dynamic objects (a spell's persistent area: Flamestrike, Blizzard, a poison cloud) and area triggers within 30 yards

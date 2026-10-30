@@ -2117,6 +2117,68 @@ BotActionStatus UseObjectAction(Player& bot, BotAction const& action, std::strin
     return StatusForCast(result);
 }
 
+// Talk to a creature and pick one of its gossip options (SDK 0.24, ActionType::kGossip): what a player does at the Disciple of Naralex to start the escort. spell_id is the
+// creature's entry (the nearest live one within kGossipSearchYards is the one), dest_x the option's place in the menu, counted from 0. The creature's script gets its hello
+// first (a C++ script builds its own menu), the database menu is used when it does not. A scenario tool: off unless Bot.Actions.Gossip is on.
+constexpr float kGossipSearchYards = 30.0f;
+
+BotActionStatus GossipAction(Player& bot, BotAction const& action, std::string& reason)
+{
+    static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Actions.Gossip", false);
+    if (!allowed)
+    {
+        reason = "Bot.Actions.Gossip is off";
+        return BotActionStatus::kRefused;
+    }
+    if (!bot.IsAlive() || bot.IsInCombat() || bot.IsInFlight())
+    {
+        reason = !bot.IsAlive() ? "bot is dead" : bot.IsInCombat() ? "bot is in combat" : "bot is on a flight";
+        return BotActionStatus::kRefused;
+    }
+    Creature* npc = action.spell_id ? bot.FindNearestCreature(action.spell_id, kGossipSearchYards, true) : nullptr;
+    if (!npc)
+    {
+        reason = "no creature " + std::to_string(action.spell_id) + " within " + std::to_string(int(kGossipSearchYards)) + " yards";
+        return BotActionStatus::kInvalidTarget;
+    }
+    if (!bot.IsWithinDistInMap(npc, INTERACTION_DISTANCE))
+    {
+        reason = "the creature is " + std::to_string(int(bot.GetDistance(npc))) + " yards away";
+        return BotActionStatus::kOutOfRange;
+    }
+    if (!bot.GetNPCIfCanInteractWith(npc->GetGUID(), UNIT_NPC_FLAG_GOSSIP, UNIT_NPC_FLAG_2_NONE))
+    {
+        reason = "the creature cannot be talked to";
+        return BotActionStatus::kRefused;
+    }
+    if (!std::isfinite(action.dest_x) || action.dest_x < 0.0f)
+    {
+        reason = "the option place is not a number from 0";
+        return BotActionStatus::kRefused;
+    }
+
+    bot.PlayerTalkClass->ClearMenus();
+    if (!npc->AI()->OnGossipHello(&bot))
+        bot.PrepareGossipMenu(npc, bot.GetGossipMenuForSource(npc), true);
+    GossipMenu const& menu = bot.PlayerTalkClass->GetGossipMenu();
+    GossipMenuItemContainer const& items = menu.GetMenuItems();
+    uint32 const place = uint32(action.dest_x);
+    if (place >= items.size())
+    {
+        reason = "the creature shows " + std::to_string(items.size()) + " gossip option(s), none at place " + std::to_string(place);
+        bot.PlayerTalkClass->ClearMenus();
+        return BotActionStatus::kRefused;
+    }
+    // copied first: the script may clear the menu while it answers
+    int32 const optionId = items[place].GossipOptionID;
+    uint32 const orderIndex = items[place].OrderIndex;
+    uint32 const menuId = menu.GetMenuId();
+    if (!npc->AI()->OnGossipSelect(&bot, menuId, orderIndex))
+        bot.OnGossipSelect(npc, optionId, menuId);
+    bot.PlayerTalkClass->ClearMenus();
+    return BotActionStatus::kApplied;
+}
+
 // Fly (layout 17, ActionType::kTaxi). The bot stands at a flight master (target_guid names it, 0 = the nearest in reach) and wants to get near
 // (dest_x, dest_y, dest_z) on its own map (spell_id is that map). Every bot knows every flight node of its faction (BotTaxi::LearnAllNodes, also
 // done at login; the player's handler checks the mask, this path does not, so a missing node could not refuse the flight) and flies free
@@ -2645,6 +2707,9 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
 
         case ActionType::kUseObject:
             return UseObjectAction(bot, action, reason);
+
+        case ActionType::kGossip:
+            return GossipAction(bot, action, reason);
 
         // Crafting and gathering (SDK 0.18).
         case ActionType::kCraft:
