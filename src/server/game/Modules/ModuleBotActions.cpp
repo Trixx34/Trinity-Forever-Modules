@@ -21,6 +21,7 @@
 #include "Creature.h"
 #include "CreatureAI.h"
 #include "DB2Structure.h"
+#include "GossipDef.h"
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
 #include "Group.h"
