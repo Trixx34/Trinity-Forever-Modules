@@ -55,7 +55,7 @@ int main()
     // The shared region is mapped by two processes built separately, so a shape that changes without a layout bump is
     // memory corruption that nothing else would catch. These sizes are what the SDK's header gives on the same platform.
     CHECK(sizeof(forever_module::AuraEntry) == 12);
-    CHECK(sizeof(forever_module::BotSnapshot) == 936);          // the SDK pins the same size (tier2_session.cpp); this check was left at the layout-3 value
+    CHECK(sizeof(forever_module::BotSnapshot) == 1136);         // the SDK pins the same size (tier2_session.cpp, layout 22: 936 until the damage log)
     CHECK(sizeof(forever_module::GroundEffect) == 24);
     CHECK(sizeof(forever_module::NearbyUnit) == 48);
     CHECK(offsetof(forever_module::BotSnapshot, aura_count) == 376);
