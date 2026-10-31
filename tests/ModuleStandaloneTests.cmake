@@ -96,7 +96,8 @@ if(MODULE_SDK_TESTS)
   endforeach()
 
   add_library(module-test-sdk-proto STATIC ${MODULE_PROTO_SOURCES})
-  target_include_directories(module-test-sdk-proto SYSTEM PUBLIC "${MODULE_PROTO_OUT}")
+  # the generated headers ("envelope.pb.h") and the SDK's own headers ("forever_module/talent_spec.h", used by ModuleWireInterop)
+  target_include_directories(module-test-sdk-proto SYSTEM PUBLIC "${MODULE_PROTO_OUT}" "${FOREVER_SDK_DIR}/include")
   target_link_libraries(module-test-sdk-proto
     PUBLIC
       protobuf::libprotobuf
@@ -105,8 +106,12 @@ if(MODULE_SDK_TESTS)
       trinity-no-warning-interface)
   set_target_properties(module-test-sdk-proto PROPERTIES FOLDER "tests")
 
-  module_test(module_wire_interop ModuleWireInterop.cpp ${MODULE_TEST_SRC}/ModuleWire.cpp)
-  target_link_libraries(module_wire_interop PRIVATE module-test-sdk-proto)
+  if(EXISTS "${FOREVER_SDK_DIR}/include/forever_module/talent_spec.h")
+    module_test(module_wire_interop ModuleWireInterop.cpp ${MODULE_TEST_SRC}/ModuleWire.cpp)
+    target_link_libraries(module_wire_interop PRIVATE module-test-sdk-proto)
+  else()
+    message(STATUS "Module standalone tests: ${FOREVER_SDK_DIR}/include/forever_module/talent_spec.h not found (SDK too old), ModuleWireInterop is not registered")
+  endif()
   module_test(module_session_test ModuleSessionTest.cpp ${MODULE_TEST_SRC}/ModuleSession.cpp ${MODULE_TEST_SRC}/ModuleSocket.cpp
     ${MODULE_TEST_SRC}/ModuleWire.cpp)
   target_link_libraries(module_session_test PRIVATE module-test-sdk-proto)
