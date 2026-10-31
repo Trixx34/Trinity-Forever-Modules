@@ -14,6 +14,7 @@
 #pragma once
 
 #include "Define.h"
+#include "ModuleBotSupplyRules.h"
 
 #include <string>
 
@@ -24,15 +25,8 @@ class Player;
 
 namespace ModuleBotSupplies
 {
-enum class Kind : uint8
-{
-    None = 0,
-    Food = 1,
-    Drink = 2,
-    HealthPotion = 3,   // layout 16
-    ManaPotion = 4,
-    Bandage = 5
-};
+// Defined in ModuleBotSupplyRules.h, with the pure rules that use it.
+using Kind = ModuleBotSupplyRules::Kind;
 
 // Indexes of VendorStock::MinLevel.
 enum StockIndex : uint8
@@ -62,21 +56,9 @@ bool Enabled();
 // that heals or restores mana (layout 16: from the effect of its use spell), or a bandage.
 Kind KindOf(ItemTemplate const* proto);
 
-// The money a bot keeps back when it shops for anything but ammunition: `perLevel` copper for each level it has. Pure arithmetic, so the
-// settings can be tested without a world.
-constexpr uint64 ReserveFor(uint32 level, uint32 perLevel)
-{
-    return uint64(level) * perLevel;
-}
-
-// What of `money` may be spent when `reserve` is kept back.
-constexpr uint64 Spendable(uint64 money, uint64 reserve)
-{
-    return money > reserve ? money - reserve : 0;
-}
-
-static_assert(ReserveFor(60, 5) == 300 && ReserveFor(1, 0) == 0, "the reserve is perLevel copper for each level");
-static_assert(Spendable(1000, 300) == 700 && Spendable(300, 300) == 0 && Spendable(100, 300) == 0, "money under the reserve is not spendable");
+// The money a bot keeps back when it shops for anything but ammunition, and what of its money may be spent (pure arithmetic, in ModuleBotSupplyRules.h).
+using ModuleBotSupplyRules::ReserveFor;
+using ModuleBotSupplyRules::Spendable;
 
 // The settings (read once from worldserver.conf).
 uint32 ReservePerLevel();   // Bot.Supplies.ReserveCopperPerLevel, default 5
@@ -97,10 +79,7 @@ MissingReagent MissingReagentOf(Player& bot);   // clears the note once the bot 
 void ForgetReagent(uint64 botCounter);
 
 // Whether a bot with `maxMana` mana can use an item of this kind at all (a mana potion needs mana).
-constexpr bool KindFitsClass(Kind kind, bool manaUser)
-{
-    return kind != Kind::Drink && kind != Kind::ManaPotion ? true : manaUser;
-}
+using ModuleBotSupplyRules::KindFitsClass;
 
 // The lowest required levels of what the vendor template with this entry sells.
 VendorStock StockOf(uint32 vendorEntry);
