@@ -1,4 +1,5 @@
 #include "ModuleBotActions.h"
+#include "ModuleBotActionRules.h"
 #include "ModuleGroupRules.h"
 #include "ModuleMgr.h"
 #include "BotProfessions.h"
@@ -127,32 +128,7 @@ std::string AttackRefusalReason(Player& bot, Unit* target)
 // Maps a cast result to the status a module sees in the next snapshot.
 BotActionStatus StatusForCast(SpellCastResult result)
 {
-    switch (result)
-    {
-        case SPELL_CAST_OK:
-            return BotActionStatus::kApplied;
-        case SPELL_FAILED_OUT_OF_RANGE:
-            return BotActionStatus::kOutOfRange;
-        case SPELL_FAILED_NOT_READY:
-            return BotActionStatus::kOnCooldown;
-        case SPELL_FAILED_NO_POWER:
-            return BotActionStatus::kNotEnoughPower;
-        case SPELL_FAILED_LINE_OF_SIGHT:
-            return BotActionStatus::kNoLineOfSight;
-        case SPELL_FAILED_BAD_TARGETS:
-        case SPELL_FAILED_BAD_IMPLICIT_TARGETS:
-            return BotActionStatus::kInvalidTarget;
-        case SPELL_FAILED_NOT_KNOWN:
-            return BotActionStatus::kNotKnown;
-        case SPELL_FAILED_MOVING:
-            return BotActionStatus::kMoving;
-        case SPELL_FAILED_SPELL_IN_PROGRESS:
-            return BotActionStatus::kBusy;
-        case SPELL_FAILED_REQUIRES_SPELL_FOCUS:
-            return BotActionStatus::kNeedsFocus; // an anvil, a forge or a fire is not near: the module walks to one
-        default:
-            return BotActionStatus::kRefused;
-    }
+    return BotActionRules::StatusForCastResult(int32(result));
 }
 
 } // namespace
@@ -461,10 +437,10 @@ BotActionStatus CastRecipe(Player& bot, uint32 recipe, std::string& reason)
 BotActionStatus CannotCraftNow(Player& bot, std::string& reason, bool& refused)
 {
     refused = true;
-    if (bot.IsInCombat() || !bot.IsAlive())
+    if (BotActionRules::StateGateResult const state = BotActionRules::AliveIdleGate(bot.IsAlive(), bot.IsInCombat(), false); !state.allowed)
     {
-        reason = bot.IsAlive() ? "bot is in combat" : "bot is dead";
-        return BotActionStatus::kRefused;
+        reason = state.reason;
+        return state.status;
     }
     if (Spell const* current = bot.GetCurrentSpell(CURRENT_GENERIC_SPELL); current && current->getState() != SPELL_STATE_FINISHED)
     {
@@ -1179,10 +1155,10 @@ BotActionStatus QuestAction(Player& bot, uint32 code, std::string& reason)
 BotActionStatus TeleportAction(Player& bot, BotAction const& action, std::string& reason)
 {
     static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Actions.Teleport", false);
-    if (!allowed)
+    if (BotActionRules::ConfigGateResult const gate = BotActionRules::ConfigGate(ActionType::kTeleport, allowed); !gate.allowed)
     {
-        reason = "Bot.Actions.Teleport is off";
-        return BotActionStatus::kRefused;
+        reason = gate.reason;
+        return gate.status;
     }
     if (bot.IsInCombat())
     {
@@ -1207,10 +1183,10 @@ BotActionStatus TeleportAction(Player& bot, BotAction const& action, std::string
 BotActionStatus GrantAction(Player& bot, BotAction const& action, std::string& reason)
 {
     static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Actions.Grant", false);
-    if (!allowed)
+    if (BotActionRules::ConfigGateResult const gate = BotActionRules::ConfigGate(ActionType::kGrant, allowed); !gate.allowed)
     {
-        reason = "Bot.Actions.Grant is off";
-        return BotActionStatus::kRefused;
+        reason = gate.reason;
+        return gate.status;
     }
     uint32 const entry = action.spell_id;
     ItemTemplate const* proto = sObjectMgr->GetItemTemplate(entry);
@@ -1677,20 +1653,10 @@ BotActionStatus GatherAction(Player& bot, BotAction const& action, std::string& 
 // Release the spirit (layout 11): the checks of WorldSession::HandleRepopRequest, which returns silently, plus the combat refusal.
 BotActionStatus ReleaseSpiritAction(Player& bot, std::string& reason)
 {
-    if (bot.IsAlive())
+    if (BotActionRules::StateGateResult const state = BotActionRules::ReleaseSpiritGate(bot.IsAlive(), bot.HasPlayerFlag(PLAYER_FLAGS_GHOST), bot.IsInCombat()); !state.allowed)
     {
-        reason = "bot is alive";
-        return BotActionStatus::kRefused;
-    }
-    if (bot.HasPlayerFlag(PLAYER_FLAGS_GHOST))
-    {
-        reason = "spirit is already released";
-        return BotActionStatus::kRefused;
-    }
-    if (bot.IsInCombat())
-    {
-        reason = "bot is in combat";
-        return BotActionStatus::kRefused;
+        reason = state.reason;
+        return state.status;
     }
     if (bot.IsBeingTeleported())
     {
@@ -1760,15 +1726,10 @@ BotActionStatus ResurrectResponseAction(Player& bot, BotAction const& action, st
 // Reclaim the corpse (layout 11): the checks of WorldSession::HandleReclaimCorpse, which returns silently.
 BotActionStatus ReclaimCorpseAction(Player& bot, std::string& reason)
 {
-    if (bot.IsAlive())
+    if (BotActionRules::StateGateResult const state = BotActionRules::ReclaimCorpseGate(bot.IsAlive(), bot.HasPlayerFlag(PLAYER_FLAGS_GHOST)); !state.allowed)
     {
-        reason = "bot is alive";
-        return BotActionStatus::kRefused;
-    }
-    if (!bot.HasPlayerFlag(PLAYER_FLAGS_GHOST))
-    {
-        reason = "spirit is not released";
-        return BotActionStatus::kRefused;
+        reason = state.reason;
+        return state.status;
     }
     if (bot.InArena())
     {
@@ -2040,15 +2001,15 @@ constexpr float kUseObjectYards = 8.0f;
 BotActionStatus UseObjectAction(Player& bot, BotAction const& action, std::string& reason)
 {
     static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Actions.UseObject", false);
-    if (!allowed)
+    if (BotActionRules::ConfigGateResult const gate = BotActionRules::ConfigGate(ActionType::kUseObject, allowed); !gate.allowed)
     {
-        reason = "Bot.Actions.UseObject is off";
-        return BotActionStatus::kRefused;
+        reason = gate.reason;
+        return gate.status;
     }
-    if (!bot.IsAlive() || bot.IsInCombat() || bot.IsInFlight())
+    if (BotActionRules::StateGateResult const state = BotActionRules::AliveIdleGate(bot.IsAlive(), bot.IsInCombat(), bot.IsInFlight()); !state.allowed)
     {
-        reason = !bot.IsAlive() ? "bot is dead" : bot.IsInCombat() ? "bot is in combat" : "bot is on a flight";
-        return BotActionStatus::kRefused;
+        reason = state.reason;
+        return state.status;
     }
     GameObject* object = action.spell_id ? bot.FindNearestGameObject(action.spell_id, kUseObjectSearchYards, false) : nullptr;
     if (!object)
@@ -2126,15 +2087,15 @@ constexpr float kGossipSearchYards = 30.0f;
 BotActionStatus GossipAction(Player& bot, BotAction const& action, std::string& reason)
 {
     static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Actions.Gossip", false);
-    if (!allowed)
+    if (BotActionRules::ConfigGateResult const gate = BotActionRules::ConfigGate(ActionType::kGossip, allowed); !gate.allowed)
     {
-        reason = "Bot.Actions.Gossip is off";
-        return BotActionStatus::kRefused;
+        reason = gate.reason;
+        return gate.status;
     }
-    if (!bot.IsAlive() || bot.IsInCombat() || bot.IsInFlight())
+    if (BotActionRules::StateGateResult const state = BotActionRules::AliveIdleGate(bot.IsAlive(), bot.IsInCombat(), bot.IsInFlight()); !state.allowed)
     {
-        reason = !bot.IsAlive() ? "bot is dead" : bot.IsInCombat() ? "bot is in combat" : "bot is on a flight";
-        return BotActionStatus::kRefused;
+        reason = state.reason;
+        return state.status;
     }
     Creature* npc = action.spell_id ? bot.FindNearestCreature(action.spell_id, kGossipSearchYards, true) : nullptr;
     if (!npc)
