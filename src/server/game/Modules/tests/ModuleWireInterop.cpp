@@ -222,6 +222,10 @@ int main()
                     break;
                 case ModuleWire::NotifyKind::PlayerChat:
                     break; // has its own body, checked below
+                case ModuleWire::NotifyKind::PlayerItemLooted:
+                case ModuleWire::NotifyKind::PlayerAuctionResult:
+                case ModuleWire::NotifyKind::BotTrade:
+                    break; // not part of this loop's cases (listed so a new NotifyKind shows up as a -Wswitch warning)
             }
         }
     }

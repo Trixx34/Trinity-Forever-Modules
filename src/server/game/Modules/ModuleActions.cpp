@@ -266,7 +266,7 @@ void ExecuteStoreAction(std::string const& moduleName, ModuleWire::ActionRequest
 namespace
 {
 
-static uint32 AuctionFactionTemplate(ObjectGuid auctioneer)
+[[maybe_unused]] static uint32 AuctionFactionTemplate(ObjectGuid auctioneer)   // not used at the moment (kept for the auction faction check)
 {
     if (CreatureTemplate const* ct = sObjectMgr->GetCreatureTemplate(auctioneer.GetEntry()))
         return ct->faction;
@@ -832,6 +832,14 @@ void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire
             reply.Success = true;
             return;
 
+        // The store, auction and buy kinds are handled by the first switch above and never get here; listing them keeps -Wswitch quiet and the result the same
+        // as before (an unhandled kind falls out of the switch to "unknown action").
+        case ModuleWire::ActionKind::StoreGet:
+        case ModuleWire::ActionKind::StoreSet:
+        case ModuleWire::ActionKind::StoreDelete:
+        case ModuleWire::ActionKind::StoreList:
+        case ModuleWire::ActionKind::AuctionHouse:
+        case ModuleWire::ActionKind::BuyItem:
         case ModuleWire::ActionKind::Log:
         case ModuleWire::ActionKind::BotSpeak:
         case ModuleWire::ActionKind::BotTrade:
