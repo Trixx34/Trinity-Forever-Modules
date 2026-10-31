@@ -35,3 +35,6 @@ set_target_properties(tests
 
 # Tier-0 guards (layout/protocol sync with the SDK, header self-containment): tests/ModuleGuards.cmake
 include(${CMAKE_CURRENT_SOURCE_DIR}/ModuleGuards.cmake)
+
+# Standalone module tests (src/server/game/Modules/tests): own executables registered with add_test
+include(${CMAKE_CURRENT_SOURCE_DIR}/ModuleStandaloneTests.cmake)
