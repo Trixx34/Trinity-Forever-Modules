@@ -16066,7 +16066,8 @@ void Player::RewardQuest(Quest const* quest, LootItemType rewardType, uint32 rew
         if (uint32 questMailSender = quest->GetRewMailSenderEntry())
             MailDraft(mail_template_id).SendMailTo(trans, this, questMailSender, MAIL_CHECK_MASK_HAS_BODY, quest->GetRewMailDelaySecs());
         else
-            MailDraft(mail_template_id).SendMailTo(trans, this, questGiver, MAIL_CHECK_MASK_HAS_BODY, quest->GetRewMailDelaySecs());
+            // No quest giver (a tracking-event quest, CompleteQuest): the player, as before, never a null MailSender.
+            MailDraft(mail_template_id).SendMailTo(trans, this, questGiver ? questGiver : this, MAIL_CHECK_MASK_HAS_BODY, quest->GetRewMailDelaySecs());
         CharacterDatabase.CommitTransaction(trans);
     }
 
