@@ -93,6 +93,15 @@ void FillQuestLog(Player& bot, forever_module::BotSnapshot& entry)
     }
 }
 
+// sSpellMgr->GetSpellInfo(id, DIFFICULTY_NONE), remembered per spell id (including "no such spell"). The lookup is an ordered
+// index search and FillCooldowns made one per known spell of every bot on every tick. The SpellInfo store is built once at
+// world start and only freed at shutdown, so the pointers stay valid. One cache per thread, so no locking is needed.
+SpellInfo const* CachedSpellInfo(uint32 spellId)
+{
+    thread_local ModuleBotSnapshotRules::SpellIdCache<SpellInfo const*> cache;
+    return cache.Get(spellId, nullptr, [spellId] { return sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE); });
+}
+
 // The bot's active cooldowns, closest to expiring first, up to the slots in the snapshot. Each is a known spell
 // (not removed) with a remaining cooldown above zero.
 void FillCooldowns(Player& bot, SpellCooldown (&slots)[forever_module::kMaxTrackedCooldowns])
@@ -105,7 +114,7 @@ void FillCooldowns(Player& bot, SpellCooldown (&slots)[forever_module::kMaxTrack
     {
         if (spell.state == PLAYERSPELL_REMOVED)
             continue;
-        SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE);
+        SpellInfo const* info = CachedSpellInfo(spellId);
         if (!info)
             continue;
 
@@ -848,11 +857,8 @@ struct AuraFact
 };
 
 // The summary bits of a spell. Read from the spell's own effects, so it costs the same whatever the aura is of.
-uint32 AuraMaskOf(SpellInfo const* info)
+uint32 ComputeAuraMask(SpellInfo const* info)
 {
-    if (!info)
-        return 0;
-
     ModuleBotSnapshotRules::AuraTraits traits;
     traits.PeriodicDamage = info->HasAura(SPELL_AURA_PERIODIC_DAMAGE);
     traits.PeriodicHeal = info->HasAura(SPELL_AURA_PERIODIC_HEAL);
@@ -866,6 +872,18 @@ uint32 AuraMaskOf(SpellInfo const* info)
     traits.SchoolAbsorb = info->HasAura(SPELL_AURA_SCHOOL_ABSORB);
     traits.DamageShield = info->HasAura(SPELL_AURA_DAMAGE_SHIELD);
     return ModuleBotSnapshotRules::BuildAuraMask(traits); // the bit values live there (frozen with layout 13)
+}
+
+// The mask is a pure function of the spell's static data, so it is worked out once per spell and remembered (the effect walk
+// behind HasAura was a large share of the snapshot's cost). The entry is tagged with the SpellInfo pointer, so another
+// SpellInfo for the same id (a different difficulty) is worked out on its own.
+uint32 AuraMaskOf(SpellInfo const* info)
+{
+    if (!info)
+        return 0;
+
+    thread_local ModuleBotSnapshotRules::SpellIdCache<uint32> cache;
+    return cache.Get(info->Id, info, [info] { return ComputeAuraMask(info); });
 }
 
 // The auras a unit carries, at most `capacity` of them, in the order the snapshot reports them. Returns how many were

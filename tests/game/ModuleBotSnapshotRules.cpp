@@ -336,3 +336,42 @@ TEST_CASE("Aura mask is built from the spell traits", "[ModuleBotSnapshotRules]"
         CHECK(Rules::BuildAuraMask(t) == 0xFFu);
     }
 }
+
+TEST_CASE("SpellIdCache works a value out once per spell id", "[ModuleBotSnapshotRules]")
+{
+    Rules::SpellIdCache<uint32> cache;
+    int calls = 0;
+    int a = 0;
+    auto compute = [&calls](uint32 value) { return [&calls, value] { ++calls; return value; }; };
+
+    CHECK(cache.Get(10, &a, compute(7)) == 7u);
+    CHECK(calls == 1);
+    CHECK(cache.Get(10, &a, compute(99)) == 7u); // served from the cache, compute not called
+    CHECK(calls == 1);
+    CHECK(cache.Get(11, &a, compute(5)) == 5u);
+    CHECK(calls == 2);
+    CHECK(cache.Size() == 2u);
+}
+
+TEST_CASE("SpellIdCache works a value out again when the tag changes", "[ModuleBotSnapshotRules]")
+{
+    Rules::SpellIdCache<uint32> cache;
+    int first = 0;
+    int second = 0;
+    int calls = 0;
+    CHECK(cache.Get(1, &first, [&calls] { ++calls; return 3u; }) == 3u);
+    CHECK(cache.Get(1, &second, [&calls] { ++calls; return 4u; }) == 4u);
+    CHECK(calls == 2);
+    CHECK(cache.Get(1, &second, [&calls] { ++calls; return 9u; }) == 4u);
+    CHECK(calls == 2);
+    CHECK(cache.Size() == 1u);
+}
+
+TEST_CASE("SpellIdCache remembers a null result", "[ModuleBotSnapshotRules]")
+{
+    Rules::SpellIdCache<int const*> cache;
+    int calls = 0;
+    CHECK(cache.Get(5, nullptr, [&calls]() -> int const* { ++calls; return nullptr; }) == nullptr);
+    CHECK(cache.Get(5, nullptr, [&calls]() -> int const* { ++calls; return nullptr; }) == nullptr);
+    CHECK(calls == 1);
+}

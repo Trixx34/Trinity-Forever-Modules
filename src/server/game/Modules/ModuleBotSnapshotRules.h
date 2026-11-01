@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <limits>
+#include <unordered_map>
 #include <vector>
 
 namespace ModuleBotSnapshotRules
@@ -176,6 +177,35 @@ inline uint32 BuildAuraMask(AuraTraits const& t)
         mask |= kAuraMaskAbsorb;
     return mask;
 }
+
+// A lazily filled cache of a pure per-spell value, keyed by spell id. `tag` identifies the static data the value was worked
+// out from (the SpellInfo pointer): an entry whose tag differs is worked out again and replaced, so a reloaded spell store
+// can never serve a stale value. Not thread-safe: use one per thread (the snapshot builder keeps a thread_local one).
+template <typename Value>
+class SpellIdCache
+{
+public:
+    template <typename Compute>
+    Value Get(uint32 id, void const* tag, Compute&& compute)
+    {
+        auto found = _entries.find(id);
+        if (found != _entries.end() && found->second.Tag == tag)
+            return found->second.Result;
+        Value const result = compute();
+        _entries[id] = Entry{ tag, result };
+        return result;
+    }
+
+    std::size_t Size() const { return _entries.size(); }
+
+private:
+    struct Entry
+    {
+        void const* Tag;
+        Value Result;
+    };
+    std::unordered_map<uint32, Entry> _entries;
+};
 }
 
 #endif // TRINITYCORE_MODULE_BOT_SNAPSHOT_RULES_H
