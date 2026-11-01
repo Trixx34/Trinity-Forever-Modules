@@ -1028,7 +1028,7 @@ void ModuleMgr::OnWorldTick(uint64 tick)
                     entry.Bot.last_action_spell = result->second.Spell;
                     entry.Bot.last_action_sequence = result->second.Sequence;
                 }
-                bots.push_back(std::move(entry));
+                bots.push_back(entry);
             }
             region->PublishSnapshot(tick, bots);
         }
@@ -1116,6 +1116,7 @@ void ModuleMgr::NoteRefusal(int actionType, int status, std::string const& reaso
     lastReport = now;
 
     std::vector<std::pair<uint32, std::string>> ranked;
+    ranked.reserve(counts.size());
     for (auto const& [text, count] : counts)
         ranked.emplace_back(count, text);
     std::sort(ranked.begin(), ranked.end(), std::greater<>());

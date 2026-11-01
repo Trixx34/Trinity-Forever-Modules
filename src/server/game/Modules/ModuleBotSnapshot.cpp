@@ -310,7 +310,10 @@ struct PathBudget
             Tick = now;
             Used = 0;
         }
-        return Used < kSupplyPathChecksPerTick && ++Used;
+        if (Used >= kSupplyPathChecksPerTick)
+            return false;
+        ++Used;
+        return true;
     }
 };
 PathBudget g_pathBudget;
@@ -829,9 +832,6 @@ void FillLifeState(Player& bot, BotSnapshot& entry)
 // Layout 13: auras, pets, guids, money and why the bot lost its target. See doc/module-system/20-layout13-reference.md.
 // ---------------------------------------------------------------------------------------------------------------
 
-// AuraEntry::remaining_ms for an aura with no duration (a passive stance, a permanent buff). The module only tests it
-// against 0 ("is the aura running?"), so the exact sentinel does not matter as long as it is not 0.
-constexpr uint32 InfiniteAuraMs = ModuleBotSnapshotRules::kInfiniteAuraMs;
 
 // NearbyUnit::aura_mask. The layout calls the bits "core-defined and fixed per layout" and the SDK does not publish them,
 // so this is the core's assignment, frozen with layout 13: a later layout may add bits, but must not move or repurpose

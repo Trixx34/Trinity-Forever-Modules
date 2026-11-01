@@ -357,7 +357,7 @@ void BuyItemAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg const& re
     packet.VendorGUID = creature->GetGUID();
     packet.ContainerGUID = player->GetGUID(); // default backpack
     packet.Quantity = quantity;
-    packet.Item.ItemID = request.ItemEntry;
+    packet.Item.ItemID = static_cast<int32>(request.ItemEntry);
     packet.Slot = -1;
 
     uint64 before = player->GetMoney();
@@ -724,6 +724,8 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
             reply.AuctionGuid = request.AuctionGuid;
             return;
         }
+        default:
+            break;
     }
 
     reply.Reason = "unknown auction operation";

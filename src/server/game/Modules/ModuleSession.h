@@ -145,12 +145,12 @@ class ModuleSession
         void Run();
 
         // Thread-safe. Queues an already-framed message and wakes the session thread.
-        bool Enqueue(std::string frame);
+        bool Enqueue(std::string const& frame);
         // Session thread only. Non-blocking: writes as much queued data as the socket accepts.
         bool FlushOutgoing();
         bool HasPendingOutgoing() const;
         // Session thread only. Queues and flushes, waiting for the socket until the deadline or Stop().
-        bool SendBlocking(std::string frame, Clock::time_point deadline);
+        bool SendBlocking(std::string const& frame, Clock::time_point deadline);
         void Wake();
         void DrainWake();
         void CompleteRequest(ModuleWire::EventReplyMsg reply);

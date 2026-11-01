@@ -697,7 +697,7 @@ void BotMgr::PollCreates()
     {
         // The callback only records the result; the entry is removed here, after it has returned.
         if (_creating[i].second.InvokeIfReady())
-            _creating.erase(_creating.begin() + i);
+            _creating.erase(_creating.begin() + static_cast<std::ptrdiff_t>(i));
         else
             ++i;
     }
@@ -954,7 +954,7 @@ void BotMgr::PollLogins()
         auto it = _bots.find(guid);
         if (it == _bots.end() || !it->second.Session)
         {
-            _loggingIn.erase(_loggingIn.begin() + i);
+            _loggingIn.erase(_loggingIn.begin() + static_cast<std::ptrdiff_t>(i));
             continue;
         }
 
@@ -963,14 +963,14 @@ void BotMgr::PollLogins()
         Player* player = bot.Session->GetPlayer();
         if (player && player->IsInWorld())
         {
-            _loggingIn.erase(_loggingIn.begin() + i);
+            _loggingIn.erase(_loggingIn.begin() + static_cast<std::ptrdiff_t>(i));
             FinishLogin(bot);
             continue;
         }
 
         if (_uptimeMs - bot.LoginStartedMs > _loginTimeoutMs)
         {
-            _loggingIn.erase(_loggingIn.begin() + i);
+            _loggingIn.erase(_loggingIn.begin() + static_cast<std::ptrdiff_t>(i));
             FailLogin(bot, "login timed out");
             continue;
         }
@@ -1102,7 +1102,7 @@ static char const* SpendTalents(Player& bot, uint8 role, uint8 spec)
     if (!bot.IsInWorld() || bot.IsInCombat() || bot.GetLevel() < 10)
         return "the bot is in combat, not in the world or below level 10";
 
-    UF::TraitConfig const* active = bot.GetTraitConfig(bot.m_activePlayerData->ActiveCombatTraitConfigID);
+    UF::TraitConfig const* active = bot.GetTraitConfig(static_cast<int32>(bot.m_activePlayerData->ActiveCombatTraitConfigID));
     if (!active)
         return "the bot has no active talent config";
 

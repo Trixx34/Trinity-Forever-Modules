@@ -2041,7 +2041,9 @@ BotActionStatus UseObjectAction(Player& bot, BotAction const& action, std::strin
     if (!item)
     {
         ItemPosCountVec destination;
-        if (bot.CanStoreNewItem(NULL_BAG, NULL_SLOT, destination, itemEntry, 1) != EQUIP_ERR_OK || !(item = bot.StoreNewItem(destination, itemEntry, true)))
+        if (bot.CanStoreNewItem(NULL_BAG, NULL_SLOT, destination, itemEntry, 1) == EQUIP_ERR_OK)
+            item = bot.StoreNewItem(destination, itemEntry, true);
+        if (!item)
         {
             reason = "the bot cannot be given item " + std::to_string(itemEntry);
             return BotActionStatus::kRefused;
@@ -2096,24 +2098,37 @@ BotActionStatus GossipAction(Player& bot, BotAction const& action, std::string& 
     }
     if (!bot.GetNPCIfCanInteractWith(npc->GetGUID(), UNIT_NPC_FLAG_GOSSIP, UNIT_NPC_FLAG_2_NONE))
     {
-        reason = "the creature cannot be talked to";
+        reason = "creature " + std::to_string(npc->GetEntry()) + " (guid " + std::to_string(npc->GetGUID().GetCounter()) + ") cannot be talked to: GetNPCIfCanInteractWith refused it (npcflag gossip missing, hostile, or not interactable)";
         return BotActionStatus::kRefused;
     }
     if (!std::isfinite(action.dest_x) || action.dest_x < 0.0f)
     {
-        reason = "the option place is not a number from 0";
+        reason = "the requested option place " + std::to_string(action.dest_x) + " is not a number from 0 (creature " + std::to_string(npc->GetEntry()) + ")";
         return BotActionStatus::kRefused;
     }
 
     bot.PlayerTalkClass->ClearMenus();
-    if (!npc->AI()->OnGossipHello(&bot))
+    bool const helloHandled = npc->AI()->OnGossipHello(&bot);
+    if (!helloHandled)
         bot.PrepareGossipMenu(npc, bot.GetGossipMenuForSource(npc), true);
     GossipMenu const& menu = bot.PlayerTalkClass->GetGossipMenu();
     GossipMenuItemContainer const& items = menu.GetMenuItems();
     uint32 const place = uint32(action.dest_x);
     if (place >= items.size())
     {
-        reason = "the creature shows " + std::to_string(items.size()) + " gossip option(s), none at place " + std::to_string(place);
+        reason = "refused: the creature shows " + std::to_string(items.size()) + " gossip option(s), none at place " + std::to_string(place) +
+            " (creature " + std::to_string(npc->GetEntry()) + ", guid " + std::to_string(npc->GetGUID().GetCounter()) + ", menu " + std::to_string(menu.GetMenuId()) +
+            ", OnGossipHello returned " + (helloHandled ? "true" : "false, database menu used") + ", option ids:";
+        uint32 listed = 0;
+        for (auto const& entry : items)
+        {
+            if (listed++ >= 3)
+                break;
+            reason += " " + std::to_string(entry.GossipOptionID);
+        }
+        if (!listed)
+            reason += " none";
+        reason += ")";
         bot.PlayerTalkClass->ClearMenus();
         return BotActionStatus::kRefused;
     }
@@ -2121,7 +2136,10 @@ BotActionStatus GossipAction(Player& bot, BotAction const& action, std::string& 
     int32 const optionId = items[place].GossipOptionID;
     uint32 const orderIndex = items[place].OrderIndex;
     uint32 const menuId = menu.GetMenuId();
-    if (!npc->AI()->OnGossipSelect(&bot, menuId, orderIndex))
+    bool const selectHandled = npc->AI()->OnGossipSelect(&bot, menuId, orderIndex);
+    TC_LOG_INFO("modules.bots", "kGossip: bot {} creature {} menuId {} optionId {} orderIndex {} OnGossipSelect(AI) returned {}",
+        bot.GetGUID().ToString(), npc->GetEntry(), menuId, optionId, orderIndex, selectHandled);
+    if (!selectHandled)
         bot.OnGossipSelect(npc, optionId, menuId);
     bot.PlayerTalkClass->ClearMenus();
     return BotActionStatus::kApplied;

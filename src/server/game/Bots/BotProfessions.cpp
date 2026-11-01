@@ -48,8 +48,11 @@ uint32 SkillOfTrainer(Trainer::Trainer const& trainer)
     uint32 skill = 0;
     if (trainer.GetType() == Trainer::Type::Tradeskill)
         for (Trainer::Spell const& spell : trainer.Spells())
-            if ((skill = SkillOfSpell(spell.SpellId)) != 0)
+        {
+            skill = SkillOfSpell(spell.SpellId);
+            if (skill != 0)
                 break;
+        }
     known.emplace(&trainer, skill);
     return skill;
 }

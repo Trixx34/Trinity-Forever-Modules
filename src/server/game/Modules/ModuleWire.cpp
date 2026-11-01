@@ -496,6 +496,7 @@ bool Decode(std::string_view bytes, HandshakeRequest& out)
                 case 3: out.ProtocolVersion.assign(value); break;
                 case 4: out.Tier1Hooks.emplace_back(value); break;
                 case 5: out.SdkPackageVersion.assign(value); break;
+                default: break;
             }
         }
         else if (field == 10 && wire == WireVarint)
@@ -514,6 +515,7 @@ bool Decode(std::string_view bytes, HandshakeRequest& out)
                 case 12: out.RequestedMaxNearbyUnits = static_cast<uint32>(number); break;
                 case 13: out.RequestedMaxActions = static_cast<uint32>(number); break;
                 case 14: out.RequestedTickInterval = static_cast<uint32>(number); break;
+                default: break;
             }
         }
         else if (!r.Skip(wire))
@@ -928,6 +930,7 @@ bool Decode(std::string_view bytes, ControlRequestMsg& out)
                         case 4: out.SpawnParams.Team = v; break;
                         case 5: out.SpawnParams.Place = v != 0; break;
                         case 6: out.SpawnParams.MapId = v; break;
+                        default: break;
                     }
                 }
                 else if (sf == 10 && sw == WireLengthDelimited)

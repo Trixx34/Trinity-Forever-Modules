@@ -268,7 +268,7 @@ std::optional<ModuleWire::EventReplyMsg> ModuleSession::RequestCommand(std::stri
     }
 }
 
-bool ModuleSession::Enqueue(std::string frame)
+bool ModuleSession::Enqueue(std::string const& frame)
 {
     {
         std::lock_guard<std::mutex> lock(_outMutex);
@@ -319,7 +319,7 @@ bool ModuleSession::HasPendingOutgoing() const
     return _outOffset < _outBuffer.size();
 }
 
-bool ModuleSession::SendBlocking(std::string frame, Clock::time_point deadline)
+bool ModuleSession::SendBlocking(std::string const& frame, Clock::time_point deadline)
 {
     {
         std::lock_guard<std::mutex> lock(_outMutex);
@@ -519,7 +519,7 @@ void ModuleSession::Run()
 
             ModuleSocket::Watch watches[2];
             watches[0].Fd = _connFd;
-            watches[0].Events = ModuleSocket::kReadable | (HasPendingOutgoing() ? ModuleSocket::kWritable : 0);
+            watches[0].Events = static_cast<short>(ModuleSocket::kReadable | (HasPendingOutgoing() ? ModuleSocket::kWritable : 0));
             watches[1].Fd = _wakeRead;
             watches[1].Events = ModuleSocket::kReadable;
             int const rc = ModuleSocket::Poll(watches, 2, std::min(remaining, PollSlice));
