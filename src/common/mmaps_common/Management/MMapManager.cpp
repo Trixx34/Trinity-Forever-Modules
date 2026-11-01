@@ -341,7 +341,10 @@ namespace MMAP
         });
 
         // allocate mesh query
-        if (dtStatusFailed(queryItr->second.init(&mmap->GetMeshData(meshMapId, instanceId).first->second.navMesh, 1024)))
+        // A* node pool 1024 -> 32768 with the 512-polygon path cap: a long route (Kharanos -> Thelsamar, 2400 y) still
+        // ran out of nodes (DT_OUT_OF_NODES, 1205 y short), so leavers never reached Loch Modan. About 1 MB more per
+        // query; only long searches use the extra nodes. (From LatvjuAvs/TrinityCore 89ff5fcf3a.)
+        if (dtStatusFailed(queryItr->second.init(&mmap->GetMeshData(meshMapId, instanceId).first->second.navMesh, 32768)))
         {
             TC_LOG_ERROR("maps", "MMAP:GetNavMeshQuery: Failed to initialize dtNavMeshQuery for mapId {:04} instanceId {}", instanceMapId, instanceId);
             return false;
