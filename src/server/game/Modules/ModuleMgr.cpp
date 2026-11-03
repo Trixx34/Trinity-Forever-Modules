@@ -49,6 +49,8 @@ std::vector<std::string> const SupportedTier1Hooks = {
     "PlayerScript.OnAuctionResult",
     "PlayerScript.OnChat",
     "PlayerScript.OnBotTrade",
+    "GuildScript.OnMemberLevel",
+    "LfgScript.OnQueueUpdate",
 };
 
 // How long a module gets to exit after Shutdown before it is terminated.
@@ -728,6 +730,52 @@ void ModuleMgr::DispatchChat(std::string_view hook, ModuleWire::ChatEvent const&
     for (auto const& [id, session] : targets)
     {
         if (session->NotifyChat(hook, event))
+            continue;
+
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _modules.find(id);
+        if (it != _modules.end() && ++it->second.DroppedEvents == 1)
+            TC_LOG_WARN("modules", "'{}' is not keeping up with its events; notifications are being dropped (first: {}).",
+                        it->second.Name, hook);
+    }
+}
+
+void ModuleMgr::DispatchGuildMemberLevel(std::string_view hook, ModuleWire::GuildMemberLevelEvent const& event)
+{
+    std::vector<std::pair<ModuleId, std::shared_ptr<ModuleSession>>> targets;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (auto const& [id, d] : _modules)
+            if (d.Session && d.Session->Subscribes(hook))
+                targets.emplace_back(id, d.Session);
+    }
+
+    for (auto const& [id, session] : targets)
+    {
+        if (session->NotifyGuildMemberLevel(hook, event))
+            continue;
+
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _modules.find(id);
+        if (it != _modules.end() && ++it->second.DroppedEvents == 1)
+            TC_LOG_WARN("modules", "'{}' is not keeping up with its events; notifications are being dropped (first: {}).",
+                        it->second.Name, hook);
+    }
+}
+
+void ModuleMgr::DispatchLfgQueue(std::string_view hook, ModuleWire::LfgQueueEvent const& event)
+{
+    std::vector<std::pair<ModuleId, std::shared_ptr<ModuleSession>>> targets;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (auto const& [id, d] : _modules)
+            if (d.Session && d.Session->Subscribes(hook))
+                targets.emplace_back(id, d.Session);
+    }
+
+    for (auto const& [id, session] : targets)
+    {
+        if (session->NotifyLfgQueue(hook, event))
             continue;
 
         std::lock_guard<std::mutex> lock(_mutex);

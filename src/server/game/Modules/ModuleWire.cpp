@@ -313,6 +313,34 @@ std::string EncodeEventNotifyBotTrade(std::string_view hookName, BotTradeEvent c
     return out;
 }
 
+std::string EncodeEventNotifyGuildMemberLevel(std::string_view hookName, GuildMemberLevelEvent const& event)
+{
+    std::string payload;
+    AppendVarintField(payload, 1, event.GuildGuid);
+    AppendVarintField(payload, 2, event.MemberGuid);
+    AppendVarintField(payload, 3, event.NewLevel);
+
+    std::string out;
+    AppendBytesField(out, 1, hookName);
+    AppendBytesField(out, static_cast<uint32>(NotifyKind::GuildMemberLevel), payload);
+    return out;
+}
+
+std::string EncodeEventNotifyLfgQueue(std::string_view hookName, LfgQueueEvent const& event)
+{
+    std::string payload;
+    AppendVarintField(payload, 1, event.MapId);
+    AppendVarintField(payload, 2, event.QueuedSeconds);
+    for (uint32 role : event.OpenRoles)
+        AppendVarintField(payload, 3, role);
+    AppendVarintField(payload, 4, event.QueuedPlayers);
+
+    std::string out;
+    AppendBytesField(out, 1, hookName);
+    AppendBytesField(out, static_cast<uint32>(NotifyKind::LfgQueue), payload);
+    return out;
+}
+
 std::string EncodeEventRequestCommand(uint64 messageId, std::string_view hookName, std::string_view commandText,
                                       uint64 issuerGuid)
 {
@@ -945,6 +973,45 @@ bool Decode(std::string_view bytes, ActionRequestMsg& out)
                     if (!a.ReadBytes(text))
                         return false;
                     out.Text.assign(text);
+                }
+                else if (!a.Skip(aw))
+                    return false;
+            }
+        }
+        else if ((field == 27 || field == 28) && wire == WireLengthDelimited)
+        {
+            // EmoteAction (27): kind=1, target_guid=2, bot_guid=3. LfgJoinAction (28): bot_guid=1, role=2, map_id=3.
+            std::string_view actionBytes;
+            if (!r.ReadBytes(actionBytes))
+                return false;
+            out.Kind = field == 27 ? ActionKind::Emote : ActionKind::LfgJoin;
+
+            Reader a(actionBytes);
+            while (!a.AtEnd())
+            {
+                uint32 af = 0, aw = 0;
+                if (!a.ReadTag(af, aw))
+                    return false;
+                uint64 value = 0;
+                if (aw == WireVarint && af >= 1 && af <= 3)
+                {
+                    if (!a.ReadVarint(value))
+                        return false;
+                    if (field == 27)
+                    {
+                        if (af == 1)
+                            out.EmoteKind = static_cast<uint32>(value);
+                        else if (af == 2)
+                            out.EmoteTargetGuid = value;
+                        else
+                            out.BotGuid = value;
+                    }
+                    else if (af == 1)
+                        out.BotGuid = value;
+                    else if (af == 2)
+                        out.LfgRole = static_cast<uint32>(value);
+                    else
+                        out.LfgMapId = static_cast<uint32>(value);
                 }
                 else if (!a.Skip(aw))
                     return false;

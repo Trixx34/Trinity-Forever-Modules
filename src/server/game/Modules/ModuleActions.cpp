@@ -826,6 +826,14 @@ void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire
             ModuleBotSocial::ExecuteGiftMail(request, reply, module);
             return;
 
+        case ModuleWire::ActionKind::Emote:
+            ModuleBotSocial::ExecuteEmote(request, reply, module);
+            return;
+
+        case ModuleWire::ActionKind::LfgJoin:
+            ModuleBotSocial::ExecuteLfgJoin(request, reply, module);
+            return;
+
         case ModuleWire::ActionKind::Log:
             if (request.Text.empty() || request.Text.size() > MaxMessageBytes)
             {
@@ -888,6 +896,8 @@ void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire
         case ModuleWire::ActionKind::Battleground:
         case ModuleWire::ActionKind::Guild:
         case ModuleWire::ActionKind::GiftMail:
+        case ModuleWire::ActionKind::Emote:
+        case ModuleWire::ActionKind::LfgJoin:
         case ModuleWire::ActionKind::None:
             break;
     }

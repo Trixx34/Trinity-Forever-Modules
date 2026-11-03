@@ -122,6 +122,8 @@ enum class NotifyKind : uint32
     PlayerChat = 16,
     PlayerAuctionResult = 17,
     BotTrade = 19, // 18 is server_stats in the SDK; the core does not send it yet
+    GuildMemberLevel = 20, // protocol 21
+    LfgQueue = 21,         // protocol 21
 };
 
 // Body of an EventNotify. `value` is the player GUID for player events, the account id for AccountLogin,
@@ -202,6 +204,28 @@ struct BotTradeEvent
 
 std::string EncodeEventNotifyBotTrade(std::string_view hookName, BotTradeEvent const& event);
 
+// GuildMemberLevelEvent (events.proto field 20, protocol 21): a guild member reached a new level. Guids are raw counters (the guild id, the character).
+struct GuildMemberLevelEvent
+{
+    uint64 GuildGuid = 0;
+    uint64 MemberGuid = 0;
+    uint32 NewLevel = 0;
+};
+
+std::string EncodeEventNotifyGuildMemberLevel(std::string_view hookName, GuildMemberLevelEvent const& event);
+
+// LfgQueueEvent (events.proto field 21, protocol 21): the dungeon finder queue of one map. OpenRoles has one entry per open slot of the next
+// party, each a single flag (1 tank, 2 healer, 4 dps); OR them for a bitmask.
+struct LfgQueueEvent
+{
+    uint32 MapId = 0;
+    uint32 QueuedSeconds = 0; // the longest wait among the players queued for the map
+    std::vector<uint32> OpenRoles;
+    uint32 QueuedPlayers = 0;
+};
+
+std::string EncodeEventNotifyLfgQueue(std::string_view hookName, LfgQueueEvent const& event);
+
 // Body of an EventRequest carrying a CommandRequestPayload.
 std::string EncodeEventRequestCommand(uint64 messageId, std::string_view hookName, std::string_view commandText,
                                       uint64 issuerGuid);
@@ -239,6 +263,8 @@ enum class ActionKind : uint8
     Battleground = 15,    // actions.proto field 24
     Guild = 16,           // actions.proto field 25
     GiftMail = 17,        // actions.proto field 26
+    Emote = 18,           // actions.proto field 27 (protocol 21)
+    LfgJoin = 19,         // actions.proto field 28 (protocol 21)
 };
 
 struct ActionRequestMsg
@@ -272,7 +298,7 @@ struct ActionRequestMsg
     // Store: Key for get, set and delete; the prefix for list; Value for set
     std::string Key;
     std::string Value;
-    // BotSpeakAction (field 20): BotGuid speaks Text; SpeakKind 0 is /say, 1 is a whisper to PlayerGuid.
+    // BotSpeakAction (field 20): BotGuid speaks Text; SpeakKind 0 is /say, 1 is a whisper to PlayerGuid, 3 party chat, 4 guild chat.
     // BotTradeAction (field 21): TradeOp (0 begin, 1 set item, 2 clear item, 3 set gold, 4 accept, 5 cancel, 6 list bags) for BotGuid,
     // TradeSlot, ItemGuid and Copper.
     uint64 BotGuid = 0;
@@ -291,6 +317,12 @@ struct ActionRequestMsg
     uint32 SocialOp = 0;
     uint32 BattlegroundId = 0;
     // GiftMailAction (26): BotGuid sends ItemGuid (0 = none) x Count and Copper to PlayerGuid (the recipient) with Text as the subject.
+    // EmoteAction (27, protocol 21): BotGuid does the emote EmoteKind (0 salute, 1 applaud, 2 cheer, 3 wave, 4 bow); EmoteTargetGuid 0 = none.
+    // LfgJoinAction (28, protocol 21): BotGuid queues for LfgMapId in LfgRole (1 tank, 2 healer, 4 dps).
+    uint32 EmoteKind = 0;
+    uint64 EmoteTargetGuid = 0;
+    uint32 LfgRole = 0;
+    uint32 LfgMapId = 0;
 };
 
 // One item of a BotTrade kListBags reply (actions.proto TradeBagItem).

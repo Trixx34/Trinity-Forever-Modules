@@ -456,6 +456,7 @@ class TC_GAME_API LFGMgr
         uint8 GetTeam(ObjectGuid guid);
         uint8 FilterClassRoles(Player* player, uint8 roles);
         void RestoreState(ObjectGuid guid, char const* debugMsg);
+        void PublishQueueToModules();
         void ClearState(ObjectGuid guid, char const* debugMsg);
         void SetDungeon(ObjectGuid guid, uint32 dungeon);
         void SetSelectedDungeons(ObjectGuid guid, LfgDungeonSet const& dungeons);
@@ -489,6 +490,7 @@ class TC_GAME_API LFGMgr
 
         // General variables
         uint32 m_QueueTimer;                               /// used to check interval of update
+        uint32 m_ModuleQueueTimer = 0;                     /// ms since the last LfgQueueEvent to the modules
         uint32 m_lfgProposalId;                            /// used as internal counter for proposals
         uint32 m_options;                                  /// Stores config options
 

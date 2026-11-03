@@ -28,4 +28,7 @@ void ExecuteDuel(ModuleWire::ActionRequestMsg const& request, ModuleWire::Action
 void ExecuteBattleground(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module);
 void ExecuteGuild(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module);
 void ExecuteGiftMail(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module);
+// Protocol 21: EmoteAction and LfgJoinAction.
+void ExecuteEmote(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module);
+void ExecuteLfgJoin(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module);
 }

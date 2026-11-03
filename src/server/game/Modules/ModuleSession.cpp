@@ -182,6 +182,22 @@ bool ModuleSession::NotifyBotTrade(std::string_view hook, ModuleWire::BotTradeEv
                                                                 ModuleWire::EncodeEventNotifyBotTrade(hook, event))));
 }
 
+bool ModuleSession::NotifyGuildMemberLevel(std::string_view hook, ModuleWire::GuildMemberLevelEvent const& event)
+{
+    if (!Subscribes(hook))
+        return false;
+    return Enqueue(ModuleWire::Frame(ModuleWire::EncodeEnvelope(ModuleWire::PayloadKind::EventNotify,
+                                                                ModuleWire::EncodeEventNotifyGuildMemberLevel(hook, event))));
+}
+
+bool ModuleSession::NotifyLfgQueue(std::string_view hook, ModuleWire::LfgQueueEvent const& event)
+{
+    if (!Subscribes(hook))
+        return false;
+    return Enqueue(ModuleWire::Frame(ModuleWire::EncodeEnvelope(ModuleWire::PayloadKind::EventNotify,
+                                                                ModuleWire::EncodeEventNotifyLfgQueue(hook, event))));
+}
+
 bool ModuleSession::NotifyChat(std::string_view hook, ModuleWire::ChatEvent const& event)
 {
     if (!Subscribes(hook))

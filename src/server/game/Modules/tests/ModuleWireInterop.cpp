@@ -543,6 +543,61 @@ int main()
         CHECK(core.BotGuid == 42 && core.SpeakKind == 1 && core.PlayerGuid == 7 && core.Text == "Hello there");
     }
 
+    // SDK -> core: BotSpeakAction kinds 3 (party) and 4 (guild), protocol 21.
+    for (std::uint32_t kind = 3; kind <= 4; ++kind)
+    {
+        forever_module::ActionRequest sdk;
+        sdk.set_message_id(80 + kind);
+        forever_module::BotSpeakAction* speak = sdk.mutable_bot_speak();
+        speak->set_bot_guid(42);
+        speak->set_kind(kind);
+        speak->set_text("pull in ten");
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+
+        ModuleWire::ActionRequestMsg core;
+        CHECK(ModuleWire::Decode(bytes, core));
+        CHECK(core.MessageId == 80 + kind && core.Kind == ModuleWire::ActionKind::BotSpeak);
+        CHECK(core.BotGuid == 42 && core.SpeakKind == kind && core.Text == "pull in ten");
+    }
+
+    // SDK -> core: EmoteAction (field 27), every kind, with and without a target.
+    for (int kind = 0; kind <= 4; ++kind)
+    {
+        forever_module::ActionRequest sdk;
+        sdk.set_message_id(500 + kind);
+        forever_module::EmoteAction* emote = sdk.mutable_emote();
+        emote->set_kind(static_cast<forever_module::EmoteAction_EmoteKind>(kind));
+        emote->set_bot_guid(42);
+        if (kind % 2)
+            emote->set_target_guid(9000000001ULL);
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+
+        ModuleWire::ActionRequestMsg core;
+        CHECK(ModuleWire::Decode(bytes, core));
+        CHECK(core.MessageId == uint64(500 + kind) && core.Kind == ModuleWire::ActionKind::Emote);
+        CHECK(core.EmoteKind == uint32(kind) && core.BotGuid == 42 && core.EmoteTargetGuid == (kind % 2 ? 9000000001ULL : 0));
+    }
+
+    // SDK -> core: LfgJoinAction (field 28), every role.
+    for (std::uint32_t role : { 1u, 2u, 4u })
+    {
+        forever_module::ActionRequest sdk;
+        sdk.set_message_id(600 + role);
+        forever_module::LfgJoinAction* join = sdk.mutable_lfg_join();
+        join->set_bot_guid(42);
+        join->set_role(role);
+        join->set_map_id(36);
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+
+        ModuleWire::ActionRequestMsg core;
+        CHECK(ModuleWire::Decode(bytes, core));
+        CHECK(core.MessageId == 600 + role && core.Kind == ModuleWire::ActionKind::LfgJoin);
+        CHECK(core.BotGuid == 42 && core.LfgRole == role && core.LfgMapId == 36);
+    }
+
     // SDK -> core: SpendBotTalentsAction (actions.proto field 22).
     for (std::uint32_t role = 0; role <= 3; ++role)
     {
@@ -822,6 +877,37 @@ int main()
         CHECK(sdk.bot_trade().partner_copper() == 150 && sdk.bot_trade().offered_size() == 2);
         CHECK(sdk.bot_trade().offered(0).slot() == 0 && sdk.bot_trade().offered(0).entry() == 2589 && sdk.bot_trade().offered(0).count() == 5);
         CHECK(sdk.bot_trade().offered(1).slot() == 2 && sdk.bot_trade().offered(1).entry() == 6948);
+    }
+
+    // core -> SDK: a GuildMemberLevelEvent (events.proto field 20) in an EventNotify.
+    {
+        ModuleWire::GuildMemberLevelEvent core;
+        core.GuildGuid = 12;
+        core.MemberGuid = 9000000001ULL;
+        core.NewLevel = 41;
+        std::string bytes = ModuleWire::EncodeEventNotifyGuildMemberLevel("GuildScript.OnMemberLevel", core);
+
+        forever_module::EventNotify sdk;
+        CHECK(sdk.ParseFromString(bytes));
+        CHECK(sdk.hook_name() == "GuildScript.OnMemberLevel" && sdk.has_guild_member_level());
+        CHECK(sdk.guild_member_level().guild_guid() == 12 && sdk.guild_member_level().member_guid() == 9000000001ULL &&
+              sdk.guild_member_level().new_level() == 41);
+    }
+
+    // core -> SDK: an LfgQueueEvent (events.proto field 21) in an EventNotify, with several open roles.
+    {
+        ModuleWire::LfgQueueEvent core;
+        core.MapId = 36;
+        core.QueuedSeconds = 95;
+        core.OpenRoles = { 2, 4, 4 };
+        core.QueuedPlayers = 3;
+        std::string bytes = ModuleWire::EncodeEventNotifyLfgQueue("LfgScript.OnQueueUpdate", core);
+
+        forever_module::EventNotify sdk;
+        CHECK(sdk.ParseFromString(bytes));
+        CHECK(sdk.hook_name() == "LfgScript.OnQueueUpdate" && sdk.has_lfg_queue());
+        CHECK(sdk.lfg_queue().map_id() == 36 && sdk.lfg_queue().queued_seconds() == 95 && sdk.lfg_queue().queued_players() == 3);
+        CHECK(sdk.lfg_queue().open_roles_size() == 3 && sdk.lfg_queue().open_roles(0) == 2 && sdk.lfg_queue().open_roles(2) == 4);
     }
 
     if (g_failures == 0)
