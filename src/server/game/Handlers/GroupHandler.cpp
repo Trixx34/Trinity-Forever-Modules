@@ -23,6 +23,7 @@
 #include "GroupFinderListings.h"
 #include "GroupMgr.h"
 #include "LFG.h"
+#include "ModuleMgr.h"
 #include "Log.h"
 #include "Loot.h"
 #include "MiscPackets.h"
@@ -267,6 +268,15 @@ void WorldSession::HandlePartyInviteResponseOpcode(WorldPackets::Party::PartyInv
         // report
         WorldPackets::Party::GroupDecline decline(GetPlayer()->GetName());
         leader->SendDirectMessage(decline.Write());
+
+        // Protocol 22: tell the modules (a bot that invited this player can stop re-inviting them).
+        if (sModuleMgr->HasSubscriber("GroupScript.OnInviteDeclined"))
+        {
+            ModuleWire::GroupInviteDeclinedEvent event;
+            event.InviterGuid = leader->GetGUID().GetCounter();
+            event.DeclinerGuid = GetPlayer()->GetGUID().GetCounter();
+            sModuleMgr->DispatchGroupInviteDeclined("GroupScript.OnInviteDeclined", event);
+        }
     }
 }
 

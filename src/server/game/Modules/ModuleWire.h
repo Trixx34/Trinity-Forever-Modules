@@ -124,6 +124,7 @@ enum class NotifyKind : uint32
     BotTrade = 19, // 18 is server_stats in the SDK; the core does not send it yet
     GuildMemberLevel = 20, // protocol 21
     LfgQueue = 21,         // protocol 21
+    GroupInviteDeclined = 22, // protocol 22
 };
 
 // Body of an EventNotify. `value` is the player GUID for player events, the account id for AccountLogin,
@@ -225,6 +226,15 @@ struct LfgQueueEvent
 };
 
 std::string EncodeEventNotifyLfgQueue(std::string_view hookName, LfgQueueEvent const& event);
+
+// GroupInviteDeclinedEvent (events.proto field 22, protocol 22): a player declined a party invite from the inviter. Guids are raw counters.
+struct GroupInviteDeclinedEvent
+{
+    uint64 InviterGuid = 0;
+    uint64 DeclinerGuid = 0;
+};
+
+std::string EncodeEventNotifyGroupInviteDeclined(std::string_view hookName, GroupInviteDeclinedEvent const& event);
 
 // Body of an EventRequest carrying a CommandRequestPayload.
 std::string EncodeEventRequestCommand(uint64 messageId, std::string_view hookName, std::string_view commandText,

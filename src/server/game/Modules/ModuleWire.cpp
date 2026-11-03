@@ -341,6 +341,18 @@ std::string EncodeEventNotifyLfgQueue(std::string_view hookName, LfgQueueEvent c
     return out;
 }
 
+std::string EncodeEventNotifyGroupInviteDeclined(std::string_view hookName, GroupInviteDeclinedEvent const& event)
+{
+    std::string payload;
+    AppendVarintField(payload, 1, event.InviterGuid);
+    AppendVarintField(payload, 2, event.DeclinerGuid);
+
+    std::string out;
+    AppendBytesField(out, 1, hookName);
+    AppendBytesField(out, static_cast<uint32>(NotifyKind::GroupInviteDeclined), payload);
+    return out;
+}
+
 std::string EncodeEventRequestCommand(uint64 messageId, std::string_view hookName, std::string_view commandText,
                                       uint64 issuerGuid)
 {

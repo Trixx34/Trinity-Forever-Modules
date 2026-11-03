@@ -952,6 +952,21 @@ void FillAuras(Player& bot, BotSnapshot& entry)
 // A nearby unit's aura summary (layout 13): how many auras it carries and what they are, coarsely. A nearby unit gets no
 // aura array, so only the two numbers are built and nothing is kept -- the walk is the only cost, and the nearby list is
 // rebuilt for one bot in refreshEvery ticks (ModuleMgr), not for every bot on every tick.
+// Layout 23: whether the bot is on an active quest the player unit is on too (the player's quest log against the bot's).
+bool SharesActiveQuest(Player const& bot, Player const& other)
+{
+    for (uint16 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
+    {
+        uint32 const questId = other.GetQuestSlotQuestId(slot);
+        if (!questId)
+            continue;
+        QuestStatus const status = bot.GetQuestStatus(questId);
+        if (status == QUEST_STATUS_INCOMPLETE || status == QUEST_STATUS_COMPLETE)
+            return true;
+    }
+    return false;
+}
+
 void FillNearbyAuras(Unit const& unit, NearbyUnit& near)
 {
     uint32 count = 0;
@@ -1125,6 +1140,12 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
         entry.target_distance = bot.GetDistance(victim);
     }
 
+    // Layout 23: whether the bot stands in a capital city (its zone allows the Trade channel), and the guild it is in (0 with none).
+    if (AreaTableEntry const* zone = sAreaTableStore.LookupEntry(bot.GetZoneId()))
+        entry.in_capital = zone->GetFlags().HasFlag(AreaFlags::AllowTradeChannel) ? 1 : 0;
+    entry.guild_guid = bot.GetGuildId();
+    entry.item_level = uint32(std::max(0.0f, bot.GetAverageItemLevel()));
+
     FillParty(bot, entry);
     FillLifeState(bot, entry);
     FillNearestVendor(bot, entry);
@@ -1242,6 +1263,12 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
         near.elite = unit->IsCreature() && unit->ToCreature()->IsElite() ? 1 : 0;
         near.casting = unit->IsNonMeleeSpellCast(false) ? 1 : 0;
         FillNearbyAuras(*unit, near); // layout 13
+        // Layout 23: a player's best equipped item level, and whether the bot is on one of its quests. Both stay 0 for a creature.
+        if (Player const* player = unit->ToPlayer())
+        {
+            near.item_level = uint32(std::max(0.0f, player->GetAverageItemLevel()));
+            near.shared_objective = SharesActiveQuest(bot, *player) ? 1 : 0;
+        }
         cachedNearby.push_back(near);
     }
 

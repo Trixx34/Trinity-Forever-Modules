@@ -124,6 +124,7 @@ class ModuleSession
         bool NotifyBotTrade(std::string_view hook, ModuleWire::BotTradeEvent const& event);
         bool NotifyGuildMemberLevel(std::string_view hook, ModuleWire::GuildMemberLevelEvent const& event);
         bool NotifyLfgQueue(std::string_view hook, ModuleWire::LfgQueueEvent const& event);
+        bool NotifyGroupInviteDeclined(std::string_view hook, ModuleWire::GroupInviteDeclinedEvent const& event);
 
         // Queues a PlayerChat EventNotify for a subscribed hook. Same rules as NotifyEvent.
         bool NotifyChat(std::string_view hook, ModuleWire::ChatEvent const& event);

@@ -198,6 +198,14 @@ bool ModuleSession::NotifyLfgQueue(std::string_view hook, ModuleWire::LfgQueueEv
                                                                 ModuleWire::EncodeEventNotifyLfgQueue(hook, event))));
 }
 
+bool ModuleSession::NotifyGroupInviteDeclined(std::string_view hook, ModuleWire::GroupInviteDeclinedEvent const& event)
+{
+    if (!Subscribes(hook))
+        return false;
+    return Enqueue(ModuleWire::Frame(ModuleWire::EncodeEnvelope(ModuleWire::PayloadKind::EventNotify,
+                                                                ModuleWire::EncodeEventNotifyGroupInviteDeclined(hook, event))));
+}
+
 bool ModuleSession::NotifyChat(std::string_view hook, ModuleWire::ChatEvent const& event)
 {
     if (!Subscribes(hook))
