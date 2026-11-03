@@ -48,6 +48,7 @@ inline ConfigGateResult ConfigGate(ActionType type, bool enabled)
         case ActionType::kGrant: offReason = "Bot.Actions.Grant is off"; break;
         case ActionType::kUseObject: offReason = "Bot.Actions.UseObject is off"; break;
         case ActionType::kGossip: offReason = "Bot.Actions.Gossip is off"; break;
+        case ActionType::kRespecTalents: offReason = "Bot.Talents.Respec is off"; break;
         default: return { true, BotActionStatus::kApplied, "" };
     }
     if (enabled)

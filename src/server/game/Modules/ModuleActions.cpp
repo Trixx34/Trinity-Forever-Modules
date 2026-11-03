@@ -3,6 +3,7 @@
  */
 
 #include "ModuleActions.h"
+#include "ModuleBotSocial.h"
 #include "ModuleBotTrade.h"
 #include "Chat.h"
 #include "Group.h"
@@ -604,6 +605,7 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
         }
 
         case 3: // kList
+        case 5: // kListCommodity: a stack of stackable goods at bid per unit (the commodity auction)
         {
             Player* player = primaryPlayer;
             if (!player && request.PlayerGuid)
@@ -646,24 +648,44 @@ void AuctionHouseAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg cons
                 return;
             }
 
-            uint32 deposit = static_cast<uint32>(AuctionHouseMgr::GetItemAuctionDeposit(player, item, Minutes(120), entry->DepositRate));
+            bool const commodity = request.AuctionOp == 5;
+            if (commodity && (request.Count == 0 || item->GetTemplate()->GetMaxStackSize() <= 1 || item->GetCount() < request.Count))
+            {
+                reply.Reason = "goods stack is not stackable or holds fewer units than listed";
+                return;
+            }
+
+            uint32 deposit = commodity
+                ? static_cast<uint32>(AuctionHouseMgr::GetCommodityAuctionDeposit(item->GetTemplate(), Minutes(120), request.Count, entry->DepositRate))
+                : static_cast<uint32>(AuctionHouseMgr::GetItemAuctionDeposit(player, item, Minutes(120), entry->DepositRate));
             if (!player->HasEnoughMoney(static_cast<uint64>(deposit)))
             {
                 reply.Reason = "not enough money for the deposit";
                 return;
             }
 
-            WorldPackets::AuctionHouse::AuctionSellItem sellItem{ WorldPacket(CMSG_AUCTION_SELL_ITEM) };
-            sellItem.Auctioneer = auctioneer->GetGUID();
-            sellItem.MinBid = request.Bid ? request.Bid : 1;
-            sellItem.BuyoutPrice = request.Buyout;
-            sellItem.RunTime = 120;
-            sellItem.Items.push_back({ itemGuid, 1 });
-
             player->GetSession()->ModuleLastAuctionId = 0;
 
             uint64 moneyBefore = player->GetMoney();
-            player->GetSession()->HandleAuctionSellItem(sellItem);
+            if (commodity)
+            {
+                WorldPackets::AuctionHouse::AuctionSellCommodity sellCommodity{ WorldPacket(CMSG_AUCTION_SELL_COMMODITY) };
+                sellCommodity.Auctioneer = auctioneer->GetGUID();
+                sellCommodity.UnitPrice = request.Bid ? request.Bid : 1;
+                sellCommodity.RunTime = 120;
+                sellCommodity.Items.push_back({ itemGuid, request.Count });
+                player->GetSession()->HandleAuctionSellCommodity(sellCommodity);
+            }
+            else
+            {
+                WorldPackets::AuctionHouse::AuctionSellItem sellItem{ WorldPacket(CMSG_AUCTION_SELL_ITEM) };
+                sellItem.Auctioneer = auctioneer->GetGUID();
+                sellItem.MinBid = request.Bid ? request.Bid : 1;
+                sellItem.BuyoutPrice = request.Buyout;
+                sellItem.RunTime = 120;
+                sellItem.Items.push_back({ itemGuid, 1 });
+                player->GetSession()->HandleAuctionSellItem(sellItem);
+            }
             uint32 generated = player->GetSession()->ModuleLastAuctionId;
 
             uint64 moneyAfter = player->GetMoney();
@@ -788,6 +810,22 @@ void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire
             ModuleBotTrade::ExecuteSpendTalents(request, reply, module);
             return;
 
+        case ModuleWire::ActionKind::Duel:
+            ModuleBotSocial::ExecuteDuel(request, reply, module);
+            return;
+
+        case ModuleWire::ActionKind::Battleground:
+            ModuleBotSocial::ExecuteBattleground(request, reply, module);
+            return;
+
+        case ModuleWire::ActionKind::Guild:
+            ModuleBotSocial::ExecuteGuild(request, reply, module);
+            return;
+
+        case ModuleWire::ActionKind::GiftMail:
+            ModuleBotSocial::ExecuteGiftMail(request, reply, module);
+            return;
+
         case ModuleWire::ActionKind::Log:
             if (request.Text.empty() || request.Text.size() > MaxMessageBytes)
             {
@@ -846,6 +884,10 @@ void ExecuteModuleAction(ModuleWire::ActionRequestMsg const& request, ModuleWire
         case ModuleWire::ActionKind::BotSpeak:
         case ModuleWire::ActionKind::BotTrade:
         case ModuleWire::ActionKind::SpendBotTalents:
+        case ModuleWire::ActionKind::Duel:
+        case ModuleWire::ActionKind::Battleground:
+        case ModuleWire::ActionKind::Guild:
+        case ModuleWire::ActionKind::GiftMail:
         case ModuleWire::ActionKind::None:
             break;
     }

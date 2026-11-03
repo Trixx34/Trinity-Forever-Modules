@@ -1,7 +1,11 @@
 #include "ModuleBotTrade.h"
 #include "BotMgr.h"
 #include "BotTalentSpec.h"
+#include "Channel.h"
+#include "ChannelMgr.h"
 #include "Config.h"
+#include "DB2Stores.h"
+#include "GameTime.h"
 #include "Item.h"
 #include "ItemTemplate.h"
 #include "Log.h"
@@ -15,11 +19,18 @@
 #include "WorldPacket.h"
 #include "WorldSession.h"
 
+#include <deque>
+#include <unordered_map>
+
 namespace ModuleBotTrade
 {
 namespace
 {
 constexpr char const* TradeHook = "PlayerScript.OnBotTrade";
+
+// The public channels of a zone (ChatChannels.dbc ids). Trade is only open in the capitals, so a bot elsewhere is refused.
+constexpr uint32 GeneralChannelId = 1;
+constexpr uint32 TradeChannelId = 2;
 
 // A chat line is short; this only guards against abuse (the same bound as a message to a player).
 constexpr size_t MaxSpeakBytes = 255;
@@ -40,6 +51,33 @@ bool PartnerAllowed(Player const* bot, Player const* partner)
     if (bot->GetSession()->GetAccountId() == partner->GetSession()->GetAccountId())
         return true;
     return bot->IsInSameGroupWith(partner);
+}
+
+bool AmbientEnabled()
+{
+    return sConfigMgr->GetBoolDefault("Bot.Chat.Ambient.Enabled", false);
+}
+
+// Ambient lines (SpeakKind 2) are capped twice: each bot waits Bot.Chat.Ambient.BotIntervalSec between lines, and at most
+// Bot.Chat.Ambient.GlobalPerMin lines a minute go out over all bots. The module keeps its own, smaller rate; this is the floor
+// for a module that misbehaves. Only the world thread calls this.
+bool AmbientAllowed(uint64 botGuid, uint32 nowMs)
+{
+    uint32 const intervalMs = static_cast<uint32>(sConfigMgr->GetIntDefault("Bot.Chat.Ambient.BotIntervalSec", 60)) * 1000;
+    size_t const perMinute = static_cast<size_t>(sConfigMgr->GetIntDefault("Bot.Chat.Ambient.GlobalPerMin", 10));
+    static std::deque<uint32> recent;
+    static std::unordered_map<uint64, uint32> lastByBot;
+
+    auto const last = lastByBot.find(botGuid);
+    if (last != lastByBot.end() && nowMs - last->second < intervalMs)
+        return false;
+    while (!recent.empty() && nowMs - recent.front() >= 60000)
+        recent.pop_front();
+    if (recent.size() >= perMinute)
+        return false;
+    recent.push_back(nowMs);
+    lastByBot[botGuid] = nowMs;
+    return true;
 }
 
 bool IsControlledBot(Player const* player)
@@ -128,6 +166,56 @@ void NotifyCompleted(Player* a, Player* b)
         Send(a, b, Completed);
 }
 
+namespace
+{
+// SpeakKind 2: the bot says the line on its zone's General or Trade channel, joining the channel first. Refused with "not in
+// channel" when the bot cannot join it where it stands (Trade outside a capital, or no zone).
+void ExecuteChannelSay(ModuleWire::ActionRequestMsg const& request, Player& bot, ModuleWire::ActionReplyMsg& reply)
+{
+    if (!AmbientEnabled())
+    {
+        reply.Reason = "Bot.Chat.Ambient.Enabled is off";
+        return;
+    }
+    if (request.SpeakChannel > 1)
+    {
+        reply.Reason = "unknown channel";
+        return;
+    }
+    uint32 const channelId = request.SpeakChannel == 1 ? TradeChannelId : GeneralChannelId;
+    ChatChannelsEntry const* entry = sChatChannelsStore.LookupEntry(channelId);
+    AreaTableEntry const* zone = sAreaTableStore.LookupEntry(bot.GetZoneId());
+    ChannelMgr* mgr = ChannelMgr::ForTeam(bot.GetTeam());
+    Channel* channel = (entry && zone && mgr) ? mgr->GetSystemChannel(channelId, zone) : nullptr;
+    if (!channel)
+    {
+        reply.Reason = "not in channel";
+        return;
+    }
+    if (!channel->HasMember(bot.GetGUID()))
+    {
+        if (!bot.CanJoinConstantChannelInZone(entry, zone))
+        {
+            reply.Reason = "not in channel";
+            return;
+        }
+        channel->JoinChannel(&bot);
+        if (!channel->HasMember(bot.GetGUID()))
+        {
+            reply.Reason = "not in channel";
+            return;
+        }
+    }
+    if (!AmbientAllowed(bot.GetGUID().GetCounter(), GameTime::GetGameTimeMS()))
+    {
+        reply.Reason = "ambient rate limit";
+        return;
+    }
+    channel->Say(bot.GetGUID(), request.Text, LANG_UNIVERSAL);
+    reply.Success = true;
+}
+} // namespace
+
 void ExecuteSpeak(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module)
 {
     if (request.Text.empty() || request.Text.size() > MaxSpeakBytes)
@@ -143,6 +231,11 @@ void ExecuteSpeak(ModuleWire::ActionRequestMsg const& request, ModuleWire::Actio
     {
         bot->Say(request.Text, LANG_UNIVERSAL);
         reply.Success = true;
+        return;
+    }
+    if (request.SpeakKind == 2)
+    {
+        ExecuteChannelSay(request, *bot, reply);
         return;
     }
     if (request.SpeakKind == 1)

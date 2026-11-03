@@ -56,3 +56,15 @@ the code is the reference and the difference is listed.
   ammo (only newly created non-alt hunters get one stack). See doc 20.
 - Run on a dedicated sim worldserver with up to 1000 bots (spawn, login, the ramp, the safety valves, telemetry); sustained combat, levelling, looting, vendor and hub walks and parties are not yet verified there. See doc 13.
 - The core builds on Windows only here: the changes since the first sim runs (layouts 5 to 7, the loot and share actions, PR 80) have been checked by reading, not compiled.
+
+## Layout 22 / protocol 20 and the social actions
+
+- `kTier2LayoutVersion` is 22 and `kModuleProtocolVersion` is 20 (`ModuleTier2Layout.h`, `ModuleMgr.h`); `tests/ModuleLayoutSync.cmake` compares them with the SDK.
+- Tier 2 actions added since layout 20 that the core executes: `kRespecTalents` (29, the last action type), `kListCommodity` (auction commodity listing) and
+  `BotSpeakAction` kind 2 (a line on the General or Trade channel; `SpeakChannel`).
+- Tier 1 `ActionRequest` fields 23 to 26 (additive: an older core skips them and answers "unknown action"), run by `ModuleBotSocial.cpp`:
+  `DuelAction` (challenge through the real duel spell, accept, decline), `BattlegroundAction` (solo queue through the real BattlemasterJoin handler, leave queue,
+  leave battleground), `GuildAction` (accept, decline, leave) and `GiftMailAction` (one whole stack and/or copper by mail, postage paid). Each refuses a bot the
+  module does not control, and checks its preconditions again when it runs. Settings: `Bot.Social.Enabled` (0), `Bot.Social.GiftMaxCopper` (10000).
+- Not done: nothing accepts a battleground invitation for a queued bot; the duel challenge and guild invitation are not events, so a module learns of them
+  only by asking (a guild accept answers "no pending guild invitation" when there is none).

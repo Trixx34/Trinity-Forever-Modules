@@ -398,7 +398,10 @@ enum class ActionType : std::uint32_t {
                          // (its script's hello, or the database menu) and picks the option, so a scripted escort or event starts. kApplied when an option was picked;
                          // kInvalidTarget with no such creature in reach; kRefused with a reason when the creature has no gossip, no option at that place, or the core's
                          // Bot.Actions.Gossip is off (a scenario tool, like Bot.Actions.UseObject).
-    kLastActionType = kGossip, // the highest valid value; PublishActions refuses anything above it
+    kRespecTalents = 29,   // talent respec: unlearn every talent point the bot has spent, pay the core's reset cost (its gold), then spend the points again by
+                         // the profile for spec_id/role (dest_x: 1 tank, 2 healer, 3 dps, 0 none; spell_id: a TalentSpec, 0 none), as SpendBotTalents does.
+                         // Refused in combat and dead, below level 10, short of gold, and unless Bot.Talents.Respec is on (default off).
+    kLastActionType = kRespecTalents, // the highest valid value; PublishActions refuses anything above it
 };
 
 // A unit as one 64-bit value (BotAction::target_guid, NearbyUnit::guid). See MakeUnitRef.

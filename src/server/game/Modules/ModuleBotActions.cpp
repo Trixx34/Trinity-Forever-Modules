@@ -11,6 +11,7 @@
 #include <cmath>
 #include <limits>
 #include "BotMgr.h"
+#include "BotTalentSpec.h"
 #include "Cell.h"
 #include "CharmInfo.h"
 #include "Corpse.h"
@@ -2417,6 +2418,65 @@ BotActionStatus PetCommandAction(Player& bot, BotAction const& action, std::stri
     }
 }
 
+// Respec the bot's talents (SDK 0.25, ActionType::kRespecTalents): the points it has spent come back, the core's reset cost is paid from its gold, and the
+// points are spent again by the profile for the spec in spell_id and the role in dest_x (1 tank, 2 healer, 3 dps, 0 none), as SpendBotTalents does. The
+// cost is checked before anything is unlearned, so a bot short of gold keeps its build. A spend refused after the reset leaves the points unspent: the
+// action is then kApplied and the reason says so (the module's SpendBotTalents order spends them later; it must not reset the bot again).
+BotActionStatus RespecAction(Player& bot, BotAction const& action, std::string& reason)
+{
+    static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Talents.Respec", false);
+    if (BotActionRules::ConfigGateResult const gate = BotActionRules::ConfigGate(ActionType::kRespecTalents, allowed); !gate.allowed)
+    {
+        reason = gate.reason;
+        return gate.status;
+    }
+    if (BotActionRules::StateGateResult const state = BotActionRules::AliveIdleGate(bot.IsAlive(), bot.IsInCombat(), bot.IsInFlight()); !state.allowed)
+    {
+        reason = state.reason;
+        return state.status;
+    }
+    if (bot.GetLevel() < 10)
+    {
+        reason = "a respec needs level 10";
+        return BotActionStatus::kRefused;
+    }
+    uint32 const spec = action.spell_id;
+    float const roleValue = action.dest_x;
+    if (roleValue < 0.0f || roleValue > float(BotTalentSpec::LastRole) || roleValue != std::floor(roleValue))
+    {
+        reason = "role must be 0 to " + std::to_string(BotTalentSpec::LastRole);
+        return BotActionStatus::kRefused;
+    }
+    uint8 const role = static_cast<uint8>(roleValue);
+    if (spec > BotTalentSpec::LastSpec)
+    {
+        reason = "spec must be 0 to " + std::to_string(BotTalentSpec::LastSpec);
+        return BotActionStatus::kRefused;
+    }
+    if (spec && BotTalentSpec::Get(spec)->ClassId != bot.GetClass())
+    {
+        reason = "the spec does not belong to the bot's class";
+        return BotActionStatus::kRefused;
+    }
+
+    uint32 const cost = bot.GetNextResetTalentsCost();
+    if (!bot.HasEnoughMoney(uint64(cost)))
+    {
+        reason = "not enough gold for the respec (" + std::to_string(cost) + " copper)";
+        return BotActionStatus::kRefused;
+    }
+    bot.ModifyMoney(-int64(cost));
+    bot.ResetTalents(false);
+    bot.IncreaseResetTalentsCostAndCounters(cost);
+
+    if (char const* why = BotMgr::SetTalentRole(bot, role, static_cast<uint8>(spec)))
+    {
+        reason = std::string("reset done, the points are not spent: ") + why;
+        return BotActionStatus::kApplied;
+    }
+    return BotActionStatus::kApplied;
+}
+
 BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string& reason, uint32 module)
 {
     switch (action.type)
@@ -2666,6 +2726,9 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
 
         case ActionType::kGossip:
             return GossipAction(bot, action, reason);
+
+        case ActionType::kRespecTalents:
+            return RespecAction(bot, action, reason);
 
         // Crafting and gathering (SDK 0.18).
         case ActionType::kCraft:

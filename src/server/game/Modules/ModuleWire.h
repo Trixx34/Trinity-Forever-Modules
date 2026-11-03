@@ -235,6 +235,10 @@ enum class ActionKind : uint8
     BotSpeak = 11, // actions.proto field 20
     BotTrade = 12, // actions.proto field 21
     SpendBotTalents = 13, // actions.proto field 22
+    Duel = 14,            // actions.proto field 23 (additive after protocol 20)
+    Battleground = 15,    // actions.proto field 24
+    Guild = 16,           // actions.proto field 25
+    GiftMail = 17,        // actions.proto field 26
 };
 
 struct ActionRequestMsg
@@ -273,6 +277,7 @@ struct ActionRequestMsg
     // TradeSlot, ItemGuid and Copper.
     uint64 BotGuid = 0;
     uint32 SpeakKind = 0;
+    uint32 SpeakChannel = 0; // SpeakKind 2 only: 0 General, 1 Trade
     uint32 TradeOp = 0;
     uint32 TradeSlot = 0;
     uint64 Copper = 0;
@@ -280,6 +285,12 @@ struct ActionRequestMsg
     // 1 to 28: Bots/BotTalentSpec.h; protocol 18).
     uint32 TalentRole = 0;
     uint32 TalentSpec = 0;
+    // DuelAction (23), BattlegroundAction (24), GuildAction (25): SocialOp is the proto enum value of the request (DuelOp 0 challenge, 1 accept, 2 decline;
+    // BattlegroundOp 0 queue, 1 leave queue, 2 leave; GuildOp 0 accept, 1 decline, 2 leave). Duel uses BotGuid and PlayerGuid, Battleground BotGuid and
+    // BattlegroundId (BattlemasterList id), Guild BotGuid.
+    uint32 SocialOp = 0;
+    uint32 BattlegroundId = 0;
+    // GiftMailAction (26): BotGuid sends ItemGuid (0 = none) x Count and Copper to PlayerGuid (the recipient) with Text as the subject.
 };
 
 // One item of a BotTrade kListBags reply (actions.proto TradeBagItem).

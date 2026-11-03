@@ -824,6 +824,8 @@ bool Decode(std::string_view bytes, ActionRequestMsg& out)
                             out.SpeakKind = static_cast<uint32>(value);
                         else if (af == 3)
                             out.PlayerGuid = value;
+                        else if (af == 5)
+                            out.SpeakChannel = static_cast<uint32>(value);
                     }
                     else if (af == 1)
                         out.TradeOp = static_cast<uint32>(value);
@@ -872,6 +874,77 @@ bool Decode(std::string_view bytes, ActionRequestMsg& out)
                         out.TalentRole = static_cast<uint32>(value);
                     else
                         out.TalentSpec = static_cast<uint32>(value);
+                }
+                else if (!a.Skip(aw))
+                    return false;
+            }
+        }
+        else if ((field == 23 || field == 24 || field == 25) && wire == WireLengthDelimited)
+        {
+            // DuelAction (23): op=1, bot_guid=2, player_guid=3. BattlegroundAction (24): op=1, bot_guid=2, battleground_id=3. GuildAction (25): op=1, bot_guid=2.
+            std::string_view actionBytes;
+            if (!r.ReadBytes(actionBytes))
+                return false;
+            out.Kind = field == 23 ? ActionKind::Duel : field == 24 ? ActionKind::Battleground : ActionKind::Guild;
+
+            Reader a(actionBytes);
+            while (!a.AtEnd())
+            {
+                uint32 af = 0, aw = 0;
+                if (!a.ReadTag(af, aw))
+                    return false;
+                uint64 value = 0;
+                if (aw == WireVarint && (af == 1 || af == 2 || af == 3))
+                {
+                    if (!a.ReadVarint(value))
+                        return false;
+                    if (af == 1)
+                        out.SocialOp = static_cast<uint32>(value);
+                    else if (af == 2)
+                        out.BotGuid = value;
+                    else if (field == 23)
+                        out.PlayerGuid = value;
+                    else if (field == 24)
+                        out.BattlegroundId = static_cast<uint32>(value);
+                }
+                else if (!a.Skip(aw))
+                    return false;
+            }
+        }
+        else if (field == 26 && wire == WireLengthDelimited)
+        {
+            // GiftMailAction (26): bot_guid=1, recipient_guid=2, item_guid=3, count=4, copper=5, subject=6.
+            std::string_view actionBytes;
+            if (!r.ReadBytes(actionBytes))
+                return false;
+            out.Kind = ActionKind::GiftMail;
+
+            Reader a(actionBytes);
+            while (!a.AtEnd())
+            {
+                uint32 af = 0, aw = 0;
+                if (!a.ReadTag(af, aw))
+                    return false;
+                uint64 value = 0;
+                if (aw == WireVarint && af >= 1 && af <= 5)
+                {
+                    if (!a.ReadVarint(value))
+                        return false;
+                    switch (af)
+                    {
+                        case 1: out.BotGuid = value; break;
+                        case 2: out.PlayerGuid = value; break;
+                        case 3: out.ItemGuid = value; break;
+                        case 4: out.Count = static_cast<uint32>(value); break;
+                        default: out.Copper = value; break;
+                    }
+                }
+                else if (af == 6 && aw == WireLengthDelimited)
+                {
+                    std::string_view text;
+                    if (!a.ReadBytes(text))
+                        return false;
+                    out.Text.assign(text);
                 }
                 else if (!a.Skip(aw))
                     return false;

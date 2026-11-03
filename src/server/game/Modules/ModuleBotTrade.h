@@ -4,7 +4,7 @@
  *  - when a player acts in a trade with a bot, the module that controls the bot is told (BotTradeEvent, hook PlayerScript.OnBotTrade);
  *  - the module answers with BotTradeAction (begin, set item, clear item, set gold, accept, cancel, list bags), which runs the real
  *    trade handlers on the bot's session, so the partner's window and the checks are the ones a real player's trade has;
- *  - BotSpeakAction makes a bot say a line or whisper a player.
+ *  - BotSpeakAction makes a bot say a line, whisper a player, or (kind 2) say it on the General or Trade channel of its zone.
  *
  * Settings: Bot.Trade.Enabled (default 0), Bot.Trade.Scope (0 anyone, 1 a member of the bot's group or a character on the bot's own
  * account; default 1), Bot.Trade.KeepConsumables (default 1: food, potions, reagents and ammo are not offered).

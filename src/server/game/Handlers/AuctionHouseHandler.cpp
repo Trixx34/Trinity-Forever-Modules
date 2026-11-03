@@ -715,6 +715,7 @@ void WorldSession::HandleAuctionSellCommodity(WorldPackets::AuctionHouse::Auctio
     }
 
     uint32 auctionId = sObjectMgr->GenerateAuctionID();
+    ModuleLastAuctionId = auctionId; // the bot module's kListCommodity reads the id of the auction it made (ModuleActions.cpp)
     AuctionPosting auction;
     auction.Id = auctionId;
     auction.Owner = _player->GetGUID();

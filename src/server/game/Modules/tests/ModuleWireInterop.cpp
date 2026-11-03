@@ -13,6 +13,7 @@
  */
 
 #include "BotTalentSpec.h"
+#include "ModuleBotSocialRules.h"
 #include "ModuleWire.h"
 
 #include "envelope.pb.h"
@@ -585,6 +586,104 @@ int main()
         if (sdkInfo && coreInfo)
             CHECK(sdkInfo->ClassId == coreInfo->ClassId && std::string(sdkInfo->Key) == coreInfo->Key && coreInfo->Spec == id);
     }
+
+    // SDK -> core: DuelAction (field 23), every op.
+    for (int op = 0; op <= 2; ++op)
+    {
+        forever_module::ActionRequest sdk;
+        sdk.set_message_id(400 + op);
+        forever_module::DuelAction* duel = sdk.mutable_duel();
+        duel->set_op(static_cast<forever_module::DuelAction_DuelOp>(op));
+        duel->set_bot_guid(42);
+        duel->set_player_guid(9000000001ULL);
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+
+        ModuleWire::ActionRequestMsg core;
+        CHECK(ModuleWire::Decode(bytes, core));
+        CHECK(core.MessageId == uint64(400 + op) && core.Kind == ModuleWire::ActionKind::Duel && core.SocialOp == uint32(op));
+        CHECK(core.BotGuid == 42 && core.PlayerGuid == 9000000001ULL);
+    }
+    // SDK -> core: BattlegroundAction (field 24), every op.
+    for (int op = 0; op <= 2; ++op)
+    {
+        forever_module::ActionRequest sdk;
+        sdk.set_message_id(410 + op);
+        forever_module::BattlegroundAction* bg = sdk.mutable_battleground();
+        bg->set_op(static_cast<forever_module::BattlegroundAction_BattlegroundOp>(op));
+        bg->set_bot_guid(43);
+        bg->set_battleground_id(3);
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+
+        ModuleWire::ActionRequestMsg core;
+        CHECK(ModuleWire::Decode(bytes, core));
+        CHECK(core.MessageId == uint64(410 + op) && core.Kind == ModuleWire::ActionKind::Battleground && core.SocialOp == uint32(op));
+        CHECK(core.BotGuid == 43 && core.BattlegroundId == 3 && core.PlayerGuid == 0);
+    }
+    // SDK -> core: GuildAction (field 25), every op.
+    for (int op = 0; op <= 2; ++op)
+    {
+        forever_module::ActionRequest sdk;
+        sdk.set_message_id(420 + op);
+        forever_module::GuildAction* guild = sdk.mutable_guild();
+        guild->set_op(static_cast<forever_module::GuildAction_GuildOp>(op));
+        guild->set_bot_guid(44);
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+
+        ModuleWire::ActionRequestMsg core;
+        CHECK(ModuleWire::Decode(bytes, core));
+        CHECK(core.MessageId == uint64(420 + op) && core.Kind == ModuleWire::ActionKind::Guild && core.SocialOp == uint32(op) && core.BotGuid == 44);
+    }
+    // SDK -> core: GiftMailAction (field 26), with an item and with money only.
+    {
+        forever_module::ActionRequest sdk;
+        sdk.set_message_id(430);
+        forever_module::GiftMailAction* gift = sdk.mutable_gift_mail();
+        gift->set_bot_guid(45);
+        gift->set_recipient_guid(777);
+        gift->set_item_guid(123456789012ULL);
+        gift->set_count(5);
+        gift->set_copper(250);
+        gift->set_subject("A thank-you gift: Peacebloom");
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+
+        ModuleWire::ActionRequestMsg core;
+        CHECK(ModuleWire::Decode(bytes, core));
+        CHECK(core.MessageId == 430 && core.Kind == ModuleWire::ActionKind::GiftMail);
+        CHECK(core.BotGuid == 45 && core.PlayerGuid == 777 && core.ItemGuid == 123456789012ULL && core.Count == 5 && core.Copper == 250);
+        CHECK(core.Text == "A thank-you gift: Peacebloom");
+        CHECK(ModuleBotSocial::GiftSubjectValid(core.Text));
+
+        forever_module::ActionRequest moneyOnly;
+        moneyOnly.set_message_id(431);
+        forever_module::GiftMailAction* money = moneyOnly.mutable_gift_mail();
+        money->set_bot_guid(45);
+        money->set_recipient_guid(777);
+        money->set_copper(100);
+        money->set_subject("x");
+        CHECK(moneyOnly.SerializeToString(&bytes));
+        ModuleWire::ActionRequestMsg core2;
+        CHECK(ModuleWire::Decode(bytes, core2));
+        CHECK(core2.Kind == ModuleWire::ActionKind::GiftMail && core2.ItemGuid == 0 && core2.Count == 0 && core2.Copper == 100);
+    }
+    // A truncated payload is refused, not half-decoded.
+    {
+        forever_module::ActionRequest sdk;
+        sdk.mutable_gift_mail()->set_subject("abc");
+        std::string bytes;
+        CHECK(sdk.SerializeToString(&bytes));
+        bytes.pop_back();
+        ModuleWire::ActionRequestMsg core;
+        CHECK(!ModuleWire::Decode(bytes, core));
+    }
+    // The gift rules.
+    CHECK(!ModuleBotSocial::GiftSubjectValid("") && ModuleBotSocial::GiftSubjectValid("x") && ModuleBotSocial::GiftSubjectValid(std::string(64, 'x')) &&
+          !ModuleBotSocial::GiftSubjectValid(std::string(65, 'x')));
+    CHECK(ModuleBotSocial::GiftWithinCap(10000, 10000, 10000) && !ModuleBotSocial::GiftWithinCap(10001, 0, 10000) &&
+          !ModuleBotSocial::GiftWithinCap(0, 10001, 10000) && !ModuleBotSocial::GiftWithinCap(1, 0, 0));
 
     // SDK -> core: BotTradeAction (field 21), every operation.
     for (int op = 0; op <= 6; ++op)

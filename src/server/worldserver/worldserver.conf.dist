@@ -1930,6 +1930,19 @@ Bot.Limit.MaxDbQueue = 5000
 #            over the ones the player asks for). The trade runs through the same code a real player's trade uses. Off, trade requests
 #            to a bot do nothing.
 #
+#    Bot.Social.Enabled
+#        Default:     0
+#        1 = a module that controls a bot may send it the social actions (SDK ActionRequest fields 23 to 26): challenge, accept or decline a
+#            duel; queue for a battleground solo, leave the queue, leave the battleground; accept or decline a guild invitation, leave its
+#            guild; mail a gift (one whole stack of a small item, and/or copper, postage paid). Each runs the code a player's client reaches
+#            and checks its preconditions again when it runs. A bot queued for a battleground is not sent in by anything else: accepting
+#            the invitation is not part of these actions. Off, all four are refused with a reason.
+#
+#    Bot.Social.GiftMaxCopper
+#        Default:     10000
+#        The most copper a gift mail may carry, and the most vendor value (sell price x count) of the item in it. Bound, quest and
+#        account bound items are never sent.
+#
 #    Bot.Trade.Scope
 #        Default:     1
 #        0 = any player may trade with a bot.
@@ -1969,7 +1982,14 @@ Bot.Limit.MaxDbQueue = 5000
 #        demonology destruction; druid balance feral_tank feral_cat resto. A bot whose module has said its role and spec
 #        (SpendBotTalentsAction) spends its points along the profile for its (class, spec), else its (class, role), in order, as far
 #        as its level allows; with neither, the greedy allocator above runs. While this is set, a bot spends no talents at level-up
-#        until its module has said its role. Points already spent are never taken back (no respec yet).
+#        until its module has said its role. Points already spent are never taken back by SpendBotTalents; kRespecTalents does that.
+#
+#    Bot.Talents.Respec
+#        Default:     0 (off)
+#        Allows the module's kRespecTalents action: the bot's spent talent points are unlearned, the core's reset cost is paid from
+#        its gold (the same cost as the trainer's reset), and the points are spent again by the module's role or spec profile. Refused
+#        in combat, when dead, below level 10, or short of gold. A spend refused after the reset leaves the points unspent and the
+#        action reports it as applied with a reason. Off by default: a respec costs the bot its gold.
 #
 #    Bot.Talents.PointsPerLevelOffset
 #        Default:     9
@@ -1999,6 +2019,28 @@ Bot.Chat.Orders.ReviveSickness = 1
 Bot.Trade.Enabled = 0
 Bot.Trade.Scope = 1
 Bot.Trade.KeepConsumables = 1
+
+Bot.Social.Enabled = 0
+Bot.Social.GiftMaxCopper = 10000
+
+###################################################################################################
+# BOTS: AMBIENT CHAT
+#
+#    Bot.Chat.Ambient.Enabled
+#        Default:     0
+#        1 = a bot may say a line on the General or Trade channel of its zone (BotSpeakAction kind 2). Trade works only in the capitals.
+#
+#    Bot.Chat.Ambient.BotIntervalSec
+#        Default:     60
+#        The least number of seconds between two channel lines from the same bot.
+#
+#    Bot.Chat.Ambient.GlobalPerMin
+#        Default:     10
+#        The most channel lines a minute over all bots. A safety floor under the module's own rate.
+###################################################################################################
+Bot.Chat.Ambient.Enabled = 0
+Bot.Chat.Ambient.BotIntervalSec = 60
+Bot.Chat.Ambient.GlobalPerMin = 10
 
 Bot.Loot.Roll.Enabled = 1
 Bot.Loot.Roll.GreedOnOther = 0
