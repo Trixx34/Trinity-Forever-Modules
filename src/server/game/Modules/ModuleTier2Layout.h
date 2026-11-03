@@ -401,7 +401,9 @@ enum class ActionType : std::uint32_t {
     kRespecTalents = 29,   // talent respec: unlearn every talent point the bot has spent, pay the core's reset cost (its gold), then spend the points again by
                          // the profile for spec_id/role (dest_x: 1 tank, 2 healer, 3 dps, 0 none; spell_id: a TalentSpec, 0 none), as SpendBotTalents does.
                          // Refused in combat and dead, below level 10, short of gold, and unless Bot.Talents.Respec is on (default off).
-    kLastActionType = kRespecTalents, // the highest valid value; PublishActions refuses anything above it
+    kEmote = 30,           // SDK 0.25 (protocol 21): reserved. The bot emote is the Tier 1 EmoteAction (ActionRequest field 27); a Tier 2 action of this type is refused.
+    kLfgJoin = 31,         // SDK 0.25 (protocol 21): reserved. The dungeon finder join is the Tier 1 LfgJoinAction (ActionRequest field 28); a Tier 2 action of this type is refused.
+    kLastActionType = kLfgJoin, // the highest valid value; PublishActions refuses anything above it
 };
 
 // A unit as one 64-bit value (BotAction::target_guid, NearbyUnit::guid). See MakeUnitRef.

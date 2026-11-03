@@ -108,6 +108,8 @@ class TC_GAME_API LFGQueue
         // Update Queue timers
         void UpdateQueueTimers(uint8 queueId, time_t currTime);
         time_t GetJoinTime(ObjectGuid guid) const;
+        /// Read-only view of the queued groups and players (the modules' LfgQueueEvent reads it)
+        LfgQueueDataContainer const& GetQueueData() const { return QueueDataStore; }
 
         // Find new group
         uint8 FindGroups();

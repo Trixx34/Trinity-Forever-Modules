@@ -2723,6 +2723,15 @@ bool Guild::Validate()
     return true;
 }
 
+bool Guild::HasBotMember() const
+{
+    for (auto const& [guid, member] : m_members)
+        if (Player* player = member.FindConnectedPlayer())
+            if (player->GetSession() && player->GetSession()->IsBot())
+                return true;
+    return false;
+}
+
 // Broadcasts
 void Guild::BroadcastToGuild(WorldSession* session, bool officerOnly, std::string_view msg, uint32 language) const
 {

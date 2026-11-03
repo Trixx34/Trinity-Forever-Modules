@@ -7,6 +7,7 @@
 #include "DB2Stores.h"
 #include "GameTime.h"
 #include "Item.h"
+#include "Group.h"
 #include "ItemTemplate.h"
 #include "Log.h"
 #include "ModuleMgr.h"
@@ -247,6 +248,33 @@ void ExecuteSpeak(ModuleWire::ActionRequestMsg const& request, ModuleWire::Actio
             return;
         }
         bot->Whisper(request.Text, LANG_UNIVERSAL, target);
+        reply.Success = true;
+        return;
+    }
+    if (request.SpeakKind == 3 || request.SpeakKind == 4)
+    {
+        // Protocol 21: party (3) and guild (4) chat, through the bot's own chat path (the same checks as a player typing /p or /g).
+        bool const party = request.SpeakKind == 3;
+        if (party)
+        {
+            Group const* group = bot->GetGroup();
+            if (!group || group->isBGGroup())
+            {
+                reply.Reason = "the bot is not in a group";
+                return;
+            }
+        }
+        else if (!bot->GetGuildId())
+        {
+            reply.Reason = "the bot is not in a guild";
+            return;
+        }
+        ChatMessageResult const result = bot->GetSession()->HandleChatMessage(party ? CHAT_MSG_PARTY : CHAT_MSG_GUILD, LANG_UNIVERSAL, request.Text);
+        if (result != ChatMessageResult::Ok)
+        {
+            reply.Reason = party ? "party chat was refused" : "guild chat was refused";
+            return;
+        }
         reply.Success = true;
         return;
     }

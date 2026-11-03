@@ -29,6 +29,8 @@
 #include "LFGQueue.h"
 #include "Log.h"
 #include "Map.h"
+#include "ModuleMgr.h"
+#include "ModuleWire.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
@@ -57,6 +59,9 @@ LFGDungeonData::LFGDungeonData(LFGDungeonsEntry const* dbc) : id(dbc->ID), name(
     if (JournalEncounterEntry const* journalEncounter = sJournalEncounterStore.LookupEntry(dbc->FinalEncounterID))
         finalDungeonEncounterId = journalEncounter->DungeonEncounterID;
 }
+
+// How often the modules are told the queue state (LfgQueueEvent), per map. Rate limit: never more often than this.
+static constexpr uint32 LfgModuleEventIntervalMs = 10 * IN_MILLISECONDS;
 
 LFGMgr::LFGMgr() : m_QueueTimer(0), m_lfgProposalId(1),
     m_options(sWorld->getIntConfig(CONFIG_LFG_OPTIONSMASK))
@@ -387,6 +392,75 @@ void LFGMgr::Update(uint32 diff)
     }
     else
         m_QueueTimer += diff;
+
+    // Protocol 21: tell the modules how the queue stands, at most once per LfgModuleEventIntervalMs and only when one listens.
+    m_ModuleQueueTimer += diff;
+    if (m_ModuleQueueTimer >= LfgModuleEventIntervalMs)
+    {
+        m_ModuleQueueTimer = 0;
+        PublishQueueToModules();
+    }
+}
+
+// One LfgQueueEvent per map with players queued. OpenRoles lists the slots of a five-player party that no queued player covers (1 tank, 1 healer, 3 dps; a
+// player counts for every role it chose, so the list can be short but is never too long). Does nothing when no module subscribes or nobody is queued.
+void LFGMgr::PublishQueueToModules()
+{
+    static constexpr char const* Hook = "LfgScript.OnQueueUpdate";
+    if (!sModuleMgr->HasSubscriber(Hook))
+        return;
+
+    struct MapQueue
+    {
+        time_t oldestJoin = 0;
+        uint32 players = 0;
+        uint32 tanks = 0;
+        uint32 healers = 0;
+        uint32 dps = 0;
+    };
+    std::map<uint32, MapQueue> maps;
+    for (auto const& [queueId, queue] : QueuesStore)
+    {
+        for (auto const& [guid, data] : queue.GetQueueData())
+        {
+            std::set<uint32> mapIds;
+            for (uint32 dungeonId : data.dungeons)
+                if (LFGDungeonData const* dungeon = GetLFGDungeon(dungeonId))
+                    mapIds.insert(dungeon->map);
+            for (uint32 mapId : mapIds)
+            {
+                MapQueue& entry = maps[mapId];
+                if (!entry.oldestJoin || data.joinTime < entry.oldestJoin)
+                    entry.oldestJoin = data.joinTime;
+                for (auto const& [playerGuid, roles] : data.roles)
+                {
+                    ++entry.players;
+                    if (roles & PLAYER_ROLE_TANK)
+                        ++entry.tanks;
+                    if (roles & PLAYER_ROLE_HEALER)
+                        ++entry.healers;
+                    if (roles & PLAYER_ROLE_DAMAGE)
+                        ++entry.dps;
+                }
+            }
+        }
+    }
+
+    time_t const now = GameTime::GetGameTime();
+    for (auto const& [mapId, entry] : maps)
+    {
+        ModuleWire::LfgQueueEvent event;
+        event.MapId = mapId;
+        event.QueuedSeconds = now > entry.oldestJoin ? uint32(now - entry.oldestJoin) : 0;
+        event.QueuedPlayers = entry.players;
+        for (uint32 i = entry.tanks; i < uint32(LFG_TANKS_NEEDED); ++i)
+            event.OpenRoles.push_back(1);
+        for (uint32 i = entry.healers; i < uint32(LFG_HEALERS_NEEDED); ++i)
+            event.OpenRoles.push_back(2);
+        for (uint32 i = entry.dps; i < uint32(LFG_DPS_NEEDED); ++i)
+            event.OpenRoles.push_back(4);
+        sModuleMgr->DispatchLfgQueue(Hook, event);
+    }
 }
 
 /**

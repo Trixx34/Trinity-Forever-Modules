@@ -754,6 +754,8 @@ class TC_GAME_API Guild
         ObjectGuid::LowType GetId() const { return m_id; }
         ObjectGuid GetGUID() const { return ObjectGuid::Create<HighGuid::Guild>(m_id); }
         ObjectGuid GetLeaderGUID() const { return m_leaderGuid; }
+        // True when a member who is online is a bot (the modules' GuildMemberLevelEvent is only sent for guilds that have one).
+        bool HasBotMember() const;
         std::string const& GetName() const { return m_name; }
         std::string const& GetMOTD() const { return m_motd; }
         std::string const& GetInfo() const { return m_info; }

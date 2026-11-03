@@ -41,7 +41,7 @@ struct ModuleActionSet;
 // Wire protocol this core speaks (Tier 1 schema + Tier 2 layout). Must equal kProtocolVersion in
 // forever-module-sdk's include/forever_module/protocol_version.h. Exact match only, no compat
 // shims in v1 (doc/module-system/02-phase0-decisions.md §3, doc/module-system/11-sdk-scope.md).
-inline constexpr char const* kModuleProtocolVersion = "20";
+inline constexpr char const* kModuleProtocolVersion = "21"; // 21: emote and LFG-join actions, party/guild speak, guild-level and LFG-queue events (layout stays 22)
 
 enum class ModuleStatus : uint8
 {
@@ -170,6 +170,10 @@ class TC_GAME_API ModuleMgr
 
         // Delivers PlayerScript.OnChat to subscribed modules. Same non-blocking rules as DispatchNotify.
         void DispatchChat(std::string_view hook, ModuleWire::ChatEvent const& event);
+
+        // Protocol 21 events, to every subscriber of the hook (GuildScript.OnMemberLevel, LfgScript.OnQueueUpdate). Same non-blocking rules as DispatchChat.
+        void DispatchGuildMemberLevel(std::string_view hook, ModuleWire::GuildMemberLevelEvent const& event);
+        void DispatchLfgQueue(std::string_view hook, ModuleWire::LfgQueueEvent const& event);
 
         // Offers a chat command (without its leading '.') to the modules subscribed to CommandScript,
         // in module id order. The first success wins. A reply with success=false and no text means

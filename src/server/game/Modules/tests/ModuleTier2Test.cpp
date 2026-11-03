@@ -49,8 +49,10 @@ int main()
     CHECK(static_cast<int>(forever_module::ActionType::kSkillUp) == 27);
     CHECK(static_cast<int>(forever_module::ActionType::kGossip) == 28);
     CHECK(static_cast<int>(forever_module::ActionType::kRespecTalents) == 29);
+    CHECK(static_cast<int>(forever_module::ActionType::kEmote) == 30);
+    CHECK(static_cast<int>(forever_module::ActionType::kLfgJoin) == 31);
     CHECK(static_cast<int>(forever_module::ActionType::kLastActionType) ==
-          static_cast<int>(forever_module::ActionType::kRespecTalents));
+          static_cast<int>(forever_module::ActionType::kLfgJoin));
     CHECK(forever_module::kMaxAuras == 16);
 
     // The shared region is mapped by two processes built separately, so a shape that changes without a layout bump is

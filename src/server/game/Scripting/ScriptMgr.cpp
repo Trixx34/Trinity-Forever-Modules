@@ -34,6 +34,7 @@
 #include "Errors.h"
 #include "GameObject.h"
 #include "GossipDef.h"
+#include "Guild.h"
 #include "InstanceScript.h"
 #include "Item.h"
 #include "LFGScripts.h"
@@ -2036,6 +2037,18 @@ void ScriptMgr::OnPlayerKilledByCreature(Creature* killer, Player* killed)
 void ScriptMgr::OnPlayerLevelChanged(Player* player, uint8 oldLevel)
 {
     FOREACH_SCRIPT(PlayerScript)->OnLevelChanged(player, oldLevel);
+
+    // Protocol 21: tell the modules when a guild member levels up in a guild that has a bot. Runs on the level change itself, never by polling.
+    if (player && player->GetLevel() > oldLevel && player->GetGuildId() && sModuleMgr->HasSubscriber("GuildScript.OnMemberLevel"))
+        if (Guild const* guild = player->GetGuild())
+            if (guild->HasBotMember())
+            {
+                ModuleWire::GuildMemberLevelEvent event;
+                event.GuildGuid = guild->GetId();
+                event.MemberGuid = player->GetGUID().GetCounter();
+                event.NewLevel = player->GetLevel();
+                sModuleMgr->DispatchGuildMemberLevel("GuildScript.OnMemberLevel", event);
+            }
 }
 
 void ScriptMgr::OnPlayerFreeTalentPointsChanged(Player* player, uint32 points)

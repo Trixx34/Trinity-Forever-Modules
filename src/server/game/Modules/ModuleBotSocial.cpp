@@ -5,11 +5,13 @@
 #include "CharacterCache.h"
 #include "Config.h"
 #include "DatabaseEnv.h"
+#include "DB2Stores.h"
 #include "DuelPackets.h"
 #include "GuildMgr.h"
 #include "Guild.h"
 #include "GuildPackets.h"
 #include "Item.h"
+#include "LFGMgr.h"
 #include "ItemTemplate.h"
 #include "Mail.h"
 #include "ModuleMgr.h"
@@ -380,5 +382,98 @@ void ExecuteGiftMail(ModuleWire::ActionRequestMsg const& request, ModuleWire::Ac
 
     reply.Success = true;
     reply.CopperSpent = request.Copper + postage;
+}
+
+// EmoteAction (protocol 21): the bot plays a one-shot emote animation. The target is not faced and nothing moves: the animation plays where the bot stands.
+void ExecuteEmote(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module)
+{
+    Emote emote = EMOTE_ONESHOT_NONE;
+    switch (request.EmoteKind)
+    {
+        case 0: emote = EMOTE_ONESHOT_SALUTE; break;
+        case 1: emote = EMOTE_ONESHOT_APPLAUD; break;
+        case 2: emote = EMOTE_ONESHOT_CHEER; break;
+        case 3: emote = EMOTE_ONESHOT_WAVE; break;
+        case 4: emote = EMOTE_ONESHOT_BOW; break;
+        default:
+            reply.Reason = "emote kind must be 0 to 4";
+            return;
+    }
+    Player* bot = Prepare(request, reply, module);
+    if (!bot)
+        return;
+    if (!bot->IsAlive())
+    {
+        reply.Reason = "bot is dead";
+        return;
+    }
+    bot->HandleEmoteCommand(emote);
+    reply.Success = true;
+}
+
+// LfgJoinAction (protocol 21): the bot joins the core's dungeon finder queue for the normal-difficulty dungeon of the map, through LFGMgr::JoinLfg (the path
+// of CMSG_DF_JOIN; it needs no human session). Only a bot that is alone and not queued may join. JoinLfg reports a refusal to the player's session, which a
+// bot has none to read, so the result is read back from the bot's LFG state. The role check of a group is not driven: a bot in a group is refused.
+void ExecuteLfgJoin(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module)
+{
+    uint8 role = 0;
+    switch (request.LfgRole)
+    {
+        case 1: role = lfg::PLAYER_ROLE_TANK; break;
+        case 2: role = lfg::PLAYER_ROLE_HEALER; break;
+        case 4: role = lfg::PLAYER_ROLE_DAMAGE; break;
+        default:
+            reply.Reason = "role must be 1, 2 or 4";
+            return;
+    }
+    Player* bot = Prepare(request, reply, module);
+    if (!bot)
+        return;
+    if (!sLFGMgr->isOptionEnabled(lfg::LFG_OPTION_ENABLE_DUNGEON_FINDER))
+    {
+        reply.Reason = "the dungeon finder is off";
+        return;
+    }
+    if (bot->GetGroup())
+    {
+        reply.Reason = "the bot is in a group";
+        return;
+    }
+    if (sLFGMgr->GetState(bot->GetGUID()) != lfg::LFG_STATE_NONE)
+    {
+        reply.Reason = "the bot is already queued";
+        return;
+    }
+    if (!bot->IsAlive())
+    {
+        reply.Reason = "bot is dead";
+        return;
+    }
+
+    LFGDungeonsEntry const* found = nullptr;
+    for (LFGDungeonsEntry const* dungeon : sLFGDungeonsStore)
+    {
+        if (uint32(dungeon->MapID) != request.LfgMapId || dungeon->TypeID != lfg::LFG_TYPE_DUNGEON)
+            continue;
+        if (!found || (Difficulty(dungeon->DifficultyID) == DIFFICULTY_NORMAL && Difficulty(found->DifficultyID) != DIFFICULTY_NORMAL))
+            found = dungeon;
+    }
+    if (!found)
+    {
+        reply.Reason = "no dungeon finder entry for map " + std::to_string(request.LfgMapId);
+        return;
+    }
+
+    lfg::LfgDungeonSet dungeons;
+    dungeons.insert(found->ID);
+    sLFGMgr->JoinLfg(bot, role, dungeons);
+
+    if (sLFGMgr->GetState(bot->GetGUID()) != lfg::LFG_STATE_QUEUED)
+    {
+        // JoinLfg refused (level, lockout, deserter, no permission): nothing was queued.
+        reply.Reason = "the dungeon finder refused the bot";
+        return;
+    }
+    reply.Success = true;
 }
 } // namespace ModuleBotSocial
