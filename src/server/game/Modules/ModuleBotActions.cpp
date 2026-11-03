@@ -948,8 +948,17 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
     }
 
     uint32 equipped = 0, keptBetter = 0, failed = 0, tried = 0;
+    // Player::CanEquipItem refuses (EQUIP_ERR_CLIENT_LOCKED_OUT, 40) while the bot has a generic or channeled spell running or is
+    // charmed, so every pick of a pass that starts during a cast fails and is logged as a failure. Such a pass is left for the next
+    // one instead of creating, then destroying, an item per pick.
+    bool const busy = bot.IsCharmed() || bot.GetCurrentSpell(CURRENT_GENERIC_SPELL) || bot.GetCurrentSpell(CURRENT_CHANNELED_SPELL);
     auto const apply = [&](GearPick const& pick, uint8 slot)
     {
+        if (busy)
+        {
+            TC_LOG_INFO("server.worldserver", "BotMgr: autogear pick bot={} slot={} item={} result=deferred_bot_busy", bot.GetName(), uint32(slot), pick.Item->GetId());
+            return;
+        }
         ++tried;
         uint32 equipError = 0;
         GearResult const result = GiveAndEquip(bot, *pick.Item, slot, equipError);
