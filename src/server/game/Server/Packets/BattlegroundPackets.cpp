@@ -16,7 +16,9 @@
  */
 
 #include "BattlegroundPackets.h"
+#include "Log.h"
 #include "PacketOperators.h"
+#include "Util.h"
 
 namespace WorldPackets::Battleground
 {
@@ -169,8 +171,15 @@ void BattlemasterJoin::Read()
 
 void BattlemasterJoinArena::Read()
 {
-    _worldPacket >> TeamSizeIndex;
-    _worldPacket >> Roles;
+    // Classic 1.60 has no arenas, yet the client sends 0x3F00C1 (5 byte payloads in the prod log) and the retail layout (team size
+    // index + roles) threw a ByteBufferException on each of them. The payload layout of this client is not known: read what is there
+    // and let the handler reject the request instead of dropping the packet with an error.
+    if (_worldPacket.size() - _worldPacket.rpos() >= sizeof(TeamSizeIndex))
+        _worldPacket >> TeamSizeIndex;
+    if (_worldPacket.size() - _worldPacket.rpos() >= sizeof(Roles))
+        _worldPacket >> Roles;
+    TC_LOG_DEBUG("network", "CMSG_BATTLEMASTER_JOIN_ARENA payload {} bytes {}", _worldPacket.size(),
+        Trinity::Impl::ByteArrayToHexStr(_worldPacket.data(), _worldPacket.size()));
 }
 
 ByteBuffer& operator<<(ByteBuffer& data, BattlefieldStatusHeader const& header)
