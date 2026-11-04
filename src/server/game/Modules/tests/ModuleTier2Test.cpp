@@ -37,7 +37,7 @@ int main()
     // The core writes kTier2LayoutVersion into the region and the module refuses to attach on any other value, so the
     // number is pinned here as well as compared below: a silent bump of the core's copy would otherwise only show up as a
     // module that refuses to attach.
-    CHECK(forever_module::kTier2LayoutVersion == 22);
+    CHECK(forever_module::kTier2LayoutVersion == 23);
     CHECK(static_cast<int>(forever_module::BotActionStatus::kNoRoute) == 13);
     CHECK(static_cast<int>(forever_module::BotActionStatus::kNeedsFocus) == 14);
     CHECK(static_cast<int>(forever_module::ActionType::kCraft) == 20);
@@ -58,9 +58,9 @@ int main()
     // The shared region is mapped by two processes built separately, so a shape that changes without a layout bump is
     // memory corruption that nothing else would catch. These sizes are what the SDK's header gives on the same platform.
     CHECK(sizeof(forever_module::AuraEntry) == 12);
-    CHECK(sizeof(forever_module::BotSnapshot) == 1136);         // the SDK pins the same size (tier2_session.cpp, layout 22: 936 until the damage log)
+    CHECK(sizeof(forever_module::BotSnapshot) == 1160);         // the SDK pins the same size (tier2_session.cpp, layout 23)
     CHECK(sizeof(forever_module::GroundEffect) == 24);
-    CHECK(sizeof(forever_module::NearbyUnit) == 48);
+    CHECK(sizeof(forever_module::NearbyUnit) == 56);
     CHECK(offsetof(forever_module::BotSnapshot, aura_count) == 376);
     CHECK(offsetof(forever_module::BotSnapshot, auras) == 380);
     CHECK(offsetof(forever_module::BotSnapshot, ammo_count) == 652);

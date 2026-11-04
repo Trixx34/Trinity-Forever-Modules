@@ -11,7 +11,7 @@ using forever_module::BotActionStatus;
 TEST_CASE("Action types are valid up to the last one the layout defines", "[ModuleBotActionRules]")
 {
     uint32 const last = static_cast<uint32>(ActionType::kLastActionType);
-    CHECK(last == static_cast<uint32>(ActionType::kGossip));
+    CHECK(last == static_cast<uint32>(ActionType::kLfgJoin));
     CHECK(IsValidActionType(0));
     CHECK(IsValidActionType(static_cast<uint32>(ActionType::kCraft)));
     CHECK(IsValidActionType(last - 1));
@@ -92,7 +92,7 @@ TEST_CASE("Action types without a config key are never gated", "[ModuleBotAction
     for (uint32 type = 0; type <= static_cast<uint32>(ActionType::kLastActionType); ++type)
     {
         ActionType const t = static_cast<ActionType>(type);
-        if (t == ActionType::kTeleport || t == ActionType::kGrant || t == ActionType::kUseObject || t == ActionType::kGossip)
+        if (t == ActionType::kTeleport || t == ActionType::kGrant || t == ActionType::kUseObject || t == ActionType::kGossip || t == ActionType::kRespecTalents)
             continue;
         ConfigGateResult const gate = ConfigGate(off, t);
         CHECK(gate.allowed);
