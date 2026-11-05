@@ -5,6 +5,7 @@
 #include "BotMgr.h"
 #include "BotMgrRules.h"
 #include "BotProfessions.h"
+#include "BotSpellRanks.h"
 #include "BotTalentSpec.h"
 #include "BotTaxi.h"
 #include "AccountMgr.h"
@@ -133,8 +134,9 @@ int32 LocalSecondsOfDay()
 
 // Bot.Dump.SpellCosts = <file>: once at startup, one line per spell that costs power, so a module can tell before a cast whether the bot can pay for it
 // (the bots module reads the file as SpellCostFile). Tab separated: spell id, the level the spell needs, the power type (0 mana, 1 rage, 3 energy...),
-// the flat cost, the cost added per level, the percent cost (of the base mana, 0 when none), the next rank's spell id (0 for the last), the name. The
-// costs are in the core's own units, the ones Unit::GetPower uses (rage is tenths of a point), so they compare with the bot's power as it is.
+// the flat cost, the cost added per level, the percent cost (of the base mana, 0 when none), the next rank's spell id (0 for the last; from the rank
+// chain, else from the rank groups of BotSpellRanks.h), the name. The costs are in the core's own units, the ones Unit::GetPower uses (rage is
+// tenths of a point), so they compare with the bot's power as it is.
 void DumpSpellCosts(std::string const& path)
 {
     std::ofstream out(path, std::ios::trunc);
@@ -151,9 +153,11 @@ void DumpSpellCosts(std::string const& path)
         {
             if (!power || (power->ManaCost == 0 && power->PowerCostPct == 0.0f))
                 continue;
+            // the native rank chain, else the rank group (BotSpellRanks.h) for the many Classic spells the client data gives no chain
             SpellInfo const* next = info->GetNextRankSpell();
+            uint32 const nextId = next ? next->Id : BotSpellRanks::NextRank(info->Id);
             out << info->Id << '\t' << info->SpellLevel << '\t' << int32(power->PowerType) << '\t' << power->ManaCost << '\t' << power->ManaCostPerLevel << '\t'
-                << power->PowerCostPct << '\t' << (next ? next->Id : 0) << '\t'
+                << power->PowerCostPct << '\t' << nextId << '\t'
                 << (info->SpellName ? std::string((*info->SpellName)[sWorld->GetDefaultDbcLocale()]) : std::string("?")) << '\n';
             ++lines;
         }
@@ -314,6 +318,10 @@ void BotMgr::LoadRegistry()
     if (_registryLoaded)
         return;
     _registryLoaded = true;
+
+    // The rank groups of the spells without a rank chain: HighestKnownRank (ModuleBotActions.cpp) and the cost dump below use them. The world is
+    // loaded here (spell ranks, trainers).
+    BotSpellRanks::Build();
 
     if (std::string const costFile = sConfigMgr->GetStringDefault("Bot.Dump.SpellCosts", ""); !costFile.empty())
         DumpSpellCosts(costFile);

@@ -5,6 +5,7 @@
 #include "BotProfessions.h"
 #include "BotTaxi.h"
 #include "BotGearRules.h"
+#include "BotSpellRanks.h"
 #include "ModuleBotSnapshot.h"
 #include "ModuleBotSupplies.h"
 #include "ModuleBotSupplyRules.h"
@@ -137,6 +138,8 @@ BotActionStatus StatusForCast(SpellCastResult result)
 
 // The highest rank of a spell the bot knows, walking the rank chain from the id the module sent (its rank 1). 0 if the bot
 // knows no rank of it. A lower rank that was replaced by a higher one is still in the chain, so this finds the higher one.
+// Most Classic spells (Fireball, Smite, Heal ...) have no chain in the client data: when the chain finds nothing above spellId, the rank group
+// of spellId (BotSpellRanks.h: same family, icon and name, ordered by learn level) gives the highest rank the bot knows at its level.
 uint32 HighestKnownRank(Player& bot, uint32 spellId)
 {
     uint32 best = bot.HasSpell(spellId) ? spellId : 0;
@@ -150,6 +153,10 @@ uint32 HighestKnownRank(Player& bot, uint32 spellId)
             best = next;
         id = next;
     }
+    if (best && best != spellId)
+        return best; // the native chain found a higher rank
+    if (uint32 const grouped = BotSpellRanks::HighestKnownInGroup(bot, spellId))
+        return grouped;
     return best;
 }
 
