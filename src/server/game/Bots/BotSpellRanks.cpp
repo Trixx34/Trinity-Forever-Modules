@@ -90,10 +90,10 @@ void BotSpellRanks::Build()
         std::string members;
         for (BotSpellRankRules::Member const& member : group.Members)
             members += (members.empty() ? "" : ", ") + std::to_string(member.Id) + " (level " + std::to_string(member.Level) + ")";
-        TC_LOG_INFO("server.worldserver", "BotSpellRanks: '{}' (family {}, icon {}) left without ranks: two of its spells share a level: {}",
+        TC_LOG_INFO("server.worldserver", "BotSpellRanks: '{}' (family {}, icon {}) had spells at one level, lowest id kept: {}",
             group.Name, group.Family, group.Icon, members);
     }
-    TC_LOG_INFO("server.worldserver", "BotSpellRanks: {} rank group(s) of {} spell(s) for spells without a rank chain, {} group(s) left out",
+    TC_LOG_INFO("server.worldserver", "BotSpellRanks: {} rank group(s) of {} spell(s) for spells without a rank chain, {} group(s) had look-alikes dropped",
         g_rankGroups.Groups.size(), g_rankGroups.GroupOf.size(), g_rankGroups.Skipped.size());
 }
 

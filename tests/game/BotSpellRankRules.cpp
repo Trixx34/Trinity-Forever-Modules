@@ -77,7 +77,7 @@ TEST_CASE("Only ranks the bot knows are cast", "[BotSpellRankRules]")
     CHECK(HighestKnownGroupRank(groups, 145, 23, Knows({ 133, 143 })) == 0);
 }
 
-TEST_CASE("A group with two spells at one level is left alone", "[BotSpellRankRules]")
+TEST_CASE("Two spells at one level keep the lowest id", "[BotSpellRankRules]")
 {
     std::vector<SpellRow> rows = FireballRows();
     // a talent or racial look-alike: same family, icon and name, same level as another member
@@ -88,15 +88,10 @@ TEST_CASE("A group with two spells at one level is left alone", "[BotSpellRankRu
 
     REQUIRE(groups.Skipped.size() == 1);
     CHECK(groups.Skipped[0].Name == "Heal");
-    CHECK(groups.Skipped[0].Members.size() == 3);
-    REQUIRE(groups.Groups.size() == 1); // Fireball is still grouped
-    CHECK(groups.Groups[0].Name == "Fireball");
-
-    for (uint32 id : { 2054u, 2055u, 9999u })
-    {
-        CHECK(NextGroupRank(groups, id) == 0);
-        CHECK(HighestKnownGroupRank(groups, id, 60, Knows({ 2054, 2055, 9999 })) == 0);
-    }
+    REQUIRE(groups.Groups.size() == 2);
+    CHECK(NextGroupRank(groups, 2054) == 2055);
+    CHECK(NextGroupRank(groups, 9999) == 0); // the look-alike is in no group
+    CHECK(HighestKnownGroupRank(groups, 2054, 60, Knows({ 2054, 2055, 9999 })) == 2055);
 }
 
 TEST_CASE("A spell with a native rank chain is not grouped", "[BotSpellRankRules]")

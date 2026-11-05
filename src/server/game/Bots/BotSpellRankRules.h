@@ -48,12 +48,12 @@ struct RankGroup
 struct RankGroups
 {
     std::vector<RankGroup> Groups;                    // the groups in use: two or more members, each at its own level
-    std::vector<RankGroup> Skipped;                   // groups left alone because two members share a level (talent or racial look-alikes)
+    std::vector<RankGroup> Skipped;                   // groups that had two members at one level; the extra members were dropped (lowest id kept) and the group is still in Groups
     std::unordered_map<uint32, std::size_t> GroupOf;  // spell id -> index into Groups
 };
 
 // Groups the rows by (family, icon, name). A spell id listed twice (two trainers, or a trainer row and a SkillLineAbility row) counts once, at the
-// lower of its levels. Groups of one member and groups with no trained member are dropped; groups with two members at one level go to Skipped.
+// lower of its levels. Groups of one member and groups with no trained member are dropped; of two members at one level only the lowest id is kept (the group is also listed in Skipped).
 inline RankGroups BuildRankGroups(std::vector<SpellRow> const& rows)
 {
     struct Pending
@@ -87,13 +87,15 @@ inline RankGroups BuildRankGroups(std::vector<SpellRow> const& rows)
             group.Members.push_back(member.second);
         // ById is ordered by id, so a stable sort by level leaves equal levels by id
         std::stable_sort(group.Members.begin(), group.Members.end(), [](Member const& a, Member const& b) { return a.Level < b.Level; });
-        bool const sharedLevel = std::adjacent_find(group.Members.begin(), group.Members.end(),
-            [](Member const& a, Member const& b) { return a.Level == b.Level; }) != group.Members.end();
-        if (sharedLevel)
-        {
-            result.Skipped.push_back(std::move(group));
+        // two spells at one level are look-alikes (a talent, a racial, a later-patch copy): keep the lowest id, the original rank
+        bool dropped = false;
+        auto const tail = std::unique(group.Members.begin(), group.Members.end(),
+            [&dropped](Member const& a, Member const& b) { dropped = dropped || a.Level == b.Level; return a.Level == b.Level; });
+        group.Members.erase(tail, group.Members.end());
+        if (dropped)
+            result.Skipped.push_back(group); // reported in the log as 'look-alikes dropped'; the group itself stays in use
+        if (group.Members.size() < 2)
             continue;
-        }
         std::size_t const index = result.Groups.size();
         for (Member const& member : group.Members)
             result.GroupOf[member.Id] = index;
