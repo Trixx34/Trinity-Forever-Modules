@@ -2,9 +2,14 @@
 
 ## This fork: WoW Classic beta 1.60.1.70338 ("Forever")
 
-Branch `forever` runs TrinityCore master against the **WoW Classic beta client 1.60.1.70338** (`_classic_beta_\WowB.exe`)
-with a vanilla world (converted from VMaNGOS) and the Skyborne / Zephras Isle content.
-Preliminary support for client 1.60.1.70450: see [doc/Classic70450.md](doc/Classic70450.md).
+> **Not an official TrinityCore branch.** This is a community fork run by the Forever project. It is not made, supported or
+> endorsed by the TrinityCore team, and it is up to them whether they support it or take any of it upstream. Please don't
+> ask the TrinityCore team for help with this fork: questions and bug reports go to the
+> [Forever Discord](https://discord.gg/9GdBGrWPfj).
+
+Branch `forever` runs TrinityCore master against the **WoW Forever client 1.60.1.70790** (`_forever_\Wow.exe`, Battle.net
+product `wowf`; until 70658 it was the Classic beta, `_classic_beta_\WowB.exe`) with a vanilla world (converted from
+VMaNGOS) and the Skyborne / Zephras Isle content. Client 1.60.1.70450 notes: see [doc/Classic70450.md](doc/Classic70450.md).
 
 **Just want to play?** Use the Windows repack from the releases: extract, run `Setup.bat`, start the servers in the
 Forever Launcher, press Play. No MySQL or compiling needed.
@@ -77,9 +82,10 @@ the **server PC also needs the hosts entry** from step 3 (else bnetserver stops 
 LoginREST.ExternalAddress"). On Linux, `contrib/linux/configure_server.sh` writes both configs from the `.dist` files.
 
 **Game data (maps, vmaps, mmaps).** Run the tools built from this branch in the **World of Warcraft** folder (the one that
-holds `.build.info` and `_classic_beta_`). The Forever client is the CASC product **`wow_classic_beta`**; this branch's
-extractors use it by default (TrinityCore's own default `wow` = retail fails with "Error opening casc storage / No locales
-detected"; on older builds of the tools pass `-p wow_classic_beta`):
+holds `.build.info` and `_forever_`). Since client 1.60.1.70790 the Forever client is its own CASC product **`wowf`**
+(`_forever_\Wow.exe`; before that it was `wow_classic_beta` in `_classic_beta_\WowB.exe`). This branch's extractors use `wowf`
+by default (TrinityCore's own default `wow` = retail fails with "Error opening casc storage / No locales detected"; for an
+old beta install pass `-p wow_classic_beta`):
 ```
 mapextractor
 vmap4extractor
@@ -216,4 +222,4 @@ Read file [AUTHORS](AUTHORS).
 * [Website](https://www.trinitycore.org)
 * [Wiki](https://www.trinitycore.info)
 * [Forums](https://talk.trinitycore.org/)
-* [Discord](https://discord.trinitycore.org/)
+* [Discord (Forever)](https://discord.gg/9GdBGrWPfj)
