@@ -41,6 +41,18 @@ void PlayerTaxi::InitTaxiNodesForLevel(uint32 race, uint32 chrClass, uint8 level
     for (std::size_t i = 0; i < m_taximask.size(); ++i)
         m_taximask[i] |= sOldContinentsNodesMask[i] & factionMask[i];
 
+    // The starting nodes below are retail ids; the Classic TaxiNodes data has only some of them. A node that is not part of the taxi
+    // network is dropped by LoadTaxiMask (with a warning), so it must not be set here: setting it again after every load made
+    // the same characters log "invalid taximask" on each login.
+    auto setStartNode = [this](uint32 nodeidx)
+    {
+        uint32 field = (nodeidx - 1) / (sizeof(TaxiMask::value_type) * 8);
+        if (nodeidx == 0 || field >= sTaxiNodesMask.size())
+            return;
+        if (sTaxiNodesMask[field] & TaxiMask::value_type(1 << ((nodeidx - 1) % (sizeof(TaxiMask::value_type) * 8))))
+            SetTaximaskNode(nodeidx);
+    };
+
     // race specific initial known nodes: capital and taxi hub masks
     switch (race)
     {
@@ -51,19 +63,19 @@ void PlayerTaxi::InitTaxiNodesForLevel(uint32 race, uint32 chrClass, uint8 level
         case RACE_DRAENEI:
         case RACE_WORGEN:
         case RACE_PANDAREN_ALLIANCE:
-            SetTaximaskNode(2);     // Stormwind, Elwynn
-            SetTaximaskNode(6);     // Ironforge, Dun Morogh
-            SetTaximaskNode(26);    // Lor'danel, Darkshore
-            SetTaximaskNode(27);    // Rut'theran Village, Teldrassil
-            SetTaximaskNode(49);    // Moonglade (Alliance)
-            SetTaximaskNode(94);    // The Exodar
-            SetTaximaskNode(456);   // Dolanaar, Teldrassil
-            SetTaximaskNode(457);   // Darnassus, Teldrassil
-            SetTaximaskNode(582);   // Goldshire, Elwynn
-            SetTaximaskNode(589);   // Eastvale Logging Camp, Elwynn
-            SetTaximaskNode(619);   // Kharanos, Dun Morogh
-            SetTaximaskNode(620);   // Gol'Bolar Quarry, Dun Morogh
-            SetTaximaskNode(624);   // Azure Watch, Azuremyst Isle
+            setStartNode(2);     // Stormwind, Elwynn
+            setStartNode(6);     // Ironforge, Dun Morogh
+            setStartNode(26);    // Lor'danel, Darkshore
+            setStartNode(27);    // Rut'theran Village, Teldrassil
+            setStartNode(49);    // Moonglade (Alliance)
+            setStartNode(94);    // The Exodar
+            setStartNode(456);   // Dolanaar, Teldrassil
+            setStartNode(457);   // Darnassus, Teldrassil
+            setStartNode(582);   // Goldshire, Elwynn
+            setStartNode(589);   // Eastvale Logging Camp, Elwynn
+            setStartNode(619);   // Kharanos, Dun Morogh
+            setStartNode(620);   // Gol'Bolar Quarry, Dun Morogh
+            setStartNode(624);   // Azure Watch, Azuremyst Isle
             break;
         case RACE_ORC:
         case RACE_UNDEAD_PLAYER:
@@ -72,33 +84,33 @@ void PlayerTaxi::InitTaxiNodesForLevel(uint32 race, uint32 chrClass, uint8 level
         case RACE_BLOODELF:
         case RACE_GOBLIN:
         case RACE_PANDAREN_HORDE:
-            SetTaximaskNode(11);    // Undercity, Tirisfal
-            SetTaximaskNode(22);    // Thunder Bluff, Mulgore
-            SetTaximaskNode(23);    // Orgrimmar, Durotar
-            SetTaximaskNode(69);    // Moonglade (Horde)
-            SetTaximaskNode(82);    // Silvermoon City
-            SetTaximaskNode(384);   // The Bulwark, Tirisfal
-            SetTaximaskNode(402);   // Bloodhoof Village, Mulgore
-            SetTaximaskNode(460);   // Brill, Tirisfal Glades
-            SetTaximaskNode(536);   // Sen'jin Village, Durotar
-            SetTaximaskNode(537);   // Razor Hill, Durotar
-            SetTaximaskNode(625);   // Fairbreeze Village, Eversong Woods
-            SetTaximaskNode(631);   // Falconwing Square, Eversong Woods
+            setStartNode(11);    // Undercity, Tirisfal
+            setStartNode(22);    // Thunder Bluff, Mulgore
+            setStartNode(23);    // Orgrimmar, Durotar
+            setStartNode(69);    // Moonglade (Horde)
+            setStartNode(82);    // Silvermoon City
+            setStartNode(384);   // The Bulwark, Tirisfal
+            setStartNode(402);   // Bloodhoof Village, Mulgore
+            setStartNode(460);   // Brill, Tirisfal Glades
+            setStartNode(536);   // Sen'jin Village, Durotar
+            setStartNode(537);   // Razor Hill, Durotar
+            setStartNode(625);   // Fairbreeze Village, Eversong Woods
+            setStartNode(631);   // Falconwing Square, Eversong Woods
             break;
     }
 
     // new continent starting masks (It will be accessible only at new map)
     switch (Player::TeamForRace(race))
     {
-        case ALLIANCE: SetTaximaskNode(100); break;
-        case HORDE:    SetTaximaskNode(99);  break;
+        case ALLIANCE: setStartNode(100); break;
+        case HORDE:    setStartNode(99);  break;
         default:
             break;
     }
 
     // level dependent taxi hubs
     if (level >= 68)
-        SetTaximaskNode(213);                               //Shattered Sun Staging Area
+        setStartNode(213);                               //Shattered Sun Staging Area
 }
 
 bool PlayerTaxi::LoadTaxiMask(std::string const& data)

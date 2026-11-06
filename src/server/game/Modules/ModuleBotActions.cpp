@@ -5,6 +5,7 @@
 #include "BotProfessions.h"
 #include "BotTaxi.h"
 #include "BotGearRules.h"
+#include "BotSpellRanks.h"
 #include "ModuleBotSnapshot.h"
 #include "ModuleBotSupplies.h"
 #include "ModuleBotSupplyRules.h"
@@ -137,6 +138,8 @@ BotActionStatus StatusForCast(SpellCastResult result)
 
 // The highest rank of a spell the bot knows, walking the rank chain from the id the module sent (its rank 1). 0 if the bot
 // knows no rank of it. A lower rank that was replaced by a higher one is still in the chain, so this finds the higher one.
+// Most Classic spells (Fireball, Smite, Heal ...) have no chain in the client data: when the chain finds nothing above spellId, the rank group
+// of spellId (BotSpellRanks.h: same family, icon and name, ordered by learn level) gives the highest rank the bot knows at its level.
 uint32 HighestKnownRank(Player& bot, uint32 spellId)
 {
     uint32 best = bot.HasSpell(spellId) ? spellId : 0;
@@ -150,6 +153,10 @@ uint32 HighestKnownRank(Player& bot, uint32 spellId)
             best = next;
         id = next;
     }
+    if (best && best != spellId)
+        return best; // the native chain found a higher rank
+    if (uint32 const grouped = BotSpellRanks::HighestKnownInGroup(bot, spellId))
+        return grouped;
     return best;
 }
 
@@ -948,8 +955,17 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
     }
 
     uint32 equipped = 0, keptBetter = 0, failed = 0, tried = 0;
+    // Player::CanEquipItem refuses (EQUIP_ERR_CLIENT_LOCKED_OUT, 40) while the bot has a generic or channeled spell running or is
+    // charmed, so every pick of a pass that starts during a cast fails and is logged as a failure. Such a pass is left for the next
+    // one instead of creating, then destroying, an item per pick.
+    bool const busy = bot.IsCharmed() || bot.GetCurrentSpell(CURRENT_GENERIC_SPELL) || bot.GetCurrentSpell(CURRENT_CHANNELED_SPELL);
     auto const apply = [&](GearPick const& pick, uint8 slot)
     {
+        if (busy)
+        {
+            TC_LOG_INFO("server.worldserver", "BotMgr: autogear pick bot={} slot={} item={} result=deferred_bot_busy", bot.GetName(), uint32(slot), pick.Item->GetId());
+            return;
+        }
         ++tried;
         uint32 equipError = 0;
         GearResult const result = GiveAndEquip(bot, *pick.Item, slot, equipError);
