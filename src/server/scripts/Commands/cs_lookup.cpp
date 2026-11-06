@@ -691,7 +691,7 @@ public:
                             }
                         }
 
-                        if (handler->GetSession())
+                        if (Player* player = handler->GetPlayer())
                         {
                             int32 maxLevel = 0;
                             if (Optional<ContentTuningLevels> questLevels = sDB2Manager.GetContentTuningData(questTemplatePair.second->GetContentTuningId(),
@@ -703,8 +703,8 @@ public:
                                 scalingFactionGroup = contentTuning->GetScalingFactionGroup();
 
                             handler->PSendSysMessage(LANG_QUEST_LIST_CHAT, questTemplatePair.first, questTemplatePair.first,
-                                handler->GetSession()->GetPlayer()->GetQuestLevel(questTemplatePair.second.get()),
-                                handler->GetSession()->GetPlayer()->GetQuestMinLevel(questTemplatePair.second.get()),
+                                player->GetQuestLevel(questTemplatePair.second.get()),
+                                player->GetQuestMinLevel(questTemplatePair.second.get()),
                                 maxLevel, scalingFactionGroup,
                                 title.c_str(), statusStr);
                         }
@@ -751,7 +751,7 @@ public:
                     }
                 }
 
-                if (handler->GetSession())
+                if (Player* player = handler->GetPlayer())
                 {
                     int32 maxLevel = 0;
                     if (Optional<ContentTuningLevels> questLevels = sDB2Manager.GetContentTuningData(questTemplatePair.second->GetContentTuningId(),
@@ -763,8 +763,8 @@ public:
                         scalingFactionGroup = contentTuning->GetScalingFactionGroup();
 
                     handler->PSendSysMessage(LANG_QUEST_LIST_CHAT, questTemplatePair.first, questTemplatePair.first,
-                        handler->GetSession()->GetPlayer()->GetQuestLevel(questTemplatePair.second.get()),
-                        handler->GetSession()->GetPlayer()->GetQuestMinLevel(questTemplatePair.second.get()),
+                        player->GetQuestLevel(questTemplatePair.second.get()),
+                        player->GetQuestMinLevel(questTemplatePair.second.get()),
                         maxLevel, scalingFactionGroup,
                         title.c_str(), statusStr);
                 }
@@ -821,7 +821,7 @@ public:
                 }
             }
 
-            if (handler->GetSession())
+            if (Player* player = handler->GetPlayer())
             {
                 int32 maxLevel = 0;
                 if (Optional<ContentTuningLevels> questLevels = sDB2Manager.GetContentTuningData(quest->GetContentTuningId(),
@@ -833,8 +833,8 @@ public:
                     scalingFactionGroup = contentTuning->GetScalingFactionGroup();
 
                 handler->PSendSysMessage(LANG_QUEST_LIST_CHAT, id, id,
-                    handler->GetSession()->GetPlayer()->GetQuestLevel(quest),
-                    handler->GetSession()->GetPlayer()->GetQuestMinLevel(quest),
+                    player->GetQuestLevel(quest),
+                    player->GetQuestMinLevel(quest),
                     maxLevel, scalingFactionGroup,
                     title.c_str(), statusStr);
             }
