@@ -33,6 +33,7 @@
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
+#include "RealmList.h"
 #include "World.h"
 
 bool WorldSession::CanOpenMailBox(ObjectGuid guid)
@@ -91,6 +92,21 @@ void WorldSession::HandleSendMail(WorldPackets::Mail::SendMail& sendMail)
         // The client sends recipients as "Name" or "Name Surname"
         std::string recipientName = sendMail.Info.Target;
         std::string recipientSurname;
+
+        // The 70790 client asks for a full name and sends "Name-Realm" ("Name Surname-Realm"); this realm's own suffix is dropped
+        if (size_t dashPos = recipientName.rfind('-'); dashPos != std::string::npos)
+        {
+            if (std::shared_ptr<Realm const> currentRealm = sRealmList->GetCurrentRealm())
+            {
+                std::string suffix = recipientName.substr(dashPos + 1);
+                std::string realmName = currentRealm->Name;
+                std::erase(suffix, ' ');
+                std::erase(realmName, ' ');
+                if (!suffix.empty() && StringEqualI(suffix, realmName))
+                    recipientName.erase(dashPos);
+            }
+        }
+
         if (size_t spacePos = recipientName.find(' '); spacePos != std::string::npos)
         {
             recipientSurname = recipientName.substr(spacePos + 1);
