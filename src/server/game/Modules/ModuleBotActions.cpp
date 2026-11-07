@@ -2798,6 +2798,10 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
                 reason = "unknown spell " + std::to_string(action.spell_id);
                 return BotActionStatus::kUnknownSpell;
             }
+            // Tame Beast (1515) is taught by a quest line the bots never run: a hunter of level 10 or more is given it on its first request,
+            // the same way a cook is given the basic campfire. Without it every tame cast answered "spell not known".
+            if (action.spell_id == 1515 && bot.GetClass() == CLASS_HUNTER && bot.GetLevel() >= 10 && !bot.HasSpell(1515))
+                bot.LearnSpell(1515, false);
             // The module names a rank 1 spell; the bot casts the highest rank it knows.
             uint32 const castId = HighestKnownRank(bot, action.spell_id);
             if (!castId)

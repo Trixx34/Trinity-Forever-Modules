@@ -82,6 +82,10 @@ namespace Trainer
         // withSkillRanks: also the spells that need a rank in a skill (the higher ranks of a profession), when the player has it.
         uint32 TeachAvailableSpellsFree(Player* player, bool withSkillRanks) const;
 
+        // Bit mask (1 << (class - 1)) of the classes this trainer teaches: the union over its spells of the classes their
+        // class skill lines name; all classes when the data does not say (profession and other trainers). Computed on first use.
+        uint32 GetClassMask() const;
+
     private:
         Spell const* GetSpell(uint32 spellId) const;
         bool CanTeachSpell(Player const* player, Spell const* trainerSpell) const;
@@ -92,6 +96,7 @@ namespace Trainer
         friend ObjectMgr;
         void AddGreetingLocale(LocaleConstant locale, std::string_view greeting);
 
+        mutable uint32 _classMask = 0;   // 0 = not computed yet
         uint32 _id;
         Type _type;
         std::vector<Spell> _spells;

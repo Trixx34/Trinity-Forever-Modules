@@ -267,7 +267,11 @@
     { 0x3E0277, 0x3D0275 }, // CMSG_REQUEST_LATEST_SPLASH_SCREEN (0.0)
     { 0x3E0278, 0x3D027A }, // CMSG_QUEST_SESSION_REQUEST_START (0.0)
     { 0x3E027D, 0x3D027B }, // CMSG_QUEST_SESSION_BEGIN_RESPONSE (0.0)
-    { 0x3E028C, 0x3D028A }, // CMSG_CHROMIE_TIME_SELECT_EXPANSION (0.0)
+    // CMSG_OFFER_PETITION (charter "Request Signature"): the 70790 client sends it as 0x3E028C. This line used to map that number to
+    // CMSG_CHROMIE_TIME_SELECT_EXPANSION (0x3D028A, unhandled), so every "Request Signature" click was thrown away and nobody, player or
+    // bot, was ever offered a charter. The dev realm log showed 7 CHROMIE_TIME_SELECT_EXPANSION packets for 7 clicks on 2026-11-06.
+    // Before this fix 0x3E028B had been guessed (neighbour order); that guess was wrong and is removed.
+    { 0x3E028C, 0x3D0289 }, // CMSG_OFFER_PETITION (seen on the wire: 7 clicks = 7 packets)
     { 0x3E028D, 0x3D028B }, // CMSG_ACTIVATE_SOULBIND (0.0)
     { 0x3E0291, 0x3D0291 }, // CMSG_UPGRADE_RUNEFORGE_LEGENDARY (0.0)
     { 0x3E0294, 0x3D0292 }, // CMSG_CLOSE_RUNEFORGE_INTERACTION (0.0)
@@ -521,8 +525,12 @@
     { 0x440026, 0x430026 }, // CMSG_SEND_MAIL (4.2)
     { 0x440028, 0x430028 }, // CMSG_REQUEST_CHAT_LOGIN (0.0)
     { 0x440029, 0x430029 }, // CMSG_ACCEPT_GUILD_INVITE (3.8)
-    { 0x440034, 0x430032 }, // CMSG_PARTY_INVITE_RESPONSE (1.0)
-    { 0x440035, 0x430034 }, // CMSG_GUILD_INVITE_BY_NAME (1.0)
+    // CMSG_GUILD_INVITE_BY_NAME is 0x440034, not 0x440035: the 70790 packet log of 2026-11-06 has three guild window "Invite Member"
+    // clicks at 0x440034, each 9 bits name length + 1 bit (no arena team) + "Avenaro " (the GuildInviteByName layout). They were read
+    // as PARTY_INVITE_RESPONSE, so no guild invite ever reached a player or bot. PARTY_INVITE_RESPONSE takes the other number of the
+    // swapped pair (not seen on the wire yet).
+    { 0x440034, 0x430034 }, // CMSG_GUILD_INVITE_BY_NAME (packet log 70790, 3 invites)
+    { 0x440035, 0x430032 }, // CMSG_PARTY_INVITE_RESPONSE (swapped pair, not seen yet)
     { 0x440036, 0x430035 }, // CMSG_DF_PROPOSAL_RESPONSE (1.0)
     { 0x440037, 0x430036 }, // CMSG_DF_CONFIRM_EXPAND_SEARCH (0.0)
     { 0x440038, 0x430038 }, // CMSG_LFG_LIST_LEAVE (ride ticket only; serializer rva 0x8B40C0)

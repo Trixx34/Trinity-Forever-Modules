@@ -3229,8 +3229,18 @@ bool Player::AddSpell(uint32 spellId, bool active, bool learning, bool dependent
 
             // Runeforging special case
             if ((_spell_idx->second->GetAcquireMethod() == SkillLineAbilityAcquireMethod::AutomaticCharLevel && !HasSkill(_spell_idx->second->SkillLine)) || ((_spell_idx->second->SkillLine == SKILL_RUNEFORGING) && _spell_idx->second->TrivialSkillLineRankHigh == 0))
+            {
                 if (SkillRaceClassInfoEntry const* rcInfo = sDB2Manager.GetSkillRaceClassInfo(_spell_idx->second->SkillLine, GetRace(), GetClass()))
                     LearnDefaultSkill(rcInfo);
+            }
+            // Classic 1.60: a weapon spell taught by a weapon master (Two-Handed Maces 199, Two-Handed Axes 197 for a shaman) opens its
+            // weapon skill when the race and class may have it. These spells carry no skill effect and those skills are not given at
+            // creation, so the spell was in the spellbook but the weapon could not be equipped ("you don't know how to use it").
+            else if (IsWeaponSkill(_spell_idx->second->SkillLine) && !HasSkill(_spell_idx->second->SkillLine))
+            {
+                if (SkillRaceClassInfoEntry const* rcInfo = sDB2Manager.GetSkillRaceClassInfo(_spell_idx->second->SkillLine, GetRace(), GetClass()))
+                    LearnDefaultSkill(rcInfo);
+            }
         }
     }
 
@@ -7271,8 +7281,8 @@ bool Player::RewardHonor(Unit* victim, uint32 groupsize, int32 honor, HonorGainS
         // apply honor multiplier from aura (not stacking-get highest)
         AddPct(honor_f, GetMaxPositiveAuraModifierByMiscMask(SPELL_AURA_MOD_HONOR_GAIN_PCT_FROM_SOURCE, 1 << AsUnderlyingType(source)));
         AddPct(honor_f, GetMaxPositiveAuraModifier(SPELL_AURA_MOD_HONOR_GAIN_PCT));
-        // Classic 1.60 Legacy perk For Great Honor 1225501: currency gain aura on Honor (1792); honor is not credited as that currency here
-        AddPct(honor_f, GetTotalAuraModifierByMiscValue(SPELL_AURA_MOD_CURRENCY_GAIN, 1792));
+        // Classic 1.60 Legacy perk For Great Honor 1225501 (currency gain aura on Honor 1792) is applied by
+        // ModifyCurrency when the honor is credited below, for kills and battleground honor alike.
         honor_f += _restMgr->GetRestBonusFor(REST_TYPE_HONOR, honor_f);
     }
 
@@ -7293,6 +7303,12 @@ bool Player::RewardHonor(Unit* victim, uint32 groupsize, int32 honor, HonorGainS
     SendDirectMessage(data.Write());
 
     AddHonorXP(honor);
+
+    // Classic 1.60: honor is the Honor currency (1792). The PvP quartermasters (Lady Palanseer 12792, Brave Stonehide
+    // 12793, Sergeant Thunderhorn 14581) price their goods in it through ItemExtendedCost (11575-11706: 1792 plus marks),
+    // so honor that only fed the retail honor level bar could never be spent.
+    if (honor > 0 && sCurrencyTypesStore.HasRecord(CURRENCY_HONOR_CLASSIC))
+        ModifyCurrency(CURRENCY_HONOR_CLASSIC, honor, CurrencyGainSource::PvPHonorReward);
 
     if (InBattleground() && honor > 0)
     {
@@ -14700,9 +14716,20 @@ void Player::PrepareGossipMenu(WorldObject* source, uint32 menuId, bool showQues
                     if (!HasPlayerFlag(PLAYER_FLAGS_NO_XP_GAIN) || IsMaxLevel())
                         canTalk = false;
                     break;
+                case GossipOptionNpc::Trainer:
+                {
+                    // A class trainer offers training to its own class only (classic: another class saw no train option, only the
+                    // trainer's talk). The trainer is the option's own, else the creature's, as when the option is picked.
+                    uint32 trainerId = sObjectMgr->GetCreatureTrainerForGossipOption(creature->GetEntry(), menuId, gossipMenuItem.OrderIndex);
+                    if (!trainerId)
+                        trainerId = creature->GetTrainerId();
+                    if (Trainer::Trainer const* trainer = sObjectMgr->GetTrainer(trainerId))
+                        if (!(trainer->GetClassMask() & GetClassMask()))
+                            canTalk = false;
+                    break;
+                }
                 case GossipOptionNpc::None:
                 case GossipOptionNpc::Vendor:
-                case GossipOptionNpc::Trainer:
                 case GossipOptionNpc::Binder:
                 case GossipOptionNpc::Banker:
                 case GossipOptionNpc::PetitionVendor:
@@ -14764,7 +14791,9 @@ void Player::PrepareGossipMenu(WorldObject* source, uint32 menuId, bool showQues
             return false;
         };
 
-        if (creature->HasNpcFlag(UNIT_NPC_FLAG_TRAINER) && creature->GetTrainerId() && !hasOption(GossipOptionNpc::Trainer))
+        Trainer::Trainer const* ownTrainer = creature->GetTrainerId() ? sObjectMgr->GetTrainer(creature->GetTrainerId()) : nullptr;
+        if (creature->HasNpcFlag(UNIT_NPC_FLAG_TRAINER) && ownTrainer && (ownTrainer->GetClassMask() & GetClassMask())
+            && !hasOption(GossipOptionNpc::Trainer))
             menu.AddMenuItem(CLASSIC_GOSSIP_OPTION_AUTO_TRAINER, menu.GetMenuItemCount(), GossipOptionNpc::Trainer, "Train me.", 0,
                 GossipOptionFlags::None, {}, 0, 0, false, 0, "", {}, {}, menuId, menu.GetMenuItemCount());
 
@@ -19232,6 +19261,34 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
                 }
                 else
                     transport = transportOnMap;
+            }
+        }
+
+        // A zeppelin or boat between two continents is on the other continent by the time the player logs in again,
+        // so it is not found on the saved map. Look for it on the other maps of its route before sending the player home.
+        if (!transport)
+        {
+            if (TransportSpawn const* transportSpawn = sTransportMgr->GetTransportSpawn(fields.transguid))
+            {
+                if (TransportTemplate const* transportTemplate = sTransportMgr->GetTransportTemplate(transportSpawn->TransportGameObjectId))
+                {
+                    for (uint32 routeMapId : transportTemplate->MapIds)
+                    {
+                        if (routeMapId == mapId)
+                            continue;
+
+                        if (Map* routeMap = sMapMgr->CreateMap(routeMapId, this))
+                        {
+                            if (Transport* transportOnRoute = routeMap->GetTransport(transGUID))
+                            {
+                                transport = transportOnRoute;
+                                mapId = routeMapId;
+                                instanceId = 0;
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -24485,14 +24542,16 @@ bool Player::BuyCurrencyFromVendorSlot(ObjectGuid vendorGuid, uint32 vendorSlot,
         return false;
     }
 
-    if (count % crItem->maxcount)
+    // a currency row without a stack size sells one at a time (and must not divide by zero)
+    uint32 const stackSize = std::max<uint32>(crItem->maxcount, 1);
+    if (count % stackSize)
     {
         SendEquipError(EQUIP_ERR_CANT_BUY_QUANTITY, nullptr, nullptr);
         return false;
     }
 
     uint64 price = 0;
-    uint32 stacks = count / crItem->maxcount;
+    uint32 stacks = count / stackSize;
     ItemExtendedCostEntry const* iece;
     if (crItem->ExtendedCost)
     {
@@ -24505,15 +24564,15 @@ bool Player::BuyCurrencyFromVendorSlot(ObjectGuid vendorGuid, uint32 vendorSlot,
 
         if (iece->Money)
         {
-            uint64 maxStacks = MAX_MONEY_AMOUNT / crItem->maxcount;
-            if (uint64(stacks) > maxStacks)
+            // the price is worked out in 64 bits: a 32-bit product wraps for a large count and sold currency for next to nothing
+            price = uint64(iece->Money) * count;
+            if (price > MAX_MONEY_AMOUNT)
             {
                 TC_LOG_ERROR("entities.player.cheat", "Player::BuyCurrencyFromVendorSlot: Player '{}' ({}) tried to buy currency (ItemID: {}, Count: {}), causing money overflow",
                     GetName(), GetGUID(), currency, count);
-                count = uint32(maxStacks * crItem->maxcount);
-                stacks = maxStacks;
+                SendBuyError(BUY_ERR_NOT_ENOUGHT_MONEY, creature, currency, 0);
+                return false;
             }
-            price = uint64(iece->Money * count); //it should not exceed MAX_MONEY_AMOUNT
             if (!HasEnoughMoney(price))
             {
                 SendBuyError(BUY_ERR_NOT_ENOUGHT_MONEY, creature, currency, 0);
@@ -24523,7 +24582,8 @@ bool Player::BuyCurrencyFromVendorSlot(ObjectGuid vendorGuid, uint32 vendorSlot,
 
         for (uint8 i = 0; i < MAX_ITEM_EXT_COST_ITEMS; ++i)
         {
-            if (iece->ItemID[i] && !HasItemCount(iece->ItemID[i], (iece->ItemCount[i] * stacks)))
+            // the needed count must not wrap round for a large purchase
+            if (iece->ItemID[i] && (uint64(iece->ItemCount[i]) * stacks > std::numeric_limits<uint32>::max() || !HasItemCount(iece->ItemID[i], (iece->ItemCount[i] * stacks))))
             {
                 SendEquipError(EQUIP_ERR_VENDOR_MISSING_TURNINS, nullptr, nullptr);
                 return false;
@@ -24548,7 +24608,7 @@ bool Player::BuyCurrencyFromVendorSlot(ObjectGuid vendorGuid, uint32 vendorSlot,
                 SendEquipError(EQUIP_ERR_VENDOR_MISSING_TURNINS, nullptr, nullptr); // Find correct error
                 return false;
             }
-            else if (!HasCurrency(iece->CurrencyID[i], (iece->CurrencyCount[i] * stacks)))
+            else if (uint64(iece->CurrencyCount[i]) * stacks > std::numeric_limits<uint32>::max() || !HasCurrency(iece->CurrencyID[i], (iece->CurrencyCount[i] * stacks)))
             {
                 SendEquipError(EQUIP_ERR_VENDOR_MISSING_TURNINS, nullptr, nullptr); // Find correct error
                 return false;
@@ -24796,7 +24856,8 @@ bool Player::BuyItemFromVendorSlot(ObjectGuid vendorguid, uint32 vendorslot, uin
                 GetName(), GetGUID().ToString(), pProto->GetId(), count);
             count = uint32(maxCount);
         }
-        price = uint64(buyPricePerItem * count); //it should not exceed MAX_MONEY_AMOUNT
+        // whole numbers: part of a stack (arrows) rounds up instead of down to free, and full stacks cost exactly the stack price
+        price = (basePrice * count + pProto->GetBuyCount() - 1) / pProto->GetBuyCount();
 
         // reputation discount
         price = uint64(floor(price * GetReputationPriceDiscount(creature)));
@@ -24807,6 +24868,7 @@ bool Player::BuyItemFromVendorSlot(ObjectGuid vendorguid, uint32 vendorslot, uin
             price -= CalculatePct(price, priceMod);
 
         price = ApplyClassicLegacyPriceMod(price, 0);   // Legacy perk Bartering
+        price = std::max(uint64(1), price);              // discounts never make a priced item free
 
         if (!HasEnoughMoney(price))
         {

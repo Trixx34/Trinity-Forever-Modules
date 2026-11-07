@@ -73,11 +73,18 @@ BattlenetPort = 1119
 #        Description: Determines how long the login ticket is valid (in seconds)
 #                     When using client -launcherlogin feature it is recommended to set it to a high value (like a week)
 #
+#    LoginREST.DefaultAccountDomain
+#        Description: Added as "@<domain>" to an account name typed without an @ on the login screen,
+#                     so players can log in with "name" instead of "name@local". Names that contain
+#                     an @ are used as typed. Leave empty ("") to turn this off.
+#        Default:     "local"
+#
 
 LoginREST.Port = 8081
 LoginREST.ExternalAddress=127.0.0.1
 LoginREST.LocalAddress=127.0.0.1
 LoginREST.TicketDuration=3600
+LoginREST.DefaultAccountDomain = "local"
 
 #
 #    Realm.AlsoAcceptBuilds
@@ -182,6 +189,16 @@ Network.HandshakeTimeout = 30
 #                     0 - (No limit)
 
 Network.LoginTimeout = 600
+
+#
+#    Network.RequestsPerSecond
+#        Description: Requests one Battle.net connection may send per second on average, with room for a burst of ten seconds'
+#                     worth (a login sends a few dozen at once). A connection over it is closed. Counted per connection, so
+#                     players sharing one address (a tunnel, a household) do not share it.
+#        Default:     10
+#                     0 - (No limit)
+
+Network.RequestsPerSecond = 10
 
 #
 #    WrongPass.MaxCount

@@ -21,6 +21,7 @@
 #include "Define.h"
 #include "SmartScriptMgr.h"
 #include <memory>
+#include <optional>
 
 class AreaTrigger;
 class Creature;
@@ -117,6 +118,16 @@ class TC_GAME_API SmartScript
         ObjectGuid mTimedActionListInvoker;
         std::shared_ptr<Scripting::v2::ActionBase> mTimedActionWaitEvent;
         bool isProcessingTimedActionList;
+        // A timed action list asked for another list while this one was running (VMaNGOS style nesting). The request is
+        // kept here and started when the running pass has finished; the newest request wins.
+        struct PendingTimedActionList
+        {
+            SmartScriptHolder source;
+            uint32 entry;
+            ObjectGuid invoker;
+            uint32 startFromEventId;
+        };
+        std::optional<PendingTimedActionList> mPendingTimedActionList;
         Creature* me;
         ObjectGuid meOrigGUID;
         GameObject* go;

@@ -19,6 +19,7 @@
 #include "BattlePetMgr.h"
 #include "ConditionMgr.h"
 #include "Creature.h"
+#include "DB2Stores.h"
 #include "Log.h"
 #include "NPCPackets.h"
 #include "Player.h"
@@ -167,6 +168,45 @@ namespace Trainer
                 ++learned;
         }
         return learned;
+    }
+
+    uint32 Trainer::GetClassMask() const
+    {
+        if (_classMask)
+            return _classMask;
+
+        // The classes this trainer can teach: every class that owns at least one of its spells. (An intersection over the spells
+        // let a single spell with a stray or foreign class skill line drop the trainer's own class, so warrior, priest, mage and
+        // rogue trainers taught nobody. Each spell is still checked against the player's class by IsSpellFitByClassAndRace.)
+        constexpr uint32 allClasses = (1u << MAX_CLASSES) - 1;
+        uint32 mask = 0;
+        for (Spell const& trainerSpell : _spells)
+        {
+            SkillLineAbilityMapBounds bounds = sSpellMgr->GetSkillLineAbilityMapBounds(trainerSpell.SpellId);
+            for (auto itr = bounds.first; itr != bounds.second; ++itr)
+            {
+                SkillLineEntry const* skill = sSkillLineStore.LookupEntry(itr->second->SkillLine);
+                if (!skill || skill->CategoryID != SKILL_CATEGORY_CLASS)
+                    continue;
+
+                for (uint8 cls = CLASS_WARRIOR; cls < MAX_CLASSES; ++cls)
+                {
+                    if (itr->second->ClassMask && !(itr->second->ClassMask & (1u << (cls - 1))))
+                        continue;
+
+                    for (uint8 race = 1; race < 40; ++race)
+                        if (sDB2Manager.GetSkillRaceClassInfo(itr->second->SkillLine, race, cls))
+                        {
+                            mask |= 1u << (cls - 1);
+                            break;
+                        }
+                }
+            }
+            // a spell without a class skill line says nothing about the class
+        }
+
+        _classMask = mask ? mask : allClasses;
+        return _classMask;
     }
 
     Spell const* Trainer::GetSpell(uint32 spellId) const
