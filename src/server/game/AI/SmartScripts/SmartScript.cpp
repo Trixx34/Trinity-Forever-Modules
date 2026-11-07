@@ -3974,6 +3974,18 @@ void SmartScript::OnUpdate(uint32 const diff)
         }
 
         isProcessingTimedActionList = false;
+
+        // a list that was asked for from inside this pass replaces the finished one
+        if (mPendingTimedActionList)
+        {
+            PendingTimedActionList pending = std::move(*mPendingTimedActionList);
+            mPendingTimedActionList.reset();
+            Unit* pendingInvoker = nullptr;
+            if (me && !pending.invoker.IsEmpty())
+                pendingInvoker = ObjectAccessor::GetUnit(*me, pending.invoker);
+            SetTimedActionList(pending.source, pending.entry, pendingInvoker, pending.startFromEventId);
+            needCleanup = false;
+        }
     }
 
     if (needCleanup)
@@ -4300,6 +4312,16 @@ void SmartScript::SetTimedActionList(SmartScriptHolder& e, uint32 entry, Unit* i
     // any SmartScriptHolder contained like the "e" parameter passed to this function
     if (isProcessingTimedActionList)
     {
+        // Nested lists (VMaNGOS scripts): the random-list action and an override call are queued and started when the
+        // running pass is over. A plain call without allowOverride keeps its old refusal.
+        bool const canQueue = e.GetActionType() == SMART_ACTION_CALL_RANDOM_TIMED_ACTIONLIST
+            || e.GetActionType() == SMART_ACTION_CALL_RANDOM_RANGE_TIMED_ACTIONLIST
+            || (e.GetActionType() == SMART_ACTION_CALL_TIMED_ACTIONLIST && e.action.timedActionList.allowOverride);
+        if (canQueue)
+        {
+            mPendingTimedActionList = PendingTimedActionList{ e, entry, invoker ? invoker->GetGUID() : ObjectGuid::Empty, startFromEventId };
+            return;
+        }
         TC_LOG_ERROR("scripts.ai", "Entry {} SourceType {} Event {} Action {} is trying to overwrite timed action list from a timed action, this is not allowed!.", e.entryOrGuid, e.GetScriptType(), e.GetEventType(), e.GetActionType());
         return;
     }
