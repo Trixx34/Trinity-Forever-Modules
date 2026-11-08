@@ -1813,11 +1813,12 @@ BotActionStatus MoveToSpeaker(Player& bot, Player& speaker, uint32 index, std::s
     bool const sameMap = bot.GetMapId() == speaker.GetMapId() && bot.GetInstanceId() == speaker.GetInstanceId();
     if (!sameMap)
     {
-        Map const* botMap = bot.GetMap();
         Map const* speakerMap = speaker.GetMap();
-        if ((botMap && botMap->Instanceable()) || (speakerMap && speakerMap->Instanceable()))
+        // One way: a bot inside a dungeon may join a speaker in the open world. The core cannot put a bot into the
+        // speaker's own instance (instance targeting is a todo), so a speaker inside an instance is refused.
+        if (speakerMap && speakerMap->Instanceable())
         {
-            reason = "an instance is involved on another map";
+            reason = "the speaker is in an instance";
             return BotActionStatus::kRefused;
         }
     }
