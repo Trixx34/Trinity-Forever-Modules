@@ -2514,9 +2514,19 @@ void Player::InitTalentForLevel()
         ResetTalentSpecialization();
 
     int32 talentTiers = DB2Manager::GetNumTalentsAtLevel(level, Classes(GetClass()));
-    // Classic 1.60: a level change never respecs (vanilla only resets talents at a trainer). The retail-era "level < 15 ->
-    // ResetTalents" cleanup wiped the points a level 10-14 character had spent on every ding and spec activation.
-    if (level >= 15 && !GetSession()->HasPermission(rbac::RBAC_PERM_SKIP_CHECK_MORE_TALENTS_THAN_ALLOWED))
+    // Classic 1.60: talents start at level 10 and points can also be granted (.talents), so a level change must not
+    // wipe a build. Below 15 reset only when the active config spends more than is now owned (level lowered, points
+    // taken away). From 15 on, drop talents beyond the allowed count, as before.
+    if (level < 15)
+    {
+        UF::TraitConfig const* activeConfig = GetTraitConfig(m_activePlayerData->ActiveCombatTraitConfigID);
+        WorldPackets::Traits::TraitConfig checkConfig;
+        if (activeConfig)
+            checkConfig = WorldPackets::Traits::TraitConfig(*activeConfig);
+        if (!activeConfig || TraitMgr::ValidateConfig(checkConfig, this) != TraitMgr::LearnResult::Ok)
+            ResetTalents(true);
+    }
+    else if (!GetSession()->HasPermission(rbac::RBAC_PERM_SKIP_CHECK_MORE_TALENTS_THAN_ALLOWED))
         for (int32 t = talentTiers; t < MAX_TALENT_TIERS; ++t)
             for (uint32 c = 0; c < MAX_TALENT_COLUMNS; ++c)
                 for (TalentEntry const* talent : sDB2Manager.GetTalentsByPosition(GetClass(), t, c))
