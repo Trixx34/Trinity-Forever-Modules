@@ -174,3 +174,11 @@ TEST_CASE("A unique-equipped ring is chosen once and a ranged weapon fills slot 
     // no usable ranged candidate (a class without the skill): nothing is picked, the slot stays empty
     CHECK(BotGearRules::ChooseForSlot({}, 1).empty());
 }
+
+TEST_CASE("KeepWorn compares gear scores, so a lower item level with the wanted primary stat can replace the worn piece", "[BotGearRules]")
+{
+    // item level 20 worn with no wanted stats (200) against item level 19 with 5 of a wanted primary stat (190 + 15): replaced
+    CHECK_FALSE(BotGearRules::KeepWorn(200, 205, false, false));
+    // equal scores keep the worn piece
+    CHECK(BotGearRules::KeepWorn(205, 205, false, false));
+}

@@ -49,16 +49,17 @@ inline bool ArmorLighterThanMax(uint8 classId, uint32 level, uint32 itemClass, u
     return subclass > ITEM_SUBCLASS_ARMOR_MISCELLANEOUS && subclass < MaxArmorSubclass(classId, level);
 }
 
-// Whether a worn item stays: the item level rule (only a strictly higher item level replaces it), except that worn armour lighter than
-// the class maximum is replaced by an item that is not lighter whatever the item levels. `newLighter` false means the candidate is of the
+// Whether a worn item stays: the gear score rule (only a strictly higher score replaces it; the score is the item level first and the stats
+// the class wants after it, see GearScore), except that worn armour lighter than the class maximum is replaced by an item that is not lighter
+// whatever the scores. `newLighter` false means the candidate is of the
 // maximum subclass (or not judged), so a candidate of the right subclass exists for the slot.
-inline bool KeepWorn(uint32 wornItemLevel, uint32 newItemLevel, bool wornLighter, bool newLighter)
+inline bool KeepWorn(int32 wornScore, int32 newScore, bool wornLighter, bool newLighter)
 {
     if (wornLighter && !newLighter)
         return false;
     if (!wornLighter && newLighter)
         return true; // never swap max-subclass armour for lighter armour, however high its item level
-    return newItemLevel <= wornItemLevel;
+    return newScore <= wornScore;
 }
 
 // One item that could go in a slot: `Lighter` is ArmorLighterThanMax for it.

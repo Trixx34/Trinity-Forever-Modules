@@ -672,12 +672,6 @@ bool ArmorLighterThanMax(Player const& bot, ItemTemplate const& item)
     return BotGearRules::ArmorLighterThanMax(bot.GetClass(), bot.GetLevel(), item.GetClass(), item.GetSubClass(), item.GetInventoryType());
 }
 
-// Whether the worn item stays against this candidate: the item level rule plus the armour weight preference (BotGearRules::KeepWorn).
-bool KeepWornItem(Player const& bot, ItemTemplate const& worn, ItemTemplate const& candidate)
-{
-    return BotGearRules::KeepWorn(worn.GetBaseItemLevel(), candidate.GetBaseItemLevel(), ArmorLighterThanMax(bot, worn), ArmorLighterThanMax(bot, candidate));
-}
-
 // What a class wants from its gear, as item-mod stats: the stats it uses, in no order. `profile` (bits 2-4 of AutoGearAction's
 // flags, from MOD-Forever-Bots' combat_rotation.cpp GearProfileFor) is spec-aware when the module sent one; 0 is also the
 // encoding a module build that predates this falls back to, so it still gets this class's old, class-only default.
@@ -727,6 +721,12 @@ int32 GearScore(std::vector<int32> const& preferred, ItemTemplate const& item)
     return ModuleBotSupplyRules::CombineGearScore(int32(item.GetBaseItemLevel()), stats);
 }
 
+// Whether the worn item stays against this candidate: the gear score rule plus the armour weight preference (BotGearRules::KeepWorn).
+bool KeepWornItem(Player const& bot, std::vector<int32> const& preferred, ItemTemplate const& worn, ItemTemplate const& candidate)
+{
+    return BotGearRules::KeepWorn(GearScore(preferred, worn), GearScore(preferred, candidate), ArmorLighterThanMax(bot, worn), ArmorLighterThanMax(bot, candidate));
+}
+
 struct GearPick
 {
     ItemTemplate const* Item = nullptr;
@@ -754,13 +754,13 @@ char const* GearResultName(GearResult result)
     return "unknown";
 }
 
-// Creates the item in the bags and moves it into `slot`, unless the slot already holds an item of at least this item level (worn armour
-// lighter than the class maximum is replaced by a maximum-subclass item whatever the item levels).
-GearResult GiveAndEquip(Player& bot, ItemTemplate const& item, uint8 slot, uint32& equipError)
+// Creates the item in the bags and moves it into `slot`, unless the slot already holds an item of at least this gear score (worn armour
+// lighter than the class maximum is replaced by a maximum-subclass item whatever the scores).
+GearResult GiveAndEquip(Player& bot, std::vector<int32> const& preferred, ItemTemplate const& item, uint8 slot, uint32& equipError)
 {
     equipError = 0;
     Item* current = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-    if (current && KeepWornItem(bot, *current->GetTemplate(), item))
+    if (current && KeepWornItem(bot, preferred, *current->GetTemplate(), item))
         return GearResult::KeptBetter;
 
     // A unique-equipped item already worn in the other slot of a pair (rings, trinkets) is not worn twice: skipped, not an error.
@@ -793,10 +793,11 @@ GearResult GiveAndEquip(Player& bot, ItemTemplate const& item, uint8 slot, uint3
 // spell_id bit 1: a tank (one-hand weapon and shield).
 // Gear the bot was given or looted: an item in the bags that the bot can use and that has a higher item level than what is worn where it
 // would go is worn instead (the displaced item goes to the bags). The quality cap of the item pool does not apply: a rare that a player
-// trades to a bot is worn. The comparison is the item level, the same rule GiveAndEquip keeps a worn item by, so the two passes cannot
+// trades to a bot is worn. The comparison is the gear score, the same rule GiveAndEquip keeps a worn item by, so the two passes cannot
 // undo each other.
 uint32 EquipBagUpgrades(Player& bot)
 {
+    std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile::StrStam);
     std::vector<Item*> candidates;
     bot.ForEachItem(ItemSearchLocation::Inventory, [&candidates](Item* item)
     {
@@ -806,10 +807,10 @@ uint32 EquipBagUpgrades(Player& bot)
             candidates.push_back(item);
         return ItemSearchCallbackResult::Continue;
     });
-    // the best item level first
-    std::stable_sort(candidates.begin(), candidates.end(), [](Item const* a, Item const* b)
+    // the best gear score first
+    std::stable_sort(candidates.begin(), candidates.end(), [&preferred](Item const* a, Item const* b)
     {
-        return a->GetTemplate()->GetBaseItemLevel() > b->GetTemplate()->GetBaseItemLevel();
+        return GearScore(preferred, *a->GetTemplate()) > GearScore(preferred, *b->GetTemplate());
     });
 
     uint32 equipped = 0;
@@ -823,7 +824,7 @@ uint32 EquipBagUpgrades(Player& bot)
             continue;
         uint8 const slot = uint8(destination & 255);
         Item* worn = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-        if (worn && KeepWornItem(bot, *worn->GetTemplate(), *proto))
+        if (worn && KeepWornItem(bot, preferred, *worn->GetTemplate(), *proto))
             continue;
         bot.SwapItem(item->GetPos(), destination);
         if (bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot) == item)
@@ -851,17 +852,17 @@ int32 BotGearUpgradeScore(Player& bot, ItemTemplate const& item)
         return 0;
 
     // Where the item goes: one slot, or the weaker of the two for rings and trinkets (an empty one first).
+    std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile::StrStam);
     Item* worn = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, first);
     if ((type == INVTYPE_FINGER || type == INVTYPE_TRINKET) && worn)
     {
         Item* second = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, uint8(first + 1));
-        if (!second || second->GetTemplate()->GetBaseItemLevel() < worn->GetTemplate()->GetBaseItemLevel())
+        if (!second || GearScore(preferred, *second->GetTemplate()) < GearScore(preferred, *worn->GetTemplate()))
             worn = second;
     }
-    if (worn && KeepWornItem(bot, *worn->GetTemplate(), item))
+    if (worn && KeepWornItem(bot, preferred, *worn->GetTemplate(), item))
         return 0;
 
-    std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile::StrStam);
     int32 const gain = GearScore(preferred, item) - (worn ? GearScore(preferred, *worn->GetTemplate()) : 0);
     return ModuleBotSupplyRules::PositiveGain(gain);
 }
@@ -988,7 +989,7 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
         }
         ++tried;
         uint32 equipError = 0;
-        GearResult const result = GiveAndEquip(bot, *pick.Item, slot, equipError);
+        GearResult const result = GiveAndEquip(bot, preferred, *pick.Item, slot, equipError);
         equipped += result == GearResult::Equipped;
         keptBetter += result == GearResult::KeptBetter;
         failed += result == GearResult::NoBagSpace || result == GearResult::CannotEquip;   // SkippedUnique is neither a failure nor logged as one
