@@ -1993,8 +1993,9 @@ Bot.Limit.MaxDbQueue = 5000
 #
 #    Bot.Talents.PointsPerLevelOffset
 #        Default:     9
-#        A profile gets (level - this) points: 1 point at level 10, 21 at level 30, 31 at level 40. A guess from a comment in
-#        TraitMgr.cpp (one point per level from 10), not checked on a real character.
+#        A bot gets (level - this) points: 1 point at level 10, 21 at level 30, 51 at level 60 (Classic: one point per level from
+#        10, the talent currency 3820 capped at 51). Points a profile leaves over (a short profile, or a rank the validation refuses) go to
+#        the class allocator on the profile's tab, so the bot ends with the whole allowance.
 #
 #    Bot.Learn.CombatSkills
 #        Default:     1

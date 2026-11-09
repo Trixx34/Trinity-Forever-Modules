@@ -156,6 +156,13 @@ std::string PickFirstValidName(uint32 maxAttempts, Generate generate, IsValid is
     }
     return std::string();
 }
+
+// ---- Talents ----
+// Classic: the class talent currency (3820) gives one point at each level from 10 to 60, so level L has L - 9 points (1 at 10, 51 at 60).
+inline constexpr int32 CLASSIC_TALENT_FIRST_LEVEL = 10;
+inline constexpr int32 DEF_TALENT_POINTS_PER_LEVEL_OFFSET = CLASSIC_TALENT_FIRST_LEVEL - 1;
+// Points a bot of `level` may have spent: level minus the offset (Bot.Talents.PointsPerLevelOffset), never negative.
+inline int32 TalentPointsAllowed(int32 level, int32 offset) { return std::max<int32>(0, level - offset); }
 }
 
 #endif // TRINITY_BOT_MGR_RULES_H
