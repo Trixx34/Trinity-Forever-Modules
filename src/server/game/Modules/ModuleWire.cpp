@@ -942,7 +942,7 @@ bool Decode(std::string_view bytes, ActionRequestMsg& out)
                         return false;
                     out.Text.assign(name.data(), name.size());
                 }
-                else if (aw == WireVarint && (af == 1 || af == 2 || af == 3))
+                else if (aw == WireVarint && (af == 1 || af == 2 || af == 3 || (field == 25 && af == 4)))
                 {
                     if (!a.ReadVarint(value))
                         return false;
@@ -950,8 +950,8 @@ bool Decode(std::string_view bytes, ActionRequestMsg& out)
                         out.SocialOp = static_cast<uint32>(value);
                     else if (af == 2)
                         out.BotGuid = value;
-                    else if (field == 23)
-                        out.PlayerGuid = value;
+                    else if (field == 23 || (field == 25 && af == 4))
+                        out.PlayerGuid = value; // duel: the other duelist; guild invite (protocol 24): the invitee
                     else if (field == 24)
                         out.BattlegroundId = static_cast<uint32>(value);
                 }

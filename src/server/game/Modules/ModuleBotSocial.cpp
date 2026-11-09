@@ -226,9 +226,9 @@ void ExecuteBattleground(ModuleWire::ActionRequestMsg const& request, ModuleWire
 
 void ExecuteGuild(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module)
 {
-    if (request.SocialOp > 3)
+    if (request.SocialOp > 4)
     {
-        reply.Reason = "guild op must be 0 to 3";
+        reply.Reason = "guild op must be 0 to 4";
         return;
     }
     Player* bot = Prepare(request, reply, module);
@@ -265,6 +265,28 @@ void ExecuteGuild(ModuleWire::ActionRequestMsg const& request, ModuleWire::Actio
         reply.Success = bot->GetGuildId() != 0;
         if (!reply.Success)
             reply.Reason = "the guild was created but the bot is not in it";
+        return;
+    }
+
+    if (request.SocialOp == 4) // kInvite (protocol 24): the bot, in a guild with the invite right, invites the online character PlayerGuid (a bot or a player)
+    {
+        Guild* guild = bot->GetGuild();
+        if (!guild)
+        {
+            reply.Reason = "the bot is not in a guild";
+            return;
+        }
+        Player* invitee = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(request.PlayerGuid));
+        if (!invitee || invitee == bot || !invitee->GetSession())
+        {
+            reply.Reason = "the invitee is not online";
+            return;
+        }
+        // HandleInviteMember checks the invitee's guild and invitation, the faction rule and the bot's invite right; it reports each refusal to the session.
+        guild->HandleInviteMember(session, invitee->GetName());
+        reply.Success = invitee->GetGuildIdInvited() == guild->GetId();
+        if (!reply.Success)
+            reply.Reason = "the invite was refused (the bot's rank, the faction rule, or the invitee is in a guild or already invited)";
         return;
     }
 
