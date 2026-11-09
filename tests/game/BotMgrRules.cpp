@@ -244,3 +244,13 @@ TEST_CASE("The login token bucket refills at the rate and holds a second's worth
     CHECK(RefillLoginTokens(0.0, 60000, 10) == Catch::Approx(10.0));
     CHECK(RefillLoginTokens(0.0, 1000, 1) == Catch::Approx(1.0));
 }
+
+TEST_CASE("A bot may spend one talent point per level from 10, 51 at level 60", "[BotMgrRules]")
+{
+    CHECK(DEF_TALENT_POINTS_PER_LEVEL_OFFSET == 9);
+    CHECK(TalentPointsAllowed(9, DEF_TALENT_POINTS_PER_LEVEL_OFFSET) == 0);
+    CHECK(TalentPointsAllowed(10, DEF_TALENT_POINTS_PER_LEVEL_OFFSET) == 1);
+    CHECK(TalentPointsAllowed(30, DEF_TALENT_POINTS_PER_LEVEL_OFFSET) == 21);
+    CHECK(TalentPointsAllowed(60, DEF_TALENT_POINTS_PER_LEVEL_OFFSET) == 51);
+    CHECK(TalentPointsAllowed(1, 9) == 0);
+}

@@ -1259,7 +1259,8 @@ void InitializeStarterBuildTraitConfig(WorldPackets::Traits::TraitConfig& traitC
         }
     }
 }
-int32 AutoSpendClassicTalents(WorldPackets::Traits::TraitConfig& traitConfig, PlayerDataAccessor player, uint32 preferredTab, std::string& summary)
+int32 AutoSpendClassicTalents(WorldPackets::Traits::TraitConfig& traitConfig, PlayerDataAccessor player, uint32 preferredTab, std::string& summary,
+    int32 preferredNodeId, int32 maxTotalRanks)
 {
     std::vector<Tree const*> const* trees = GetTreesForConfig(traitConfig);
     if (!trees)
@@ -1313,6 +1314,9 @@ int32 AutoSpendClassicTalents(WorldPackets::Traits::TraitConfig& traitConfig, Pl
         }
     }
     std::ranges::sort(tabs);
+    if (preferredNodeId)
+        if (auto const named = std::ranges::find_if(candidates, [preferredNodeId](Candidate const& c) { return int32(c.Owner->Data->ID) == preferredNodeId; }); named != candidates.end())
+            preferredTab = uint32(std::ranges::find(tabs, named->Tab) - tabs.begin());
     for (Candidate& candidate : candidates)
     {
         size_t const index = size_t(std::ranges::find(tabs, candidate.Tab) - tabs.begin());
@@ -1336,10 +1340,20 @@ int32 AutoSpendClassicTalents(WorldPackets::Traits::TraitConfig& traitConfig, Pl
         });
     };
 
+    auto spentRanks = [&traitConfig]()
+    {
+        int32 total = 0;
+        for (WorldPackets::Traits::TraitEntry const& e : traitConfig.Entries)
+            total += e.Rank;
+        return total;
+    };
+
     int32 placedRanks = 0;
     for (bool placed = true; placed; )
     {
         placed = false;
+        if (maxTotalRanks >= 0 && spentRanks() >= maxTotalRanks)
+            break;
         for (Candidate const& candidate : candidates)
         {
             auto itr = findEntry(candidate);

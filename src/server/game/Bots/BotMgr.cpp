@@ -1099,8 +1099,9 @@ void BotMgr::SpreadBot(Player& bot)
 }
 
 // Spends a bot's unspent talent points (Bot.Learn.Talents). With a profile for the bot's (class, spec) or else (class, role) the points follow it in order, as
-// many as the level allows (level minus Bot.Talents.PointsPerLevelOffset, default 9: a guess from the core's comment, one point per
-// level from 10). Without a profile the class defaults for the tab are guesses at the usual leveling spec (the tabs are numbered in the
+// many as the level allows (level minus Bot.Talents.PointsPerLevelOffset, default 9: Classic gives one point per level from 10, 51 at 60;
+// BotMgrRules::TalentPointsAllowed). Points the profile leaves over (it is shorter than the allowance, or stops at a rank the validation
+// refuses) are spent by the class allocator on the profile's own tab, so a bot always ends with its full allowance. Without a profile the class defaults for the tab are guesses at the usual leveling spec (the tabs are numbered in the
 // order of their currencies, which the log line shows); Bot.Talents.Tab.<classId> overrides one. Returns null when it ran, else why not.
 static char const* SpendTalents(Player& bot, uint8 role, uint8 spec)
 {
@@ -1122,8 +1123,12 @@ static char const* SpendTalents(Player& bot, uint8 role, uint8 spec)
     auto const profile = BotTalentSpec::FindProfile(g_talentProfiles, classId, role, spec);
     if (profile != g_talentProfiles.end())
     {
-        static int32 const offset = sConfigMgr->GetIntDefault("Bot.Talents.PointsPerLevelOffset", 9);
-        added = TraitMgr::SpendProfile(config, &bot, profile->second, std::max<int32>(0, int32(bot.GetLevel()) - offset), summary);
+        static int32 const offset = sConfigMgr->GetIntDefault("Bot.Talents.PointsPerLevelOffset", BotMgrRules::DEF_TALENT_POINTS_PER_LEVEL_OFFSET);
+        int32 const allowed = BotMgrRules::TalentPointsAllowed(int32(bot.GetLevel()), offset);
+        added = TraitMgr::SpendProfile(config, &bot, profile->second, allowed, summary);
+        std::string rest;
+        added += TraitMgr::AutoSpendClassicTalents(config, &bot, 0, rest, profile->second.front().NodeId, allowed);
+        summary += " | remainder: " + rest;
     }
     else
     {

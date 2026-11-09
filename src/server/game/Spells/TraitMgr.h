@@ -102,7 +102,10 @@ void InitializeStarterBuildTraitConfig(WorldPackets::Traits::TraitConfig& traitC
 // to the first tab's talents from the top row down, one rank at a time, as far as the validation (tier gates, points owned, level)
 // allows, then to the next tab. Ranks already in the config are kept. Returns how many ranks were added; `summary` says how the tabs
 // were told apart and how the points went, for the log.
-int32 AutoSpendClassicTalents(WorldPackets::Traits::TraitConfig& traitConfig, PlayerDataAccessor player, uint32 preferredTab, std::string& summary);
+// `preferredNodeId` (when not 0 and a node of the trees) names the preferred tab by one of its nodes instead of `preferredTab`; `maxTotalRanks`
+// (when not negative) stops the spending once the config's ranks add up to it (the level's allowance), so a profile's remainder can be filled.
+int32 AutoSpendClassicTalents(WorldPackets::Traits::TraitConfig& traitConfig, PlayerDataAccessor player, uint32 preferredTab, std::string& summary,
+    int32 preferredNodeId = 0, int32 maxTotalRanks = -1);
 
 // One step of a talent profile: `Ranks` more ranks of the node `NodeId` (a server node id, see Bot.Dump.Talents).
 struct ProfileStep
