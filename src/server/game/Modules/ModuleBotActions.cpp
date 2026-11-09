@@ -666,6 +666,18 @@ bool ArmorTooHeavy(Player const& bot, ItemTemplate const& item)
     return BotGearRules::ArmorTooHeavy(bot.GetClass(), bot.GetLevel(), item.GetClass(), item.GetSubClass(), item.GetInventoryType());
 }
 
+// True for body-slot armour lighter than the class maximum at level 40 and up (rules in BotGearRules.h).
+bool ArmorLighterThanMax(Player const& bot, ItemTemplate const& item)
+{
+    return BotGearRules::ArmorLighterThanMax(bot.GetClass(), bot.GetLevel(), item.GetClass(), item.GetSubClass(), item.GetInventoryType());
+}
+
+// Whether the worn item stays against this candidate: the item level rule plus the armour weight preference (BotGearRules::KeepWorn).
+bool KeepWornItem(Player const& bot, ItemTemplate const& worn, ItemTemplate const& candidate)
+{
+    return BotGearRules::KeepWorn(worn.GetBaseItemLevel(), candidate.GetBaseItemLevel(), ArmorLighterThanMax(bot, worn), ArmorLighterThanMax(bot, candidate));
+}
+
 // What a class wants from its gear, as item-mod stats: the stats it uses, in no order. `profile` (bits 2-4 of AutoGearAction's
 // flags, from MOD-Forever-Bots' combat_rotation.cpp GearProfileFor) is spec-aware when the module sent one; 0 is also the
 // encoding a module build that predates this falls back to, so it still gets this class's old, class-only default.
@@ -741,12 +753,13 @@ char const* GearResultName(GearResult result)
     return "unknown";
 }
 
-// Creates the item in the bags and moves it into `slot`, unless the slot already holds an item of at least this item level.
+// Creates the item in the bags and moves it into `slot`, unless the slot already holds an item of at least this item level (worn armour
+// lighter than the class maximum is replaced by a maximum-subclass item whatever the item levels).
 GearResult GiveAndEquip(Player& bot, ItemTemplate const& item, uint8 slot, uint32& equipError)
 {
     equipError = 0;
     Item* current = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-    if (current && !ModuleBotSupplyRules::IsItemLevelUpgrade(current->GetTemplate()->GetBaseItemLevel(), item.GetBaseItemLevel()))
+    if (current && KeepWornItem(bot, *current->GetTemplate(), item))
         return GearResult::KeptBetter;
 
     ItemPosCountVec destination;
@@ -803,7 +816,7 @@ uint32 EquipBagUpgrades(Player& bot)
             continue;
         uint8 const slot = uint8(destination & 255);
         Item* worn = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-        if (worn && !ModuleBotSupplyRules::IsItemLevelUpgrade(worn->GetTemplate()->GetBaseItemLevel(), proto->GetBaseItemLevel()))
+        if (worn && KeepWornItem(bot, *worn->GetTemplate(), *proto))
             continue;
         bot.SwapItem(item->GetPos(), destination);
         if (bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot) == item)
@@ -838,7 +851,7 @@ int32 BotGearUpgradeScore(Player& bot, ItemTemplate const& item)
         if (!second || second->GetTemplate()->GetBaseItemLevel() < worn->GetTemplate()->GetBaseItemLevel())
             worn = second;
     }
-    if (worn && !ModuleBotSupplyRules::IsItemLevelUpgrade(worn->GetTemplate()->GetBaseItemLevel(), item.GetBaseItemLevel()))
+    if (worn && KeepWornItem(bot, *worn->GetTemplate(), item))
         return 0;
 
     std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile::StrStam);
@@ -888,7 +901,7 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
 
     bool const tank = ModuleBotSupplyRules::AutoGearIsTank(flags);
     std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile(ModuleBotSupplyRules::AutoGearProfileOf(flags)));
-    std::map<uint8, GearPick> bySlot;          // armour and ranged, by equipment slot
+    std::map<uint8, std::vector<BotGearRules::SlotCandidate>> bySlot;   // armour and ranged, by equipment slot (the first slot of a ring or trinket pair)
     GearPick twoHand, shield, holdable;
     std::vector<std::pair<int32, ItemTemplate const*>> oneHand;   // main-hand weapons (one-hand, main hand)
     std::vector<std::pair<int32, ItemTemplate const*>> offHand;    // off-hand weapons (off hand only, and one-hand for dual wield)
@@ -919,7 +932,7 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
             case INVTYPE_2HWEAPON: Consider(twoHand, *item, score); break;
             case INVTYPE_SHIELD: Consider(shield, *item, score); break;
             case INVTYPE_HOLDABLE: Consider(holdable, *item, score); break;
-            default: Consider(bySlot[EquipSlotFor(item->GetInventoryType())], *item, score); break;
+            default: bySlot[EquipSlotFor(item->GetInventoryType())].push_back({ item->GetId(), score, ArmorLighterThanMax(bot, *item) }); break;
         }
     }
 
@@ -980,9 +993,28 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
         apply(main, EQUIPMENT_SLOT_MAINHAND);
     if (off.Item && (!main.Item || main.Item->GetInventoryType() != INVTYPE_2HWEAPON))
         apply(off, EQUIPMENT_SLOT_OFFHAND);
-    for (auto const& [slot, pick] : bySlot)
-        if (pick.Item)
-            apply(pick, slot);
+    for (auto const& [slot, list] : bySlot)
+    {
+        // Rings and trinkets have two slots: the best two distinct items go in slot and slot + 1 (the second is never filled by a single pick).
+        bool const pair = slot == EQUIPMENT_SLOT_FINGER1 || slot == EQUIPMENT_SLOT_TRINKET1;
+        std::vector<uint32> const chosen = BotGearRules::ChooseForSlot(list, pair ? 2 : 1);
+        for (size_t i = 0; i < chosen.size(); ++i)
+        {
+            ItemTemplate const* chosenItem = sObjectMgr->GetItemTemplate(chosen[i]);
+            if (!chosenItem)
+                continue;
+            // Already worn in the other slot of the pair: not worn twice (a unique-equipped item cannot be).
+            if (pair)
+            {
+                Item* other = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, uint8(i == 0 ? slot + 1 : slot));
+                if (other && other->GetEntry() == chosen[i])
+                    continue;
+            }
+            GearPick pick;
+            pick.Item = chosenItem;
+            apply(pick, uint8(slot + i));
+        }
+    }
 
     // Gear the bot already carries (a trade, a loot) is worn when it beats what is worn.
     equipped += EquipBagUpgrades(bot);
