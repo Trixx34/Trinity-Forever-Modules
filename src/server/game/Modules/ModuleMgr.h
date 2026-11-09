@@ -41,7 +41,7 @@ struct ModuleActionSet;
 // Wire protocol this core speaks (Tier 1 schema + Tier 2 layout). Must equal kProtocolVersion in
 // forever-module-sdk's include/forever_module/protocol_version.h. Exact match only, no compat
 // shims in v1 (doc/module-system/02-phase0-decisions.md §3, doc/module-system/11-sdk-scope.md).
-inline constexpr char const* kModuleProtocolVersion = "22"; // 22: group-invite-declined event, layout 23 (capital city, guild, item level, shared quest). 21: emote and LFG-join actions, party/guild speak, guild-level and LFG-queue events
+inline constexpr char const* kModuleProtocolVersion = "23"; // 23: GuildAction create op and name (SDK protocol 23). 22: group-invite-declined event, layout 23 (capital city, guild, item level, shared quest). 21: emote and LFG-join actions, party/guild speak, guild-level and LFG-queue events
 
 enum class ModuleStatus : uint8
 {
