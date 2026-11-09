@@ -73,11 +73,15 @@ inline bool IsPlaceholderItemName(std::string const& lowerName)
         lowerName.find("unused") != std::string::npos || lowerName.find("[ph]") != std::string::npos || lowerName.rfind("zz", 0) == 0;
 }
 
-// What one item stat adds to the gear score: its amount when the class wants it, three times the amount against it for a primary stat the class does not
-// use, nothing for any other stat.
+// What one item stat adds to the gear score: three times its amount for a primary stat the class wants (strength, agility, intellect, spirit), its amount for
+// any other wanted stat, three times the amount against it for a primary stat the class does not use, nothing for any other stat.
+constexpr int32 kPrimaryStatWeight = 3;
+
 inline int32 StatScore(bool wanted, bool primary, int32 amount)
 {
-    return wanted ? amount : (primary ? -3 * amount : 0);
+    if (wanted)
+        return primary ? kPrimaryStatWeight * amount : amount;
+    return primary ? -kPrimaryStatWeight * amount : 0;
 }
 
 // Higher is better: the item level first, then how well the stats suit the class.

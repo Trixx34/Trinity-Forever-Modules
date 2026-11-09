@@ -132,7 +132,7 @@ TEST_CASE("Unfinished-looking item names are not handed out", "[ModuleBotSupplyR
 
 TEST_CASE("Gear score counts wanted stats, penalises unused primary stats and ignores other stats", "[ModuleBotSupplyRules]")
 {
-    CHECK(StatScore(true, true, 7) == 7);
+    CHECK(StatScore(true, true, 7) == 21);       // a wanted primary stat counts three times
     CHECK(StatScore(true, false, 7) == 7);       // a wanted secondary stat
     CHECK(StatScore(false, true, 7) == -21);     // a primary stat the class does not use counts against the item
     CHECK(StatScore(false, false, 7) == 0);      // any other stat
@@ -143,8 +143,13 @@ TEST_CASE("Gear score counts wanted stats, penalises unused primary stats and ig
     CHECK(CombineGearScore(20, -21) == 179);
     CHECK(CombineGearScore(0, 0) == 0);
 
-    // the item level dominates: 9 points of stats do not beat one item level
+    // the item level still counts: 9 points of stats do not beat one item level
     CHECK(CombineGearScore(21, 0) > CombineGearScore(20, 9));
+    // ... but primary stats are prioritised: 4 wanted agility (12 points) beat one item level, and 2 item levels beat 4 agility
+    CHECK(CombineGearScore(20, StatScore(true, true, 4)) > CombineGearScore(21, 0));
+    CHECK(CombineGearScore(22, 0) > CombineGearScore(20, StatScore(true, true, 4)));
+    // a wanted primary stat beats the same amount of a wanted secondary stat
+    CHECK(StatScore(true, true, 5) > StatScore(true, false, 5));
     // ... but a wrong primary stat can lose it: 21 with 4 unwanted strength vs 20 clean
     CHECK(CombineGearScore(21, StatScore(false, true, 4)) < CombineGearScore(20, 0));
 }
