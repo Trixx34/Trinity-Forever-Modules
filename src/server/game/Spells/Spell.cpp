@@ -4986,16 +4986,17 @@ int32 Spell::GetSpellCastDataAmmo()
                 ammoDisplayID = pItem->GetDisplayId(playerCaster);
                 // A thrown weapon with the generic 1.60 display, or none, is drawn by the client as a white square.
                 if (!ammoDisplayID || ammoDisplayID >= 500000)
-                    ammoDisplayID = 23211;
+                    ammoDisplayID = 5996;      // plain arrow (23211 was the fire arrow of item 19082)
             }
             else if (ItemTemplate const* ammo = sObjectMgr->GetItemTemplate(playerCaster->GetAmmoId()))   // Classic 1.60 ammo slot
             {
-                // The ammo's own display, as a real player's cast sends it. The generic 1.60 ammo display (737992 / 737993) has no model and the
-                // client draws a white box for it; bots take ammo that has its own display (Player::AutoSelectAmmo), so
+                // The ammo's own display, as a real player's cast sends it. The generic 1.60 ammo display (737992 / 737993) has no material and
+                // the client draws a white box for it; bots take ammo that has its own display (Player::AutoSelectAmmo), so
                 // this is the fallback only: an arrow model, for bullets too (every classic bullet has the generic display).
                 ammoDisplayID = Player::GetAmmoDisplayId(ammo);
                 if (!Player::HasDrawableAmmoDisplay(ammo))
-                    ammoDisplayID = 23211;   // an arrow display seen to draw (item 19082); no classic bullet has a display of its own
+                    ammoDisplayID = 5996;   // plain arrow: the arrow model of 737993 (17490) with a material (19706). 23211, used before, is
+                                            // item 19082 "Monster - Fire Arrow" (model 17481), so every Rough Arrow flew burning (Discord, 8 Nov)
                 ammoInventoryType = INVTYPE_AMMO;
             }
             else if (playerCaster->HasAura(46699))      // Requires No Ammo
@@ -7978,16 +7979,9 @@ SpellCastResult Spell::CheckItems(int32* param1 /*= nullptr*/, int32* param2 /*=
                         return SPELL_FAILED_NOT_TRADEABLE;
                 }
 
-                // Apply item level restriction
-                if (!m_spellInfo->HasAttribute(SPELL_ATTR2_ALLOW_LOW_LEVEL_BUFF))
-                {
-                    uint32 requiredLevel = item->GetRequiredLevel();
-                    if (!requiredLevel)
-                        requiredLevel = item->GetItemLevel(item->GetOwner());
-
-                    if (requiredLevel < m_spellInfo->BaseLevel)
-                        return SPELL_FAILED_LOWLEVEL;
-                }
+                // Classic 1.60 (vanilla, VMaNGOS Spell::CheckItems): no item level restriction. Poisons, sharpening stones, weightstones,
+                // oils and shaman imbues go on any weapon; the retail check (required level of the weapon at least the spell level, e.g.
+                // 20 for Instant Poison and Crippling Poison) refused them on every weapon below level 20 with "Target is too low level".
                 if (m_CastItem && m_spellInfo->MaxLevel > 0 && item->GetItemLevel(item->GetOwner()) > m_spellInfo->MaxLevel)
                     return SPELL_FAILED_HIGHLEVEL;
                 break;
