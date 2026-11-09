@@ -6,7 +6,7 @@
  *  - DuelAction: challenge (the real duel spell, so the zone and "already dueling" checks are a player's), accept, decline;
  *  - BattlegroundAction: queue solo (the real BattlemasterJoin handler), leave the queue, leave the battleground. A queued bot is not yet sent to the
  *    battleground by anything: accepting the invitation is not part of these actions;
- *  - GuildAction: accept or decline the pending invitation, leave the guild;
+ *  - GuildAction: accept or decline the pending invitation, leave the guild, or create a guild (op 3, name in Text) with the bot as master;
  *  - GiftMailAction: one whole stack of a small, tradable, not soulbound, not quest item and/or some copper, mailed to a character, postage paid.
  *
  * Settings: Bot.Social.Enabled (default 0), Bot.Social.GiftMaxCopper (default 10000: the most copper, and the most vendor value of the item, a

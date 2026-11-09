@@ -226,15 +226,47 @@ void ExecuteBattleground(ModuleWire::ActionRequestMsg const& request, ModuleWire
 
 void ExecuteGuild(ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply, uint32 module)
 {
-    if (request.SocialOp > 2)
+    if (request.SocialOp > 3)
     {
-        reply.Reason = "guild op must be 0 to 2";
+        reply.Reason = "guild op must be 0 to 3";
         return;
     }
     Player* bot = Prepare(request, reply, module);
     if (!bot)
         return;
     WorldSession* session = bot->GetSession();
+
+    if (request.SocialOp == 3) // kCreate: the online bot becomes the guild master of a new guild named Text (the petition path's Create and AddGuild, no charter)
+    {
+        if (bot->GetGuildId())
+        {
+            reply.Reason = "the bot is already in a guild";
+            return;
+        }
+        std::string const& name = request.Text;
+        if (name.size() < 2 || name.size() > 24)
+        {
+            reply.Reason = "guild name must be 2 to 24 bytes";
+            return;
+        }
+        if (sGuildMgr->GetGuildByName(name))
+        {
+            reply.Reason = "a guild with that name exists";
+            return;
+        }
+        Guild* guild = new Guild;
+        if (!guild->Create(bot, name))
+        {
+            delete guild;
+            reply.Reason = "the guild could not be created";
+            return;
+        }
+        sGuildMgr->AddGuild(guild);
+        reply.Success = bot->GetGuildId() != 0;
+        if (!reply.Success)
+            reply.Reason = "the guild was created but the bot is not in it";
+        return;
+    }
 
     if (request.SocialOp == 2) // kLeave
     {

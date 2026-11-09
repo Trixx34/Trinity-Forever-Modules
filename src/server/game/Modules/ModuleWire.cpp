@@ -934,7 +934,15 @@ bool Decode(std::string_view bytes, ActionRequestMsg& out)
                 if (!a.ReadTag(af, aw))
                     return false;
                 uint64 value = 0;
-                if (aw == WireVarint && (af == 1 || af == 2 || af == 3))
+                if (field == 25 && af == 3 && aw == WireLengthDelimited)
+                {
+                    // GuildAction.name (3), for the create op: the guild name, in Text.
+                    std::string_view name;
+                    if (!a.ReadBytes(name))
+                        return false;
+                    out.Text.assign(name.data(), name.size());
+                }
+                else if (aw == WireVarint && (af == 1 || af == 2 || af == 3))
                 {
                     if (!a.ReadVarint(value))
                         return false;
