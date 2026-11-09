@@ -666,7 +666,7 @@ bool ArmorTooHeavy(Player const& bot, ItemTemplate const& item)
     return BotGearRules::ArmorTooHeavy(bot.GetClass(), bot.GetLevel(), item.GetClass(), item.GetSubClass(), item.GetInventoryType());
 }
 
-// True for body-slot armour lighter than the class maximum at level 40 and up (rules in BotGearRules.h).
+// True for body-slot armour lighter than the class maximum at the bot's level (rules in BotGearRules.h).
 bool ArmorLighterThanMax(Player const& bot, ItemTemplate const& item)
 {
     return BotGearRules::ArmorLighterThanMax(bot.GetClass(), bot.GetLevel(), item.GetClass(), item.GetSubClass(), item.GetInventoryType());
@@ -739,7 +739,7 @@ void Consider(GearPick& pick, ItemTemplate const& item, int32 score)
         pick = { &item, score };
 }
 
-enum class GearResult { Equipped, KeptBetter, NoBagSpace, CannotEquip };
+enum class GearResult { Equipped, KeptBetter, NoBagSpace, CannotEquip, SkippedUnique };
 
 char const* GearResultName(GearResult result)
 {
@@ -749,6 +749,7 @@ char const* GearResultName(GearResult result)
         case GearResult::KeptBetter: return "kept_worn_item_level_not_lower";
         case GearResult::NoBagSpace: return "no_bag_space";
         case GearResult::CannotEquip: return "cannot_equip_removed";
+        case GearResult::SkippedUnique: return "skipped_unique_equipped";
     }
     return "unknown";
 }
@@ -761,6 +762,10 @@ GearResult GiveAndEquip(Player& bot, ItemTemplate const& item, uint8 slot, uint3
     Item* current = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
     if (current && KeepWornItem(bot, *current->GetTemplate(), item))
         return GearResult::KeptBetter;
+
+    // A unique-equipped item already worn in the other slot of a pair (rings, trinkets) is not worn twice: skipped, not an error.
+    if (item.HasFlag(ITEM_FLAG_UNIQUE_EQUIPPABLE) && bot.HasItemOrGemWithIdEquipped(item.GetId(), 1, slot))
+        return GearResult::SkippedUnique;
 
     ItemPosCountVec destination;
     if (bot.CanStoreNewItem(NULL_BAG, NULL_SLOT, destination, item.GetId(), 1) != EQUIP_ERR_OK)
@@ -775,9 +780,11 @@ GearResult GiveAndEquip(Player& bot, ItemTemplate const& item, uint8 slot, uint3
     if (canEquip != EQUIP_ERR_OK)
     {
         equipError = uint32(canEquip);
+        // Another unique-equipped item (an equip limit category) already worn: skipped quietly like the same item twice.
+        bool const uniqueRefusal = canEquip == EQUIP_ERR_ITEM_UNIQUE_EQUIPPABLE || canEquip == EQUIP_ERR_ITEM_MAX_LIMIT_CATEGORY_EQUIPPED_EXCEEDED_IS;
         // Not left in the bags: the same pick comes back at every gear pass and would fill the bags with copies.
         bot.DestroyItem(created->GetBagSlot(), created->GetSlot(), true);
-        return GearResult::CannotEquip;
+        return uniqueRefusal ? GearResult::SkippedUnique : GearResult::CannotEquip;
     }
     bot.SwapItem(uint16(created->GetBagSlot()) << 8 | created->GetSlot(), target);
     return bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot) == created ? GearResult::Equipped : GearResult::CannotEquip;
@@ -984,7 +991,7 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
         GearResult const result = GiveAndEquip(bot, *pick.Item, slot, equipError);
         equipped += result == GearResult::Equipped;
         keptBetter += result == GearResult::KeptBetter;
-        failed += result == GearResult::NoBagSpace || result == GearResult::CannotEquip;
+        failed += result == GearResult::NoBagSpace || result == GearResult::CannotEquip;   // SkippedUnique is neither a failure nor logged as one
         TC_LOG_INFO("server.worldserver", "BotMgr: autogear pick bot={} slot={} item={} quality={} ilvl={} reqlevel={} armor_subclass={} result={} equip_error={}", bot.GetName(), uint32(slot),
             pick.Item->GetId(), uint32(pick.Item->GetQuality()), pick.Item->GetBaseItemLevel(), pick.Item->GetBaseRequiredLevel(),
             pick.Item->GetClass() == ITEM_CLASS_ARMOR ? int32(pick.Item->GetSubClass()) : -1, GearResultName(result), equipError);
@@ -998,21 +1005,41 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
         // Rings and trinkets have two slots: the best two distinct items go in slot and slot + 1 (the second is never filled by a single pick).
         bool const pair = slot == EQUIPMENT_SLOT_FINGER1 || slot == EQUIPMENT_SLOT_TRINKET1;
         std::vector<uint32> const chosen = BotGearRules::ChooseForSlot(list, pair ? 2 : 1);
+        // An item already worn in one slot of the pair keeps that slot; the others take the remaining slot(s), best first.
+        std::vector<uint8> target(chosen.size(), uint8(NULL_SLOT));
+        bool taken[2] = { false, false };
+        if (pair)
+            for (size_t i = 0; i < chosen.size(); ++i)
+                for (uint8 s = 0; s < 2; ++s)
+                {
+                    Item* worn = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, uint8(slot + s));
+                    if (!taken[s] && worn && worn->GetEntry() == chosen[i])
+                    {
+                        target[i] = uint8(slot + s);
+                        taken[s] = true;
+                        break;
+                    }
+                }
+        for (size_t i = 0; i < chosen.size(); ++i)
+        {
+            if (target[i] != NULL_SLOT)
+                continue;
+            for (uint8 s = 0; s < (pair ? 2 : 1); ++s)
+                if (!taken[s])
+                {
+                    target[i] = uint8(slot + s);
+                    taken[s] = true;
+                    break;
+                }
+        }
         for (size_t i = 0; i < chosen.size(); ++i)
         {
             ItemTemplate const* chosenItem = sObjectMgr->GetItemTemplate(chosen[i]);
-            if (!chosenItem)
+            if (!chosenItem || target[i] == NULL_SLOT)
                 continue;
-            // Already worn in the other slot of the pair: not worn twice (a unique-equipped item cannot be).
-            if (pair)
-            {
-                Item* other = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, uint8(i == 0 ? slot + 1 : slot));
-                if (other && other->GetEntry() == chosen[i])
-                    continue;
-            }
             GearPick pick;
             pick.Item = chosenItem;
-            apply(pick, uint8(slot + i));
+            apply(pick, target[i]);
         }
     }
 

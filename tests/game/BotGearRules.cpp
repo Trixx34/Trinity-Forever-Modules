@@ -37,7 +37,7 @@ TEST_CASE("Only body-slot armour is judged by weight", "[BotGearRules]")
     CHECK_FALSE(BotGearRules::ArmorTooHeavy(CLASS_MAGE, 60, ITEM_CLASS_WEAPON, ITEM_SUBCLASS_ARMOR_PLATE, INVTYPE_CHEST));
 }
 
-TEST_CASE("Armour lighter than the class maximum is spotted from level 40", "[BotGearRules]")
+TEST_CASE("Armour lighter than the class maximum is spotted", "[BotGearRules]")
 {
     // a shaman at 40+ wears mail: cloth and leather are lighter, mail is not
     CHECK(BotGearRules::ArmorLighterThanMax(CLASS_SHAMAN, 40, ITEM_CLASS_ARMOR, ITEM_SUBCLASS_ARMOR_CLOTH, INVTYPE_CHEST));
@@ -57,18 +57,42 @@ TEST_CASE("Armour lighter than the class maximum is spotted from level 40", "[Bo
     CHECK_FALSE(BotGearRules::ArmorLighterThanMax(CLASS_SHAMAN, 60, ITEM_CLASS_WEAPON, ITEM_SUBCLASS_ARMOR_CLOTH, INVTYPE_CHEST));
 }
 
-TEST_CASE("The leveling path (1-39) judges no armour as too light", "[BotGearRules]")
+TEST_CASE("The armour preference follows the level-based class maximum", "[BotGearRules]")
 {
-    for (uint32 level : { 1u, 20u, 39u })
-        for (uint8 classId : { uint8(CLASS_SHAMAN), uint8(CLASS_HUNTER), uint8(CLASS_DRUID), uint8(CLASS_WARRIOR), uint8(CLASS_PALADIN) })
-            for (uint32 subclass : { uint32(ITEM_SUBCLASS_ARMOR_CLOTH), uint32(ITEM_SUBCLASS_ARMOR_LEATHER), uint32(ITEM_SUBCLASS_ARMOR_MAIL) })
-                CHECK_FALSE(BotGearRules::ArmorLighterThanMax(classId, level, ITEM_CLASS_ARMOR, subclass, INVTYPE_CHEST));
-    // the item level rule alone decides: an equal or lower item level keeps the worn piece, a higher one replaces it
+    auto const lighter = [](uint8 classId, uint32 level, uint32 subclass)
+    {
+        return BotGearRules::ArmorLighterThanMax(classId, level, ITEM_CLASS_ARMOR, subclass, INVTYPE_CHEST);
+    };
+    // a druid prefers leather over cloth at every level
+    for (uint32 level : { 1u, 20u, 39u, 40u, 60u })
+    {
+        CHECK(BotGearRules::MaxArmorSubclass(CLASS_DRUID, level) == ITEM_SUBCLASS_ARMOR_LEATHER);
+        CHECK(lighter(CLASS_DRUID, level, ITEM_SUBCLASS_ARMOR_CLOTH));
+        CHECK_FALSE(lighter(CLASS_DRUID, level, ITEM_SUBCLASS_ARMOR_LEATHER));
+    }
+    // a hunter at 39 has leather as its maximum: cloth is lighter, leather is not; at 40 the maximum is mail
+    CHECK(BotGearRules::MaxArmorSubclass(CLASS_HUNTER, 39) == ITEM_SUBCLASS_ARMOR_LEATHER);
+    CHECK(lighter(CLASS_HUNTER, 39, ITEM_SUBCLASS_ARMOR_CLOTH));
+    CHECK_FALSE(lighter(CLASS_HUNTER, 39, ITEM_SUBCLASS_ARMOR_LEATHER));
+    CHECK(BotGearRules::MaxArmorSubclass(CLASS_HUNTER, 40) == ITEM_SUBCLASS_ARMOR_MAIL);
+    CHECK(lighter(CLASS_HUNTER, 40, ITEM_SUBCLASS_ARMOR_LEATHER));
+    CHECK_FALSE(lighter(CLASS_HUNTER, 40, ITEM_SUBCLASS_ARMOR_MAIL));
+    // a shaman at 39 has leather as its maximum (cloth is lighter); at 40 mail
+    CHECK(BotGearRules::MaxArmorSubclass(CLASS_SHAMAN, 39) == ITEM_SUBCLASS_ARMOR_LEATHER);
+    CHECK(lighter(CLASS_SHAMAN, 39, ITEM_SUBCLASS_ARMOR_CLOTH));
+    CHECK_FALSE(lighter(CLASS_SHAMAN, 39, ITEM_SUBCLASS_ARMOR_LEATHER));
+    CHECK_FALSE(lighter(CLASS_SHAMAN, 39, ITEM_SUBCLASS_ARMOR_MAIL)); // too heavy, not too light
+    CHECK(BotGearRules::MaxArmorSubclass(CLASS_SHAMAN, 40) == ITEM_SUBCLASS_ARMOR_MAIL);
+    CHECK(lighter(CLASS_SHAMAN, 40, ITEM_SUBCLASS_ARMOR_LEATHER));
+    CHECK_FALSE(lighter(CLASS_SHAMAN, 40, ITEM_SUBCLASS_ARMOR_MAIL));
+    // a cloth class never has anything lighter
+    for (uint32 level : { 1u, 39u, 60u })
+        CHECK_FALSE(lighter(CLASS_MAGE, level, ITEM_SUBCLASS_ARMOR_CLOTH));
+    // the item level rule alone decides between two pieces of the same weight: an equal or lower item level keeps the worn piece
     CHECK(BotGearRules::KeepWorn(20, 20, false, false));
     CHECK(BotGearRules::KeepWorn(20, 15, false, false));
     CHECK_FALSE(BotGearRules::KeepWorn(20, 21, false, false));
     // and the heaviest armour a class may wear is unchanged
-    CHECK(BotGearRules::MaxArmorSubclass(CLASS_SHAMAN, 39) == ITEM_SUBCLASS_ARMOR_LEATHER);
     CHECK(BotGearRules::ArmorTooHeavy(CLASS_SHAMAN, 39, ITEM_CLASS_ARMOR, ITEM_SUBCLASS_ARMOR_MAIL, INVTYPE_CHEST));
 }
 
@@ -103,10 +127,21 @@ TEST_CASE("The slot pick prefers the class maximum armour", "[BotGearRules]")
     // no maximum-subclass candidate: the best lighter one stays as the fallback
     std::vector<SlotCandidate> fallback = { { 7, 200, true }, { 8, 400, true } };
     CHECK(BotGearRules::ChooseForSlot(fallback, 1) == std::vector<uint32>{ 8 });
-    // the leveling path (a hunter at 39): nothing is lighter, the best score wins
+    // a hunter at 39: leather is its maximum, so it beats the higher-scoring cloth
     std::vector<SlotCandidate> leveling = { { 9, 500, BotGearRules::ArmorLighterThanMax(CLASS_HUNTER, 39, ITEM_CLASS_ARMOR, ITEM_SUBCLASS_ARMOR_CLOTH, INVTYPE_CHEST) },
                                             { 10, 300, BotGearRules::ArmorLighterThanMax(CLASS_HUNTER, 39, ITEM_CLASS_ARMOR, ITEM_SUBCLASS_ARMOR_LEATHER, INVTYPE_CHEST) } };
-    CHECK(BotGearRules::ChooseForSlot(leveling, 1) == std::vector<uint32>{ 9 });
+    CHECK(BotGearRules::ChooseForSlot(leveling, 1) == std::vector<uint32>{ 10 });
+    // a druid at level 1: leather over cloth
+    std::vector<SlotCandidate> druid1 = { { 13, 500, BotGearRules::ArmorLighterThanMax(CLASS_DRUID, 1, ITEM_CLASS_ARMOR, ITEM_SUBCLASS_ARMOR_CLOTH, INVTYPE_CHEST) },
+                                          { 14, 100, BotGearRules::ArmorLighterThanMax(CLASS_DRUID, 1, ITEM_CLASS_ARMOR, ITEM_SUBCLASS_ARMOR_LEATHER, INVTYPE_CHEST) } };
+    CHECK(BotGearRules::ChooseForSlot(druid1, 1) == std::vector<uint32>{ 14 });
+    // a shaman at 39 takes leather over cloth, at 40 mail over leather
+    std::vector<SlotCandidate> shaman39 = { { 15, 500, BotGearRules::ArmorLighterThanMax(CLASS_SHAMAN, 39, ITEM_CLASS_ARMOR, ITEM_SUBCLASS_ARMOR_CLOTH, INVTYPE_HEAD) },
+                                            { 16, 100, BotGearRules::ArmorLighterThanMax(CLASS_SHAMAN, 39, ITEM_CLASS_ARMOR, ITEM_SUBCLASS_ARMOR_LEATHER, INVTYPE_HEAD) } };
+    CHECK(BotGearRules::ChooseForSlot(shaman39, 1) == std::vector<uint32>{ 16 });
+    std::vector<SlotCandidate> shaman40 = { { 17, 500, BotGearRules::ArmorLighterThanMax(CLASS_SHAMAN, 40, ITEM_CLASS_ARMOR, ITEM_SUBCLASS_ARMOR_LEATHER, INVTYPE_HEAD) },
+                                            { 18, 100, BotGearRules::ArmorLighterThanMax(CLASS_SHAMAN, 40, ITEM_CLASS_ARMOR, ITEM_SUBCLASS_ARMOR_MAIL, INVTYPE_HEAD) } };
+    CHECK(BotGearRules::ChooseForSlot(shaman40, 1) == std::vector<uint32>{ 18 });
     // a tie keeps the earlier candidate; no candidates, no pick
     CHECK(BotGearRules::ChooseForSlot({ { 11, 100, false }, { 12, 100, false } }, 1) == std::vector<uint32>{ 11 });
     CHECK(BotGearRules::ChooseForSlot({}, 1).empty());
@@ -123,4 +158,19 @@ TEST_CASE("A second ring and a second trinket are chosen", "[BotGearRules]")
     CHECK(BotGearRules::ChooseForSlot({ { 40, 300, false }, { 40, 300, false }, { 41, 100, false } }, 2) == std::vector<uint32>{ 40, 41 });
     // a single candidate fills one slot only
     CHECK(BotGearRules::ChooseForSlot({ { 50, 100, false } }, 2) == std::vector<uint32>{ 50 });
+}
+
+TEST_CASE("A unique-equipped ring is chosen once and a ranged weapon fills slot 17", "[BotGearRules]")
+{
+    using BotGearRules::SlotCandidate;
+    // the same unique-equipped ring offered twice, plus a weaker different ring: the second slot gets the different ring, not a copy
+    CHECK(BotGearRules::ChooseForSlot({ { 60, 400, false }, { 60, 400, false }, { 61, 50, false } }, 2) == std::vector<uint32>{ 60, 61 });
+    // only the unique ring exists: one pick, the second slot stays empty
+    CHECK(BotGearRules::ChooseForSlot({ { 60, 400, false }, { 60, 400, false } }, 2) == std::vector<uint32>{ 60 });
+    // a hunter's slot 17: the best usable bow, gun or crossbow wins (jewellery and weapons are never "lighter")
+    bool const bowLighter = BotGearRules::ArmorLighterThanMax(CLASS_HUNTER, 30, ITEM_CLASS_WEAPON, ITEM_SUBCLASS_WEAPON_BOW, INVTYPE_RANGED);
+    CHECK_FALSE(bowLighter);
+    CHECK(BotGearRules::ChooseForSlot({ { 70, 120, bowLighter }, { 71, 180, bowLighter }, { 72, 90, bowLighter } }, 1) == std::vector<uint32>{ 71 });
+    // no usable ranged candidate (a class without the skill): nothing is picked, the slot stays empty
+    CHECK(BotGearRules::ChooseForSlot({}, 1).empty());
 }

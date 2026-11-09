@@ -40,11 +40,11 @@ inline bool IsBodyArmorSlot(uint32 inventoryType)
     }
 }
 
-// True for body-slot armour that is lighter than the class maximum (cloth for a shaman, leather for a hunter at 40+, ...). From level 40 a
-// class wears its maximum armour; the leveling path (below 40) keeps taking whatever scores best, so nothing is lighter there.
+// True for body-slot armour that is lighter than the class maximum at that level (MaxArmorSubclass: cloth for a shaman, leather for a hunter
+// below 40, mail from 40, leather for a druid at any level, ...). The class prefers its maximum at every level.
 inline bool ArmorLighterThanMax(uint8 classId, uint32 level, uint32 itemClass, uint32 subclass, uint32 inventoryType)
 {
-    if (level < 40 || itemClass != ITEM_CLASS_ARMOR || !IsBodyArmorSlot(inventoryType))
+    if (itemClass != ITEM_CLASS_ARMOR || !IsBodyArmorSlot(inventoryType))
         return false;
     return subclass > ITEM_SUBCLASS_ARMOR_MISCELLANEOUS && subclass < MaxArmorSubclass(classId, level);
 }
