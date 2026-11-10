@@ -38,6 +38,9 @@ struct BotSnapshotWatch
 {
     ObjectGuid LastVictim;     // the victim's guid on the previous snapshot tick (empty when the bot had no target)
     uint32 LostReason = 0;     // why it went: 0 none or not told, 1 killed, 2 leashed, 3 despawned, 4 another player
+    // Layout 25: the telegraphs found at the last nearby refresh, published again until the next refresh (they age with the nearby list).
+    forever_module::Telegraph Telegraphs[forever_module::kMaxTelegraphs] = {};
+    uint8 TelegraphCount = 0;
 };
 
 // Reused by sequential bot snapshot builds on the world thread to retain nearby-query allocations.
@@ -59,6 +62,11 @@ void RecordBotDamage(Unit const& victim, Unit const* attacker, uint32 spellId, u
 
 // Frees the damage log of a bot that has logged out. Takes the same counter as ClearVendorLookup.
 void ClearBotDamageLog(uint64 botCounter);
+
+// Layout 25: records the answer to a bot's kProbePoint action (ModuleBotActions.cpp); the bot's next snapshot carries the last kMaxProbeResults
+// answers (BotSnapshot::probes, oldest first) with the sequence the answer got here. Frees the ring on logout, like the damage log.
+void RecordBotProbe(uint64 botCounter, forever_module::ProbeResult result);
+void ClearBotProbeLog(uint64 botCounter);
 
 // Frees the nearest-vendor lookup cache entry for a bot that has logged out. Without this the cache grows
 // to one entry per ever-created bot; calling this on logout keeps it bounded to currently-online bots.

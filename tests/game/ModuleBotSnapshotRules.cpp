@@ -402,3 +402,117 @@ TEST_CASE("Engaged units beyond the limit still lead the list", "[ModuleBotSnaps
     CHECK(units[1] == 50);
     CHECK(units[2] == 60);
 }
+
+// Layout 25: the party view, telegraphs and probes.
+
+TEST_CASE("Party role bits come from the LFG roles, the main tank flag, then the talent role", "[ModuleBotSnapshotRules]")
+{
+    using ModuleBotSnapshotRules::PartyRoleBits;
+    CHECK(PartyRoleBits(0x02, 0, 0) == 1);                 // LFG tank
+    CHECK(PartyRoleBits(0x04, 0, 0) == 2);                 // LFG healer
+    CHECK(PartyRoleBits(0x08, 0, 0) == 4);                 // LFG damage
+    CHECK(PartyRoleBits(0x0C, 0, 0) == 6);                 // healer and damage both offered
+    CHECK(PartyRoleBits(0x00, 0x02, 0) == 1);              // the main tank flag alone
+    CHECK(PartyRoleBits(0x04, 0x02, 0) == 3);              // flagged main tank who queued as a healer: both
+    CHECK(PartyRoleBits(0x00, 0x05, 0) == 0);              // assistant and main assist say nothing about the role
+    CHECK(PartyRoleBits(0x00, 0, 1) == 1);                 // a bot's talent role fills the gap
+    CHECK(PartyRoleBits(0x00, 0, 2) == 2);
+    CHECK(PartyRoleBits(0x00, 0, 3) == 4);
+    CHECK(PartyRoleBits(0x08, 0, 1) == 4);                 // ... but never overrides what the group says
+    CHECK(PartyRoleBits(0x00, 0, 9) == 0);                 // an unknown talent role is no role
+    CHECK(ModuleBotSnapshotRules::IsPartyTank(1) && ModuleBotSnapshotRules::IsPartyTank(3) && !ModuleBotSnapshotRules::IsPartyTank(6));
+}
+
+TEST_CASE("Party debuffs list the dispellable ones first, then the longest remaining", "[ModuleBotSnapshotRules]")
+{
+    using Fact = ModuleBotSnapshotRules::PartyDebuffFact;
+    std::vector<Fact> facts{ { 10, 5000, 0, 1 }, { 11, 2000, 4, 1 }, { 12, 9000, 0, 2 }, { 13, 8000, 1, 1 }, { 14, 2000, 2, 1 } };
+    ModuleBotSnapshotRules::SortPartyDebuffs(facts);
+    REQUIRE(facts.size() == 5);
+    CHECK(facts[0].SpellId == 13);   // magic, 8 s
+    CHECK(facts[1].SpellId == 11);   // poison, 2 s (before the curse of 2 s: stable order)
+    CHECK(facts[2].SpellId == 14);   // curse, 2 s
+    CHECK(facts[3].SpellId == 12);   // not dispellable, 9 s
+    CHECK(facts[4].SpellId == 10);   // not dispellable, 5 s
+}
+
+TEST_CASE("Loose mobs list the ones on healers first, then the newest", "[ModuleBotSnapshotRules]")
+{
+    using Fact = ModuleBotSnapshotRules::LooseMobFact;
+    std::vector<Fact> facts;
+    facts.push_back({ 1, 100, false, 5000, 0 });
+    facts.push_back({ 2, 101, true, 7000, 0 });
+    facts.push_back({ 3, 102, false, 200, 0 });
+    facts.push_back({ 4, 101, true, 100, 0 });
+    ModuleBotSnapshotRules::SortLooseMobs(facts);
+    REQUIRE(facts.size() == 4);
+    CHECK(facts[0].UnitRef == 4);    // on a healer, 0.1 s
+    CHECK(facts[1].UnitRef == 2);    // on a healer, 7 s
+    CHECK(facts[2].UnitRef == 3);    // not on a healer, newest
+    CHECK(facts[3].UnitRef == 1);
+}
+
+TEST_CASE("An idle group's view is rebuilt one tick in N, an active one every tick", "[ModuleBotSnapshotRules]")
+{
+    using ModuleBotSnapshotRules::PartyViewDue;
+    // group 7, idle, every 5 ticks: the ticks where (tick + 7) % 5 == 0
+    int due = 0;
+    for (uint64 tick = 1; tick <= 20; ++tick)
+        if (PartyViewDue(false, tick, 7, 5))
+            ++due;
+    CHECK(due == 4);
+    CHECK(PartyViewDue(false, 3, 7, 5));
+    CHECK(!PartyViewDue(false, 4, 7, 5));
+    // two idle groups are staggered: not due on the same ticks
+    CHECK(PartyViewDue(false, 3, 7, 5) != PartyViewDue(false, 3, 8, 5));
+    // active: always; idleEvery 1 or 0: always
+    CHECK(PartyViewDue(true, 4, 7, 5));
+    CHECK(PartyViewDue(false, 4, 7, 1));
+    CHECK(PartyViewDue(false, 4, 7, 0));
+}
+
+TEST_CASE("Telegraph kind follows the spell's shape", "[ModuleBotSnapshotRules]")
+{
+    using ModuleBotSnapshotRules::TelegraphKind;
+    CHECK(TelegraphKind(true, false, false, false) == 2);    // a cone, whatever else
+    CHECK(TelegraphKind(true, true, true, true) == 2);
+    CHECK(TelegraphKind(false, true, false, true) == 1);     // a circle at the destination
+    CHECK(TelegraphKind(false, true, false, false) == 0);    // ... but with no destination yet there is nothing to show
+    CHECK(TelegraphKind(false, true, true, false) == 3);     // ... unless the spell also hits around the caster
+    CHECK(TelegraphKind(false, false, true, false) == 3);    // a circle around the caster
+    CHECK(TelegraphKind(false, false, false, true) == 0);    // a single-target cast
+}
+
+TEST_CASE("Telegraphs are ordered soonest to land first, the larger area on a tie", "[ModuleBotSnapshotRules]")
+{
+    using Key = ModuleBotSnapshotRules::TelegraphOrderKey;
+    CHECK(ModuleBotSnapshotRules::TelegraphBefore(Key{ 500, 5.0f }, Key{ 1500, 20.0f }));
+    CHECK(!ModuleBotSnapshotRules::TelegraphBefore(Key{ 1500, 20.0f }, Key{ 500, 5.0f }));
+    CHECK(ModuleBotSnapshotRules::TelegraphBefore(Key{ 500, 10.0f }, Key{ 500, 5.0f }));
+    CHECK(!ModuleBotSnapshotRules::TelegraphBefore(Key{ 500, 5.0f }, Key{ 500, 5.0f }));
+}
+
+TEST_CASE("The tick budget allows the limit per tick and starts over on a new tick", "[ModuleBotSnapshotRules]")
+{
+    ModuleBotSnapshotRules::TickBudget budget;
+    CHECK(budget.Take(1000, 2));
+    CHECK(budget.Take(1000, 2));
+    CHECK(!budget.Take(1000, 2));
+    CHECK(budget.Take(1050, 2));     // a new tick
+    CHECK(!budget.Take(1050, 1));    // a lower limit mid-tick is respected as well
+    CHECK(!budget.Take(1100, 0));    // limit 0 refuses everything
+    // the first tick of the process (nowMs 0) counts like any other
+    ModuleBotSnapshotRules::TickBudget fresh;
+    CHECK(fresh.Take(0, 1));
+    CHECK(!fresh.Take(0, 1));
+}
+
+TEST_CASE("Probe ring reports at most its capacity, oldest first", "[ModuleBotSnapshotRules]")
+{
+    CHECK(ModuleBotSnapshotRules::ProbeCount(0, 4) == 0);
+    CHECK(ModuleBotSnapshotRules::ProbeCount(3, 4) == 3);
+    CHECK(ModuleBotSnapshotRules::ProbeCount(9, 4) == 4);
+    // the same slot arithmetic as the damage ring: after 6 probes into 4 slots, the next slot is 2 and the oldest reported is slot 2
+    CHECK(ModuleBotSnapshotRules::DamageRingSlot(2, 4, 4, 0) == 2);
+    CHECK(ModuleBotSnapshotRules::DamageRingSlot(2, 4, 4, 3) == 1);
+}

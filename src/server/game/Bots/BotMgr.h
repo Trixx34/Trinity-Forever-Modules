@@ -70,6 +70,9 @@ class TC_GAME_API BotMgr
         // Bot.Talents.Profiles, else the (class, role) one, else by the greedy allocator. Returns null when it ran, else why it did not (in
         // combat, below level 10, switched off).
         static char const* SetTalentRole(Player& bot, uint8 role, uint8 spec = 0);
+        // The role a module last gave the bot with SetTalentRole (1 tank, 2 healer, 3 dps), 0 when none was given: the module snapshot's role
+        // hint and party view (layout 25). World thread only.
+        static uint8 TalentRoleOf(uint64 botCounter);
 
         BotMgr(BotMgr const&) = delete;
         BotMgr(BotMgr&&) = delete;

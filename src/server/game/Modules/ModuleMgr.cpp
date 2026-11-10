@@ -1084,12 +1084,21 @@ void ModuleMgr::OnWorldTick(uint64 tick)
             uint32 const refreshEvery = _config.Tier2NearbyRefreshTicks != 0
                                             ? _config.Tier2NearbyRefreshTicks
                                             : std::max<uint32>(1, static_cast<uint32>((owned.size() + 399) / 400));
+            std::vector<Player*> online;
+            online.reserve(owned.size());
             for (uint64 guid : owned)
-            {
-                Player* bot = sBotMgr->GetOnlinePlayer(guid);
-                if (!bot)
-                    continue;
+                if (Player* bot = sBotMgr->GetOnlinePlayer(guid))
+                    online.push_back(bot);
 
+            // Layout 25: one party view per group of these bots, built once per group, before the bots so each entry can point at its view.
+            ModuleSnapshotParties parties;
+            PartyViewSlotMap partySlots;
+            if (PartyViewsEnabled())
+                BuildPartyViews(online, region->MaxPartyViews(), region->MaxPartyMembers(), tick, _partyViewWatch, parties, partySlots);
+
+            for (Player* bot : online)
+            {
+                uint64 const guid = bot->GetGUID().GetCounter();
                 // Staggered by guid: each bot refreshes on one tick in refreshEvery, so the cost is spread over the ticks.
                 // Layout 24: a bot in combat, or inside an instance, refreshes every tick (Bot.Snapshot.EveryTickInCombat); only idle open-world bots keep the stagger.
                 bool const refresh = refreshEvery <= 1 || (tick + guid) % refreshEvery == 0 || (everyTickInCombat && NeedsFreshNearby(*bot));
@@ -1103,9 +1112,14 @@ void ModuleMgr::OnWorldTick(uint64 tick)
                     entry.Bot.last_action_sequence = result->second.Sequence;
                     std::copy(result->second.Ring.begin(), result->second.Ring.end(), entry.Bot.results);
                 }
+                if (auto slot = partySlots.find(guid); slot != partySlots.end())
+                {
+                    entry.Bot.party_view_index = slot->second.first;
+                    entry.Bot.party_member_index = slot->second.second;
+                }
                 bots.push_back(entry);
             }
-            region->PublishSnapshot(tick, bots);
+            region->PublishSnapshot(tick, bots, parties);
         }
 
         ModuleActionSet actions;

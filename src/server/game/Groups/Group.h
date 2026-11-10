@@ -361,6 +361,8 @@ class TC_GAME_API Group
                     return i + 1;
             return 0;
         }
+        // The unit each raid target icon is on (TARGET_ICONS_COUNT entries, empty for none): the module snapshot's party view (layout 25).
+        ObjectGuid const* GetTargetIcons() const { return m_targetIcons; }
         void SetGroupMemberFlag(ObjectGuid guid, bool apply, GroupMemberFlags flag);
         void RemoveUniqueGroupMemberFlag(GroupMemberFlags flag);
 

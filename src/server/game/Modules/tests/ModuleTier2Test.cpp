@@ -37,7 +37,11 @@ int main()
     // The core writes kTier2LayoutVersion into the region and the module refuses to attach on any other value, so the
     // number is pinned here as well as compared below: a silent bump of the core's copy would otherwise only show up as a
     // module that refuses to attach.
-    CHECK(forever_module::kTier2LayoutVersion == 23);
+    CHECK(forever_module::kTier2LayoutVersion == 25);
+    CHECK(forever_module::kTier2LayoutBase == 25);
+    CHECK(static_cast<int>(forever_module::ActionType::kTransport) == 32);
+    CHECK(static_cast<int>(forever_module::ActionType::kStopCast) == 33);
+    CHECK(static_cast<int>(forever_module::ActionType::kProbePoint) == 34);
     CHECK(static_cast<int>(forever_module::BotActionStatus::kNoRoute) == 13);
     CHECK(static_cast<int>(forever_module::BotActionStatus::kNeedsFocus) == 14);
     CHECK(static_cast<int>(forever_module::ActionType::kCraft) == 20);
@@ -52,27 +56,48 @@ int main()
     CHECK(static_cast<int>(forever_module::ActionType::kEmote) == 30);
     CHECK(static_cast<int>(forever_module::ActionType::kLfgJoin) == 31);
     CHECK(static_cast<int>(forever_module::ActionType::kLastActionType) ==
-          static_cast<int>(forever_module::ActionType::kLfgJoin));
+          static_cast<int>(forever_module::ActionType::kProbePoint));
     CHECK(forever_module::kMaxAuras == 16);
+    CHECK(forever_module::kMaxGroundEffects == 8 && forever_module::kMaxTelegraphs == 4 && forever_module::kMaxProbeResults == 4);
+    CHECK(forever_module::kMaxPartyMembers == 40 && forever_module::kMaxPartyDebuffs == 6 && forever_module::kMaxLooseMobs == 8);
 
     // The shared region is mapped by two processes built separately, so a shape that changes without a layout bump is
-    // memory corruption that nothing else would catch. These sizes are what the SDK's header gives on the same platform.
+    // memory corruption that nothing else would catch. These sizes are what the SDK's header gives on the same platform (layout 25;
+    // the SDK pins the same numbers in tier2_session.cpp and tests/tier2_attach_test.cpp).
     CHECK(sizeof(forever_module::AuraEntry) == 12);
-    CHECK(sizeof(forever_module::BotSnapshot) == 1160);         // the SDK pins the same size (tier2_session.cpp, layout 23)
+    CHECK(sizeof(forever_module::BotSnapshot) == 1856);
     CHECK(sizeof(forever_module::GroundEffect) == 24);
-    CHECK(sizeof(forever_module::NearbyUnit) == 56);
-    CHECK(offsetof(forever_module::BotSnapshot, aura_count) == 376);
-    CHECK(offsetof(forever_module::BotSnapshot, auras) == 380);
-    CHECK(offsetof(forever_module::BotSnapshot, ammo_count) == 652);
-    CHECK(offsetof(forever_module::BotSnapshot, food_count) == 656);
-    CHECK(offsetof(forever_module::BotSnapshot, drink_count) == 660);
-    CHECK(offsetof(forever_module::BotSnapshot, ammo_vendor_valid) == 664);
-    CHECK(offsetof(forever_module::BotSnapshot, ammo_vendor_x) == 668);
-    CHECK(offsetof(forever_module::BotSnapshot, food_vendor_x) == 680);
-    CHECK(offsetof(forever_module::BotSnapshot, ammo_vendor_guid) == 696);
-    CHECK(offsetof(forever_module::BotSnapshot, food_vendor_guid) == 704);
+    CHECK(sizeof(forever_module::NearbyUnit) == 136);
+    CHECK(sizeof(forever_module::Telegraph) == 48);
+    CHECK(sizeof(forever_module::ProbeResult) == 32);
+    CHECK(sizeof(forever_module::PartyMember) == 176);
+    CHECK(sizeof(forever_module::PartyView) == 320);
+    CHECK(sizeof(forever_module::Tier2RegionHeader) == 304);
+    CHECK(sizeof(forever_module::WorldTickSnapshotHeader) == 24);
+    CHECK(offsetof(forever_module::BotSnapshot, aura_count) == 440);
+    CHECK(offsetof(forever_module::BotSnapshot, auras) == 444);
+    CHECK(offsetof(forever_module::BotSnapshot, ammo_count) == 716);
+    CHECK(offsetof(forever_module::BotSnapshot, food_count) == 720);
+    CHECK(offsetof(forever_module::BotSnapshot, drink_count) == 724);
+    CHECK(offsetof(forever_module::BotSnapshot, ammo_vendor_valid) == 728);
+    CHECK(offsetof(forever_module::BotSnapshot, ammo_vendor_x) == 732);
+    CHECK(offsetof(forever_module::BotSnapshot, food_vendor_x) == 744);
+    CHECK(offsetof(forever_module::BotSnapshot, ammo_vendor_guid) == 760);
+    CHECK(offsetof(forever_module::BotSnapshot, food_vendor_guid) == 768);
+    CHECK(offsetof(forever_module::BotSnapshot, ground_effects) == 904);
+    CHECK(offsetof(forever_module::BotSnapshot, in_capital) == 1296);
+    CHECK(offsetof(forever_module::BotSnapshot, gcd_remaining_ms) == 1316);
+    CHECK(offsetof(forever_module::BotSnapshot, results) == 1460);
+    CHECK(offsetof(forever_module::BotSnapshot, party_view_index) == 1508);
+    CHECK(offsetof(forever_module::BotSnapshot, telegraphs) == 1528);
+    CHECK(offsetof(forever_module::BotSnapshot, probes) == 1720);
     CHECK(offsetof(forever_module::NearbyUnit, aura_count) == 40);
     CHECK(offsetof(forever_module::NearbyUnit, aura_mask) == 44);
+    CHECK(offsetof(forever_module::NearbyUnit, aggro_radius) == 128);
+    CHECK(offsetof(forever_module::PartyMember, debuffs) == 96);
+    CHECK(offsetof(forever_module::PartyView, loose_mobs) == 112);
+    CHECK(offsetof(forever_module::Tier2RegionHeader, sections) == 112);
+    CHECK(forever_module::Tier2PartyViewSlots(4) == 3 && forever_module::Tier2PartyMemberSlots(4) == 8);
 
     std::string const name = "trinity_module_test_" + std::to_string(::getpid()) + "_tier2";
 
@@ -105,6 +130,24 @@ int main()
     CHECK(header->max_actions == 8);
     CHECK(header->tick_interval == 3);
     CHECK(header->published_snapshot_tick.load() == 0);
+    // Layout 25: the geometry and the section table the SDK reads the region by.
+    CHECK(header->layout_base == forever_module::kTier2LayoutBase);
+    CHECK(header->max_party_views == 3 && header->max_party_members == 8);
+    CHECK(header->header_bytes == forever_module::Tier2HeaderBytes());
+    CHECK(header->snapshot_bytes == forever_module::Tier2SnapshotBufferBytes(4, 2));
+    CHECK(header->action_offset == forever_module::Tier2ActionBufferOffset(4, 2, 8, 0));
+    CHECK(header->action_bytes == forever_module::Tier2ActionBufferBytes(8));
+    CHECK(header->action_header_bytes == sizeof(forever_module::ActionQueueHeader) && header->action_stride == sizeof(forever_module::BotAction));
+    CHECK(header->section_count == 4);
+    CHECK(header->sections[0].kind == 1 && header->sections[0].element_size == sizeof(forever_module::BotSnapshot) && header->sections[0].count == 4 &&
+          header->sections[0].offset == sizeof(forever_module::WorldTickSnapshotHeader));
+    CHECK(header->sections[1].kind == 2 && header->sections[1].element_size == sizeof(forever_module::NearbyUnit) && header->sections[1].count == 8 &&
+          header->sections[1].offset == forever_module::Tier2NearbySectionOffset(4));
+    CHECK(header->sections[2].kind == 3 && header->sections[2].element_size == sizeof(forever_module::PartyView) && header->sections[2].count == 3 &&
+          header->sections[2].offset == forever_module::Tier2PartyViewsSectionOffset(4, 2));
+    CHECK(header->sections[3].kind == 4 && header->sections[3].element_size == sizeof(forever_module::PartyMember) && header->sections[3].count == 8 &&
+          header->sections[3].offset == forever_module::Tier2PartyMembersSectionOffset(4, 2));
+    CHECK(header->sections[4].kind == 0);
 
     // Publish two snapshots: the module must see the second one, and the buffer index must flip.
     region->PublishSnapshot(3);
@@ -375,6 +418,86 @@ int main()
     auto const* clampSnap = reinterpret_cast<forever_module::WorldTickSnapshotHeader const*>(
         base + forever_module::Tier2SnapshotBufferOffset(4, 2, clampBuffer));
     CHECK(clampSnap->bot_count == 4);
+
+    // Layout 25: the party views and their member pool travel in their own sections; a bot's entry points at its view and its own member slot.
+    // Four views against three slots: the fourth is dropped; nine members against eight slots: the ninth is dropped.
+    {
+        ModuleSnapshotParties parties;
+        for (uint32 g = 0; g < 4; ++g)
+        {
+            forever_module::PartyView view;
+            view.group_id = 100 + g;
+            view.member_first = 2 * g;
+            view.member_count = 2;
+            view.generation = 1;
+            view.loose_count = 1;
+            view.loose_mobs[0].unit_ref = forever_module::MakeUnitRef(8, 1234, 7);
+            view.loose_mobs[0].victim_ref = forever_module::MakeUnitRef(2, 0, 2 * g + 1);
+            view.loose_mobs[0].since_ms = 250;
+            parties.Views.push_back(view);
+            for (uint32 m = 0; m < 2; ++m)
+            {
+                forever_module::PartyMember member;
+                member.guid = forever_module::MakeUnitRef(2, 0, 2 * g + m);
+                member.role = m == 0 ? forever_module::kPartyRoleTank : forever_module::kPartyRoleHealer;
+                member.online = 1;
+                member.debuff_count = 1;
+                member.debuffs[0].spell_id = 589;
+                member.debuffs[0].dispel_type = 1;
+                parties.Members.push_back(member);
+            }
+        }
+        parties.Members.push_back(forever_module::PartyMember());
+        withBot[0].Bot = forever_module::BotSnapshot();
+        withBot[0].Bot.guid = 42;
+        withBot[0].Bot.party_view_index = 1;
+        withBot[0].Bot.party_member_index = 3;
+        withBot[0].Bot.telegraph_count = 1;
+        withBot[0].Bot.telegraphs[0].spell_id = 11366;
+        withBot[0].Bot.telegraphs[0].kind = 2;
+        withBot[0].Bot.telegraphs[0].cone_angle = 60.0f;
+        withBot[0].Bot.probe_count = 1;
+        withBot[0].Bot.probe_sequence = 1;
+        withBot[0].Bot.probes[0].probe_id = 9;
+        withBot[0].Bot.probes[0].flags = forever_module::kProbeReachable;
+        withBot[0].Bot.probes[0].sequence = 1;
+        withBot[0].Bot.role_hint = 1;
+        nearbyStorage[0].aggro_radius = 17.5f;
+        withBot[0].Nearby = nearbyStorage;
+        region->PublishSnapshot(14, withBot, parties);
+        uint8_t const partyBuffer = header->published_snapshot_buffer.load();
+        auto const* partySnap = reinterpret_cast<forever_module::WorldTickSnapshotHeader const*>(
+            base + forever_module::Tier2SnapshotBufferOffset(4, 2, partyBuffer));
+        CHECK(partySnap->tick_number == 14 && partySnap->bot_count == 1);
+        CHECK(partySnap->party_view_count == 3 && partySnap->party_member_count == 8);
+        auto const* readBot = reinterpret_cast<forever_module::BotSnapshot const*>(partySnap + 1);
+        CHECK(readBot->party_view_index == 1 && readBot->party_member_index == 3 && readBot->role_hint == 1);
+        CHECK(readBot->telegraph_count == 1 && readBot->telegraphs[0].spell_id == 11366 && readBot->telegraphs[0].kind == 2 && readBot->telegraphs[0].cone_angle == 60.0f);
+        CHECK(readBot->probe_count == 1 && readBot->probes[0].probe_id == 9 && readBot->probes[0].flags == forever_module::kProbeReachable);
+        auto const* readNear = reinterpret_cast<forever_module::NearbyUnit const*>(
+            reinterpret_cast<std::byte const*>(partySnap) + forever_module::Tier2NearbySectionOffset(4));
+        CHECK(readNear[0].aggro_radius == 17.5f);
+        auto const* readViews = reinterpret_cast<forever_module::PartyView const*>(
+            reinterpret_cast<std::byte const*>(partySnap) + forever_module::Tier2PartyViewsSectionOffset(4, 2));
+        CHECK(readViews[1].group_id == 101 && readViews[1].member_first == 2 && readViews[1].member_count == 2 && readViews[1].generation == 1);
+        CHECK(readViews[1].loose_count == 1 && readViews[1].loose_mobs[0].victim_ref == forever_module::MakeUnitRef(2, 0, 3) && readViews[1].loose_mobs[0].since_ms == 250);
+        CHECK(readViews[2].group_id == 102);
+        auto const* readMembers = reinterpret_cast<forever_module::PartyMember const*>(
+            reinterpret_cast<std::byte const*>(partySnap) + forever_module::Tier2PartyMembersSectionOffset(4, 2));
+        CHECK(readMembers[3].guid == forever_module::MakeUnitRef(2, 0, 3) && readMembers[3].role == forever_module::kPartyRoleHealer && readMembers[3].online == 1);
+        CHECK(readMembers[3].debuff_count == 1 && readMembers[3].debuffs[0].spell_id == 589 && readMembers[3].debuffs[0].dispel_type == 1);
+        CHECK(readMembers[2].role == forever_module::kPartyRoleTank);
+
+        // A publish with no parties leaves the counts at 0, so the module reads no view, and the bot's default indexes say none.
+        withBot[0].Bot = forever_module::BotSnapshot();
+        withBot[0].Bot.guid = 42;
+        region->PublishSnapshot(15, withBot);
+        uint8_t const noPartyBuffer = header->published_snapshot_buffer.load();
+        auto const* noPartySnap = reinterpret_cast<forever_module::WorldTickSnapshotHeader const*>(
+            base + forever_module::Tier2SnapshotBufferOffset(4, 2, noPartyBuffer));
+        CHECK(noPartySnap->party_view_count == 0 && noPartySnap->party_member_count == 0);
+        CHECK(reinterpret_cast<forever_module::BotSnapshot const*>(noPartySnap + 1)->party_view_index == forever_module::kNoPartyView);
+    }
 
     // Removing the region drops the name, so a later module attach fails.
     region.reset();

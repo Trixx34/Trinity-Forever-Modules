@@ -224,6 +224,146 @@ private:
     };
     std::unordered_map<uint32, Entry> _entries;
 };
+
+// ---------------------------------------------------------------------------------------------------------------
+// Layout 25: the party view, enemy telegraphs and position probes (ModuleBotPartyView.cpp, ModuleBotSnapshot.cpp, ModuleBotActions.cpp).
+// ---------------------------------------------------------------------------------------------------------------
+
+// PartyMember::role bits (forever_module::PartyRole: tank 1, healer 2, damage 4) from the group's LFG roles (lfg::PLAYER_ROLE_TANK 0x02, HEALER 0x04,
+// DAMAGE 0x08), its member flags (MEMBER_FLAG_MAINTANK 0x02 makes a tank) and, when both say nothing, the talent role a bot's module gave it
+// (BotMgr::SetTalentRole: 1 tank, 2 healer, 3 dps). A human without LFG roles or flags has no role bits.
+inline uint8 PartyRoleBits(uint8 lfgRoles, uint8 memberFlags, uint8 talentRole)
+{
+    uint8 bits = 0;
+    if (lfgRoles & 0x02)
+        bits |= 1;
+    if (lfgRoles & 0x04)
+        bits |= 2;
+    if (lfgRoles & 0x08)
+        bits |= 4;
+    if (memberFlags & 0x02)
+        bits |= 1;
+    if (bits == 0)
+    {
+        if (talentRole == 1)
+            bits = 1;
+        else if (talentRole == 2)
+            bits = 2;
+        else if (talentRole == 3)
+            bits = 4;
+    }
+    return bits;
+}
+
+inline bool IsPartyTank(uint8 roleBits)
+{
+    return (roleBits & 1) != 0;
+}
+
+// A harmful aura on a member, as the view lists it: the dispellable ones first (a module's dispel scan reads the front), then the longest
+// remaining first (the one that will hurt longest). Equal keys keep their order.
+struct PartyDebuffFact
+{
+    uint32 SpellId = 0;
+    uint32 RemainingMs = 0;
+    uint8 DispelType = 0;   // 0 none, 1 magic, 2 curse, 3 disease, 4 poison
+    uint8 Stacks = 0;
+};
+
+inline void SortPartyDebuffs(std::vector<PartyDebuffFact>& facts)
+{
+    std::stable_sort(facts.begin(), facts.end(), [](PartyDebuffFact const& a, PartyDebuffFact const& b)
+    {
+        bool const da = a.DispelType != 0;
+        bool const db = b.DispelType != 0;
+        if (da != db)
+            return da;
+        return a.RemainingMs > b.RemainingMs;
+    });
+}
+
+// A creature on a member who is not a tank (PartyView::loose_mobs): the ones on healers first, then the newest first (a fresh aggro loss is the
+// one to answer). StartMs is the game time it was first seen loose, kept between ticks by the watch.
+struct LooseMobFact
+{
+    uint64 UnitRef = 0;
+    uint64 VictimRef = 0;
+    bool VictimIsHealer = false;
+    uint32 SinceMs = 0;
+    uint32 StartMs = 0;
+};
+
+inline void SortLooseMobs(std::vector<LooseMobFact>& facts)
+{
+    std::stable_sort(facts.begin(), facts.end(), [](LooseMobFact const& a, LooseMobFact const& b)
+    {
+        if (a.VictimIsHealer != b.VictimIsHealer)
+            return a.VictimIsHealer;
+        return a.SinceMs < b.SinceMs;
+    });
+}
+
+// Whether a group's view is rebuilt on this tick: always while it is active (a member in combat, or the leader in an instance), else one tick in
+// idleEvery, staggered by the group id so idle groups spread over the ticks. idleEvery 0 or 1 is every tick.
+inline bool PartyViewDue(bool active, uint64 tick, uint64 groupId, uint32 idleEvery)
+{
+    return active || idleEvery <= 1 || (tick + groupId) % idleEvery == 0;
+}
+
+// Telegraph::kind from the shape of a spell in progress: 2 a cone from the caster (any cone target), else 1 a circle at the cast's destination (an
+// area target around a destination, when the cast has one), else 3 a circle around the caster (an area target around the caster), else 0 (a cast
+// with no area: no telegraph).
+inline uint8 TelegraphKind(bool coneTarget, bool areaAtDest, bool areaAtCaster, bool hasDest)
+{
+    if (coneTarget)
+        return 2;
+    if (areaAtDest && hasDest)
+        return 1;
+    if (areaAtCaster)
+        return 3;
+    return 0;
+}
+
+// Telegraphs are listed soonest to land first; a tie goes to the larger area.
+struct TelegraphOrderKey
+{
+    uint32 RemainingMs;
+    float Radius;
+};
+
+inline bool TelegraphBefore(TelegraphOrderKey const& a, TelegraphOrderKey const& b)
+{
+    if (a.RemainingMs != b.RemainingMs)
+        return a.RemainingMs < b.RemainingMs;
+    return a.Radius > b.Radius;
+}
+
+// A per-tick budget: at most `limit` takes in one game-time tick (the position probes, Bot.Probe.PerTick). The count starts over when the tick
+// changes. limit 0 refuses every take.
+struct TickBudget
+{
+    uint32 Tick = 0;
+    uint32 Used = 0;
+
+    bool Take(uint32 nowMs, uint32 limit)
+    {
+        if (nowMs != Tick)
+        {
+            Tick = nowMs;
+            Used = 0;
+        }
+        if (Used >= limit)
+            return false;
+        ++Used;
+        return true;
+    }
+};
+
+// Probe-result ring (layout 25): the same arithmetic as the damage ring, with kMaxProbeResults slots.
+inline uint8 ProbeCount(uint32 sequence, std::size_t capacity)
+{
+    return uint8(std::min<uint32>(sequence, uint32(capacity)));
+}
 }
 
 #endif // TRINITYCORE_MODULE_BOT_SNAPSHOT_RULES_H

@@ -304,6 +304,16 @@ struct BotDamageLog
 };
 std::unordered_map<uint64, BotDamageLog> g_botDamageLogs;
 
+// Layout 25: the answers to each bot's position probes (kProbePoint), newest last in a ring of kMaxProbeResults. Keyed by character counter, made on
+// the first answer (RecordBotProbe) and erased on logout (ClearBotProbeLog).
+struct BotProbeLog
+{
+    forever_module::ProbeResult Results[forever_module::kMaxProbeResults];
+    std::size_t Next = 0;        // the slot the next answer goes into
+    std::uint32_t Sequence = 0;  // answers recorded so far; the newest has this sequence
+};
+std::unordered_map<uint64, BotProbeLog> g_botProbeLogs;
+
 // Layout 16: the vendors a bot is sent to must be ones it can walk to. The nearest in a straight line is often across a river, a cliff or a
 // city wall. The few nearest candidates of each kind are checked against the navmesh, nearest first, and the first with a route is used. A path
 // calculation is not cheap, so only kSupplyPathChecksPerTick of them are made in one world update; when they run out the choice waits for the
@@ -1015,7 +1025,102 @@ struct PerceptionContext
     bool Los = false;
     uint32 LosBudget = 0;       // line-of-sight checks left for this bot's refresh
     Group* BotGroup = nullptr;
+    // Layout 25: the aggro radius of creatures (Bot.Snapshot.AggroRadius) and the enemy telegraphs (Bot.Snapshot.Telegraphs), the casts of the
+    // hostile units in the list that hit an area, gathered here and the soonest kMaxTelegraphs written to the snapshot after the list is built.
+    bool AggroRadius = false;
+    bool Telegraphs = false;
+    std::vector<forever_module::Telegraph> TelegraphCandidates;
 };
+
+// Layout 25: what a spell's targets say about the area it hits, worked out once per spell id and remembered (a pure function of the spell's static data).
+struct TelegraphShape
+{
+    bool Cone = false;          // a cone target (TARGET_SELECT_CATEGORY_CONE) from the caster
+    bool AreaAtDest = false;    // an area target around a destination
+    bool AreaAtCaster = false;  // an area target around the caster
+    float Radius = 0.0f;        // the largest radius of those effects, in yards (the cone's length for a cone)
+    float ConeDegrees = 0.0f;   // the spell's cone angle (0: the spell system uses 90)
+};
+
+TelegraphShape ComputeTelegraphShape(SpellInfo const* info)
+{
+    TelegraphShape shape;
+    for (SpellEffectInfo const& effect : info->GetEffects())
+    {
+        if (!effect.IsEffect())
+            continue;
+        SpellImplicitTargetInfo const* targets[2] = { &effect.TargetA, &effect.TargetB };
+        SpellTargetIndex const indexes[2] = { SpellTargetIndex::TargetA, SpellTargetIndex::TargetB };
+        for (int i = 0; i < 2; ++i)
+        {
+            SpellTargetSelectionCategories const category = targets[i]->GetSelectionCategory();
+            if (category != TARGET_SELECT_CATEGORY_CONE && category != TARGET_SELECT_CATEGORY_AREA)
+                continue;
+            SpellTargetReferenceTypes const reference = targets[i]->GetReferenceType();
+            if (category == TARGET_SELECT_CATEGORY_CONE)
+                shape.Cone = true;
+            else if (reference == TARGET_REFERENCE_TYPE_DEST)
+                shape.AreaAtDest = true;
+            else if (reference == TARGET_REFERENCE_TYPE_CASTER)
+                shape.AreaAtCaster = true;
+            else
+                continue; // an area around the spell's unit target: not a place the bot can read off the cast
+            if (effect.HasRadius(indexes[i]))
+                shape.Radius = std::max(shape.Radius, effect.CalcRadius(nullptr, indexes[i]).Max);
+        }
+    }
+    shape.ConeDegrees = info->ConeAngle;
+    return shape;
+}
+
+TelegraphShape TelegraphShapeOf(SpellInfo const* info)
+{
+    if (!info)
+        return TelegraphShape{};
+    thread_local ModuleBotSnapshotRules::SpellIdCache<TelegraphShape> cache;
+    return cache.Get(info->Id, info, [info] { return ComputeTelegraphShape(info); });
+}
+
+// Layout 25: the telegraph of a hostile unit's cast in progress, if the spell hits an area: added to the context's candidates.
+void NoteTelegraph(Unit& unit, forever_module::NearbyUnit const& near, Spell const& spell, PerceptionContext& ctx)
+{
+    using namespace forever_module;
+    SpellInfo const* info = spell.GetSpellInfo();
+    if (!info)
+        return;
+    TelegraphShape const shape = TelegraphShapeOf(info);
+    bool const hasDest = spell.m_targets.HasDst();
+    uint8 const kind = ModuleBotSnapshotRules::TelegraphKind(shape.Cone, shape.AreaAtDest, shape.AreaAtCaster, hasDest);
+    if (kind == 0 || shape.Radius <= 0.0f)
+        return;
+
+    Telegraph telegraph;
+    telegraph.caster_ref = near.guid;
+    telegraph.spell_id = info->Id;
+    telegraph.cast_remaining_ms = uint32(std::max(spell.GetTimer(), 0));
+    telegraph.kind = kind;
+    telegraph.radius = shape.Radius;
+    telegraph.facing = unit.GetOrientation();
+    telegraph.interruptible = near.cast_interruptible;
+    if (kind == 1)
+    {
+        WorldLocation const* dest = spell.m_targets.GetDstPos();
+        if (!dest)
+            return;
+        telegraph.x = dest->GetPositionX();
+        telegraph.y = dest->GetPositionY();
+        telegraph.z = dest->GetPositionZ();
+    }
+    else
+    {
+        telegraph.x = unit.GetPositionX();
+        telegraph.y = unit.GetPositionY();
+        telegraph.z = unit.GetPositionZ();
+        if (kind == 2)
+            telegraph.cone_angle = shape.ConeDegrees;
+    }
+    ctx.TelegraphCandidates.push_back(telegraph);
+}
 
 void FillPerception(Player& bot, Unit& unit, forever_module::NearbyUnit& near, PerceptionContext& ctx)
 {
@@ -1035,6 +1140,9 @@ void FillPerception(Player& bot, Unit& unit, forever_module::NearbyUnit& near, P
     {
         near.creature_type = uint8(std::min<uint32>(creature->GetCreatureType(), 255));
         near.creature_rank = (creature->IsDungeonBoss() || creature->isWorldBoss()) ? 3 : (creature->IsElite() ? 1 : 0);
+        // Layout 25: how close the bot may come before the creature attacks on its own (pull spots, patrol waits). A formula, not a search.
+        if (ctx.AggroRadius && near.is_hostile && creature->IsAlive())
+            near.aggro_radius = std::max(0.0f, creature->GetAggroRange(&bot));
         if (creature->IsInEvadeMode())
             flags |= kNearbyEvading;
         if (creature->GetCreatureTemplate()->flags_extra & CREATURE_FLAG_EXTRA_NO_TAUNT)
@@ -1082,17 +1190,23 @@ void FillPerception(Player& bot, Unit& unit, forever_module::NearbyUnit& near, P
         }
     }
 
-    if (ctx.CastInfo)
+    if (ctx.CastInfo || ctx.Telegraphs)
     {
         Spell* spell = unit.GetCurrentSpell(CURRENT_GENERIC_SPELL);
         if (!spell || spell->getState() == SPELL_STATE_FINISHED)
             spell = unit.GetCurrentSpell(CURRENT_CHANNELED_SPELL);
         if (spell && spell->getState() != SPELL_STATE_FINISHED && spell->GetSpellInfo())
         {
-            near.cast_spell_id = spell->GetSpellInfo()->Id;
-            near.cast_remaining_ms = uint32(std::max(spell->GetTimer(), 0));
-            bool const kickImmune = (unit.GetMechanicImmunityMask() & (UI64LIT(1) << MECHANIC_INTERRUPT)) != 0;
-            near.cast_interruptible = (spell->IsInterruptable() && near.cast_remaining_ms > 0 && !kickImmune) ? 1 : 0;
+            if (ctx.CastInfo)
+            {
+                near.cast_spell_id = spell->GetSpellInfo()->Id;
+                near.cast_remaining_ms = uint32(std::max(spell->GetTimer(), 0));
+                bool const kickImmune = (unit.GetMechanicImmunityMask() & (UI64LIT(1) << MECHANIC_INTERRUPT)) != 0;
+                near.cast_interruptible = (spell->IsInterruptable() && near.cast_remaining_ms > 0 && !kickImmune) ? 1 : 0;
+            }
+            // Layout 25: a hostile cast that hits an area is a telegraph (the soonest kMaxTelegraphs are written after the list is built).
+            if (ctx.Telegraphs && near.is_hostile && ctx.TelegraphCandidates.size() < 4 * kMaxTelegraphs)
+                NoteTelegraph(unit, near, *spell, ctx);
         }
     }
 
@@ -1376,12 +1490,34 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
     for (uint8 i = 0; i < entry.damage_hit_count; ++i)
         entry.damage_hits[i] = damage.Hits[ModuleBotSnapshotRules::DamageRingSlot(damage.Next, forever_module::kMaxDamageHits, entry.damage_hit_count, i)];
 
+    // Layout 25: the role the bot's module gave it, the answers to its position probes (oldest first), and the telegraphs near it: the ones of the
+    // last nearby refresh (kept in the watch), so between refreshes they are as old as the nearby list.
+    entry.role_hint = BotMgr::TalentRoleOf(bot.GetGUID().GetCounter());
+    if (auto const probes = g_botProbeLogs.find(bot.GetGUID().GetCounter()); probes != g_botProbeLogs.end())
+    {
+        BotProbeLog const& log = probes->second;
+        entry.probe_sequence = log.Sequence;
+        entry.probe_count = ModuleBotSnapshotRules::ProbeCount(log.Sequence, forever_module::kMaxProbeResults);
+        for (uint8 i = 0; i < entry.probe_count; ++i)
+            entry.probes[i] = log.Results[ModuleBotSnapshotRules::DamageRingSlot(log.Next, forever_module::kMaxProbeResults, entry.probe_count, i)];
+    }
+    auto const writeTelegraphs = [&entry, &watch]()
+    {
+        entry.telegraph_count = watch.TelegraphCount;
+        for (uint8 i = 0; i < watch.TelegraphCount && i < forever_module::kMaxTelegraphs; ++i)
+            entry.telegraphs[i] = watch.Telegraphs[i];
+    };
+
     if (maxNearby == 0)
+    {
+        writeTelegraphs();
         return result;
+    }
 
     // Between refreshes the bot's own entry is current, and its nearby units are the ones from the last refresh.
     if (!refreshNearby && !cachedNearby.empty())
     {
+        writeTelegraphs();
         result.Nearby = std::span<NearbyUnit const>(cachedNearby).first(ModuleBotSnapshotRules::CapCount(cachedNearby.size(), maxNearby));
         return result;
     }
@@ -1464,6 +1600,11 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
         perception.Los = losOn;
         perception.LosBudget = 12;
         perception.BotGroup = bot.GetGroup();
+        // Layout 25: the aggro radius of creatures and the enemy telegraphs, each its own switch.
+        static bool const aggroOn = sConfigMgr->GetBoolDefault("Bot.Snapshot.AggroRadius", false);
+        static bool const telegraphsOn = sConfigMgr->GetBoolDefault("Bot.Snapshot.Telegraphs", false);
+        perception.AggroRadius = aggroOn;
+        perception.Telegraphs = telegraphsOn;
     }
     for (Unit* unit : chosen)
     {
@@ -1490,6 +1631,20 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
             near.shared_objective = SharesActiveQuest(bot, *player) ? 1 : 0;
         }
         cachedNearby.push_back(near);
+    }
+
+    // Layout 25: the soonest-to-land telegraphs of this refresh, kept in the watch until the next one.
+    {
+        std::vector<forever_module::Telegraph>& candidates = perception.TelegraphCandidates;
+        std::sort(candidates.begin(), candidates.end(), [](forever_module::Telegraph const& a, forever_module::Telegraph const& b)
+        {
+            return ModuleBotSnapshotRules::TelegraphBefore(ModuleBotSnapshotRules::TelegraphOrderKey{ a.cast_remaining_ms, a.radius },
+                                                           ModuleBotSnapshotRules::TelegraphOrderKey{ b.cast_remaining_ms, b.radius });
+        });
+        watch.TelegraphCount = uint8(ModuleBotSnapshotRules::CapCount(candidates.size(), forever_module::kMaxTelegraphs));
+        for (uint8 i = 0; i < watch.TelegraphCount; ++i)
+            watch.Telegraphs[i] = candidates[i];
+        writeTelegraphs();
     }
 
     result.Nearby = cachedNearby;
@@ -1536,4 +1691,17 @@ void RecordBotDamage(Unit const& victim, Unit const* attacker, uint32 spellId, u
 void ClearBotDamageLog(uint64 botCounter)
 {
     g_botDamageLogs.erase(botCounter);
+}
+
+void RecordBotProbe(uint64 botCounter, forever_module::ProbeResult result)
+{
+    BotProbeLog& log = g_botProbeLogs[botCounter];
+    result.sequence = ++log.Sequence;
+    log.Results[log.Next] = result;
+    log.Next = ModuleBotSnapshotRules::NextDamageSlot(log.Next, forever_module::kMaxProbeResults);
+}
+
+void ClearBotProbeLog(uint64 botCounter)
+{
+    g_botProbeLogs.erase(botCounter);
 }

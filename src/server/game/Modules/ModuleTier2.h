@@ -7,6 +7,10 @@
  *
  * Deviation from the design doc: a plain shared_memory_object is used instead of managed_shared_memory.
  * The region holds fixed-size arrays only, so the allocator in managed_shared_memory would add nothing.
+ *
+ * Layout 25: a snapshot buffer also carries the party views (one per group) and their member pool; the header
+ * carries the region geometry and a section table (Tier2DescribeRegion), the growth rule's hand-rail for modules
+ * built against an older layout of the same base.
  */
 
 #ifndef TRINITYCORE_MODULE_TIER2_H
@@ -41,6 +45,14 @@ struct ModuleSnapshotBot
     std::span<forever_module::NearbyUnit const> Nearby;
 };
 
+// Layout 25: the party views of a snapshot and the member pool they index into (ModuleBotPartyView.cpp builds them). Views beyond
+// Tier2PartyViewSlots(MaxBots) and members beyond Tier2PartyMemberSlots(MaxBots) are dropped at publish.
+struct ModuleSnapshotParties
+{
+    std::vector<forever_module::PartyView> Views;
+    std::vector<forever_module::PartyMember> Members;
+};
+
 class ModuleTier2Region
 {
     public:
@@ -61,13 +73,16 @@ class ModuleTier2Region
 
         std::string const& Name() const { return _name; }
         Bounds const& GetBounds() const { return _bounds; }
+        // Layout 25: the party slots of this region (a function of MaxBots).
+        uint32 MaxPartyViews() const { return forever_module::Tier2PartyViewSlots(_bounds.MaxBots); }
+        uint32 MaxPartyMembers() const { return forever_module::Tier2PartyMemberSlots(_bounds.MaxBots); }
 
         // True when a snapshot is due at this server tick, given the module's tick_interval.
         bool SnapshotDue(uint64 tick) const;
 
-        // Publishes a snapshot for `tick` with the given bots. Bots beyond MaxBots and nearby units beyond
-        // MaxNearbyUnits are dropped.
-        void PublishSnapshot(uint64 tick, std::vector<ModuleSnapshotBot> const& bots = {});
+        // Publishes a snapshot for `tick` with the given bots and party views. Bots beyond MaxBots, nearby units beyond
+        // MaxNearbyUnits, and party views and members beyond the region's slots are dropped.
+        void PublishSnapshot(uint64 tick, std::vector<ModuleSnapshotBot> const& bots = {}, ModuleSnapshotParties const& parties = {});
 
         // Last tick published, and the action tick the module last published (for logging/staleness).
         uint64 PublishedSnapshotTick() const;

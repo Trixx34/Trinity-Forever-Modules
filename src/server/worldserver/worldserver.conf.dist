@@ -1864,6 +1864,51 @@ Bot.Limit.MaxDbQueue = 5000
 #        Default:     0
 #        1 = a bot in combat or on a dungeon or raid map refreshes its nearby list on every snapshot tick instead of one tick in N (layout 24). Idle open-world bots keep the stagger.
 #
+#    Bot.Snapshot.PartyView
+#        Default:     0
+#        1 = each group of a module's bots gets one shared party view in the snapshot (layout 25, PartyView and PartyMember): every member, bot or human, with
+#            its class, role, subgroup, health, power, life state, position, map, target, cast, pet, transport and up to 6 debuffs with their dispel type; the
+#            leader, main tank, main assist and raid marks. Built once per group per tick while the group fights or its leader is in an instance, else one
+#            tick in Bot.Snapshot.PartyViewIdleTicks. The region has max_bots / 2 + 1 view slots and 2 * max_bots member slots.
+#
+#    Bot.Snapshot.PartyViewIdleTicks
+#        Default:     5
+#        How often (one tick in N, 1 = every tick) an idle group's party view is rebuilt. 1 to 100.
+#
+#    Bot.Snapshot.PartyThreat
+#        Default:     0
+#        1 = the party view also lists the creatures on each member (attacker_count), how many creatures the group has engaged, and up to 8 loose mobs:
+#            creatures attacking a member who is not a tank, with how long (layout 25). Needs Bot.Snapshot.PartyView. One walk of each member's attacker set.
+#
+#    Bot.Snapshot.Telegraphs
+#        Default:     0
+#        1 = each bot's snapshot lists up to 4 enemy telegraphs (layout 25, Telegraph): a hostile unit of its nearby list casting a spell that hits a circle or a
+#            cone, with the area and the time left, soonest first. The spell's shape is worked out once per spell id; the rest is read off the cast in
+#            progress at the nearby refresh. Works without Bot.Snapshot.CastInfo (the interruptible flag then stays 0).
+#
+#    Bot.Snapshot.AggroRadius
+#        Default:     0
+#        1 = each living hostile creature in a bot's nearby list carries the distance at which it attacks the bot on its own (layout 25, aggro_radius): pull
+#            spots and patrol waits. A formula per creature, no search.
+#
+#    Bot.Actions.StopCast
+#        Default:     0
+#        1 = a module may stop a bot's cast or channel in progress (kStopCast, layout 25): an overheal cancel, a kick no longer needed.
+#
+#    Bot.Actions.Probe
+#        Default:     0
+#        1 = a module may ask what the core knows about a point on the bot's map (kProbePoint, layout 25): a route from the bot and its length, the ground
+#            height, water, and the line of sight from a named unit. The answer is in the bot's next snapshot (probes). Each probe costs a path calculation
+#            and a line-of-sight check; Bot.Probe.PerTick caps them.
+#
+#    Bot.Probe.PerTick
+#        Default:     64
+#        Probes answered per world tick across all bots; the rest are answered kBusy and the module asks again next tick.
+#
+#    Bot.Actions.Transport
+#        Default:     0
+#        Reserved (layout 25, kTransport): the action number exists so a module can carry the code; this core refuses it with a reason whatever the value.
+#
 #    Bot.Taxi.Enabled
 #        Default:     1
 #        1 = a module may make a bot fly (kTaxi): from a flight master to the flight node nearest to a point on the bot's map. A bot knows every flight node

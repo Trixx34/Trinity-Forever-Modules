@@ -7,6 +7,7 @@
 #include "BotGearRules.h"
 #include "BotSpellRanks.h"
 #include "ModuleBotSnapshot.h"
+#include "ModuleBotSnapshotRules.h"
 #include "ModuleBotSupplies.h"
 #include "ModuleBotSupplyRules.h"
 #include <cmath>
@@ -2557,6 +2558,102 @@ BotActionStatus RespecAction(Player& bot, BotAction const& action, std::string& 
     return BotActionStatus::kApplied;
 }
 
+// Layout 25, kStopCast: stop the bot's cast or channel in progress (an overheal cancel, a kick no longer needed). Off unless Bot.Actions.StopCast is on.
+static BotActionStatus StopCastAction(Player& bot, std::string& reason)
+{
+    static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Actions.StopCast", false);
+    if (BotActionRules::ConfigGateResult const gate = BotActionRules::ConfigGate(ActionType::kStopCast, allowed); !gate.allowed)
+    {
+        reason = gate.reason;
+        return gate.status;
+    }
+    if (!bot.IsNonMeleeSpellCast(false))
+    {
+        reason = "the bot is not casting";
+        return BotActionStatus::kRefused;
+    }
+    bot.InterruptNonMeleeSpells(true);
+    return BotActionStatus::kApplied;
+}
+
+// Layout 25, kProbePoint: the position probe service (plan Phase 5.3). What the core knows about the point (dest_x, dest_y, dest_z): a route from the
+// bot and its length, the ground height, water, and the line of sight from the unit target_guid names. The answer goes to the bot's next snapshot
+// (BotSnapshot::probes, RecordBotProbe); the action's own result is kApplied, or kBusy when this tick's budget (Bot.Probe.PerTick) is used up. Off
+// unless Bot.Actions.Probe is on: a probe costs a path calculation and a line-of-sight check.
+static BotActionStatus ProbePointAction(Player& bot, BotAction const& action, std::string& reason)
+{
+    static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Actions.Probe", false);
+    static uint32 const perTick = uint32(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Probe.PerTick", 64)));
+    static ModuleBotSnapshotRules::TickBudget budget;
+    if (BotActionRules::ConfigGateResult const gate = BotActionRules::ConfigGate(ActionType::kProbePoint, allowed); !gate.allowed)
+    {
+        reason = gate.reason;
+        return gate.status;
+    }
+    if (!Trinity::IsValidMapCoord(action.dest_x, action.dest_y, action.dest_z))
+    {
+        reason = "not a valid map position";
+        return BotActionStatus::kRefused;
+    }
+    Map* map = bot.GetMap();
+    if (!map || !bot.IsInWorld())
+    {
+        reason = "the bot is not on a map";
+        return BotActionStatus::kRefused;
+    }
+    if (!budget.Take(GameTime::GetGameTimeMS(), perTick))
+    {
+        reason = "the probe budget of this tick (Bot.Probe.PerTick) is used up: ask again next tick";
+        return BotActionStatus::kBusy;
+    }
+
+    using namespace forever_module;
+    ProbeResult result;
+    result.probe_id = action.spell_id;
+    result.x = action.dest_x;
+    result.y = action.dest_y;
+    result.z = action.dest_z;
+    uint32 flags = 0;
+
+    // The route, as kMoveTo judges it (HasFullRouteTo): a map with no navmesh is a straight line and counts as a route.
+    PathGenerator path(&bot);
+    if (path.CalculatePath(action.dest_x, action.dest_y, action.dest_z, false))
+    {
+        PathType const type = path.GetPathType();
+        if ((type & PATHFIND_NOT_USING_PATH) != 0 || (type & (PATHFIND_NOPATH | PATHFIND_INCOMPLETE)) == 0)
+            flags |= kProbeReachable;
+        else if ((type & PATHFIND_INCOMPLETE) != 0)
+            flags |= kProbePartialRoute;
+        if ((flags & (kProbeReachable | kProbePartialRoute)) != 0)
+            result.path_yards = path.GetPathLength();
+    }
+
+    // The ground under the point (searched from a little above it, so a point on the floor is found), and water.
+    float const ground = map->GetHeight(bot.GetPhaseShift(), action.dest_x, action.dest_y, action.dest_z + 2.0f, true);
+    if (ground > INVALID_HEIGHT)
+    {
+        flags |= kProbeGroundKnown;
+        result.ground_z = ground;
+    }
+    if (map->IsInWater(bot.GetPhaseShift(), action.dest_x, action.dest_y, action.dest_z))
+        flags |= kProbeInLiquid;
+
+    // Line of sight from the named unit to the point (a pull spot hidden from a caster pack, a healer's spot that sees the tank).
+    if (action.target_guid != 0)
+    {
+        if (Unit* target = ResolveUnit(bot, action.target_guid); target && target->IsInWorld())
+        {
+            flags |= kProbeLosKnown;
+            if (target->IsWithinLOS(action.dest_x, action.dest_y, action.dest_z + 2.0f))
+                flags |= kProbeLosToTarget;
+        }
+    }
+
+    result.flags = flags;
+    RecordBotProbe(bot.GetGUID().GetCounter(), result);
+    return BotActionStatus::kApplied;
+}
+
 BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string& reason, uint32 module)
 {
     switch (action.type)
@@ -2566,6 +2663,25 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             bot.GetMotionMaster()->Clear();
             bot.GetMotionMaster()->MoveIdle();
             return BotActionStatus::kApplied;
+
+        case ActionType::kStopCast:
+            return StopCastAction(bot, reason);
+
+        case ActionType::kProbePoint:
+            return ProbePointAction(bot, action, reason);
+
+        case ActionType::kTransport:
+        {
+            // Layout 25: the number is reserved for the transport design (MOD-Forever-Bots doc/transports.md); nothing boards yet.
+            static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Actions.Transport", false);
+            if (BotActionRules::ConfigGateResult const gate = BotActionRules::ConfigGate(ActionType::kTransport, allowed); !gate.allowed)
+            {
+                reason = gate.reason;
+                return gate.status;
+            }
+            reason = "kTransport is reserved in layout 25 and not implemented in this core";
+            return BotActionStatus::kRefused;
+        }
 
         case ActionType::kMoveTo:
         {

@@ -9,6 +9,7 @@
 #include <boost/interprocess/shared_memory_object.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <new>
 
@@ -17,13 +18,19 @@ using namespace forever_module;
 // ABI pins for the structs shared with the module through shared memory. The SDK pins the same numbers (src/tier2_session.cpp); a field added or
 // reordered on one side only changes a size here or there and stops the build instead of corrupting the region at run time. If one of these fires
 // on purpose: bump kTier2LayoutVersion and kProtocolVersion in both repositories and update this list together with the SDK's.
-static_assert(sizeof(BotSnapshot) == 1416, "BotSnapshot changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
-static_assert(sizeof(NearbyUnit) == 128, "NearbyUnit changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(sizeof(BotSnapshot) == 1856, "BotSnapshot changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(sizeof(NearbyUnit) == 136, "NearbyUnit changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
 static_assert(sizeof(GroundEffect) == 24, "GroundEffect changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(sizeof(Telegraph) == 48, "Telegraph changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(sizeof(ProbeResult) == 32, "ProbeResult changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(sizeof(PartyMember) == 176, "PartyMember changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(sizeof(PartyView) == 320, "PartyView changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
 static_assert(sizeof(BotAction) == 40, "BotAction changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
-static_assert(sizeof(Tier2RegionHeader) == 56, "Tier2RegionHeader changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
-static_assert(sizeof(WorldTickSnapshotHeader) == 16, "WorldTickSnapshotHeader changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(sizeof(Tier2RegionHeader) == 304, "Tier2RegionHeader changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(sizeof(WorldTickSnapshotHeader) == 24, "WorldTickSnapshotHeader changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
 static_assert(sizeof(ActionQueueHeader) == 16, "ActionQueueHeader changed size: bump kTier2LayoutVersion and update this check (and the SDK's)");
+static_assert(offsetof(BotSnapshot, party_view_index) == 1508 && offsetof(BotSnapshot, telegraphs) == 1528 && offsetof(BotSnapshot, probes) == 1720 &&
+              offsetof(NearbyUnit, aggro_radius) == 128 && offsetof(Tier2RegionHeader, sections) == 112, "layout 25 offsets (and the SDK's)");
 
 ModuleTier2Region::ModuleTier2Region(std::string name, Bounds bounds)
     : _name(std::move(name)), _bounds(bounds)
@@ -72,6 +79,8 @@ std::shared_ptr<ModuleTier2Region> ModuleTier2Region::Create(std::string const& 
     region->_header->max_nearby_units = bounds.MaxNearbyUnits;
     region->_header->max_actions = bounds.MaxActions;
     region->_header->tick_interval = bounds.TickInterval;
+    // Layout 25: the geometry and the section table, from the bounds just set.
+    Tier2DescribeRegion(*region->_header);
     return region;
 }
 
@@ -81,7 +90,7 @@ bool ModuleTier2Region::SnapshotDue(uint64 tick) const
     return tick % interval == 0;
 }
 
-void ModuleTier2Region::PublishSnapshot(uint64 tick, std::vector<ModuleSnapshotBot> const& bots)
+void ModuleTier2Region::PublishSnapshot(uint64 tick, std::vector<ModuleSnapshotBot> const& bots, ModuleSnapshotParties const& parties)
 {
     // Write into the buffer the module is not reading, then publish it: tick first, then the index.
     // The index is module-writable. Anything other than 0 or 1 would walk off the mapping.
@@ -98,14 +107,18 @@ void ModuleTier2Region::PublishSnapshot(uint64 tick, std::vector<ModuleSnapshotB
     uint32 const maxBots = _bounds.MaxBots;
     uint32 const maxNearby = _bounds.MaxNearbyUnits;
     uint32 const count = static_cast<uint32>(std::min<std::size_t>(bots.size(), maxBots));
+    uint32 const viewCount = static_cast<uint32>(std::min<std::size_t>(parties.Views.size(), MaxPartyViews()));
+    uint32 const memberCount = static_cast<uint32>(std::min<std::size_t>(parties.Members.size(), MaxPartyMembers()));
 
     auto* snapshot = new (buffer) WorldTickSnapshotHeader();
     snapshot->tick_number = tick;
     snapshot->bot_count = count;
+    snapshot->party_view_count = viewCount;
+    snapshot->party_member_count = memberCount;
 
-    // Bot slots first, then maxNearby nearby slots per bot slot (the layout in ModuleTier2Layout.h).
-    auto* botSlots = reinterpret_cast<BotSnapshot*>(buffer + sizeof(WorldTickSnapshotHeader));
-    auto* nearbySlots = reinterpret_cast<NearbyUnit*>(botSlots + maxBots);
+    // Bot slots first, then maxNearby nearby slots per bot slot, then the party views and their member pool (the layout in ModuleTier2Layout.h).
+    auto* botSlots = reinterpret_cast<BotSnapshot*>(buffer + Tier2BotsSectionOffset());
+    auto* nearbySlots = reinterpret_cast<NearbyUnit*>(buffer + Tier2NearbySectionOffset(maxBots));
     for (uint32 i = 0; i < count; ++i)
     {
         BotSnapshot entry = bots[i].Bot;
@@ -116,6 +129,11 @@ void ModuleTier2Region::PublishSnapshot(uint64 tick, std::vector<ModuleSnapshotB
             std::memcpy(static_cast<void*>(nearbySlots + std::size_t(i) * maxNearby), bots[i].Nearby.data(),
                         nearby * sizeof(NearbyUnit));
     }
+    if (viewCount > 0)
+        std::memcpy(static_cast<void*>(buffer + Tier2PartyViewsSectionOffset(maxBots, maxNearby)), parties.Views.data(), viewCount * sizeof(PartyView));
+    if (memberCount > 0)
+        std::memcpy(static_cast<void*>(buffer + Tier2PartyMembersSectionOffset(maxBots, maxNearby)), parties.Members.data(),
+                    memberCount * sizeof(PartyMember));
 
     _header->published_snapshot_tick.store(tick, std::memory_order_release);
     _header->published_snapshot_buffer.store(next, std::memory_order_release);

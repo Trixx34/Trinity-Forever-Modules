@@ -14,6 +14,7 @@
 #include "ModuleApproval.h"
 #include "ModuleBotBackend.h"
 #include "ModuleBotOwnership.h"
+#include "ModuleBotPartyView.h"
 #include "ModuleBotSnapshot.h"
 #include "ModuleSession.h"
 #include "ModuleTier2Layout.h"
@@ -42,7 +43,7 @@ struct ModuleActionSet;
 // Wire protocol this core speaks (Tier 1 schema + Tier 2 layout). Must equal kProtocolVersion in
 // forever-module-sdk's include/forever_module/protocol_version.h. Exact match only, no compat
 // shims in v1 (doc/module-system/02-phase0-decisions.md §3, doc/module-system/11-sdk-scope.md).
-inline constexpr char const* kModuleProtocolVersion = "25"; // 25: Tier 2 layout 24 (the bot's perception: nearby victim, threat, cast, type, flags; gcd, movement, transport, banker, target auras, result ring). 24: GuildAction invite op and player_guid (SDK protocol 24). 23: GuildAction create op and name. 22: group-invite-declined event, layout 23 (capital city, guild, item level, shared quest). 21: emote and LFG-join actions, party/guild speak, guild-level and LFG-queue events
+inline constexpr char const* kModuleProtocolVersion = "26"; // 26: Tier 2 layout 25 (party view and member pool, 8 ground effects, telegraphs, position probes kProbePoint, kStopCast, kTransport reserved, aggro radius, role hint, section table). 25: Tier 2 layout 24 (the bot's perception: nearby victim, threat, cast, type, flags; gcd, movement, transport, banker, target auras, result ring). 24: GuildAction invite op and player_guid (SDK protocol 24). 23: GuildAction create op and name. 22: group-invite-declined event, layout 23 (capital city, guild, item level, shared quest). 21: emote and LFG-join actions, party/guild speak, guild-level and LFG-queue events
 
 enum class ModuleStatus : uint8
 {
@@ -252,6 +253,8 @@ class TC_GAME_API ModuleMgr
         // Per bot, the state a snapshot needs from the previous tick (layout 13's last_target_lost_reason). Pruned with
         // the nearby cache above.
         std::unordered_map<uint64, BotSnapshotWatch> _snapshotWatch;
+        // Layout 25: per group, the party view built last and what it needs from the previous tick (world thread only). Pruned by BuildPartyViews.
+        PartyViewWatchMap _partyViewWatch;
         void RecordActionResult(uint64 botGuid, forever_module::BotAction const& action, forever_module::BotActionStatus status);
         void LoadApprovalStore(); // called with _mutex held, or before any module threads exist
         std::string ApprovalStorePath() const;

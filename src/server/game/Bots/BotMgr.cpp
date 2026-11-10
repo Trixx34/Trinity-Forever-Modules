@@ -1210,6 +1210,12 @@ char const* BotMgr::SetTalentRole(Player& bot, uint8 role, uint8 spec)
     return SpendTalents(bot, role, spec);
 }
 
+uint8 BotMgr::TalentRoleOf(uint64 botCounter)
+{
+    auto const known = g_talentRoles.find(botCounter);
+    return known != g_talentRoles.end() ? known->second.first : 0;
+}
+
 void BotMgr::FinishLogin(BotInfo& bot)
 {
     bot.State = BOT_ONLINE;
@@ -1270,6 +1276,7 @@ void BotMgr::LogoutBot(BotInfo& bot, char const* reason)
     // Release the vendor-lookup cache entry so the map stays bounded to online bots.
     ClearVendorLookup(bot.Guid);
     ClearBotDamageLog(bot.Guid);
+    ClearBotProbeLog(bot.Guid);
 
     TC_LOG_INFO("server.worldserver", "BotMgr: bot {} (guid {}) logged out ({}).", bot.Name, bot.Guid, reason);
 }
