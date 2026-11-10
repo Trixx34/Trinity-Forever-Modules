@@ -33,6 +33,31 @@
 #include <unordered_map>
 #include <vector>
 
+// The handshake's protocol gate. `declared` is the module's protocol_version, `current` the core's, `oldest` the lowest protocol of the core's
+// layout base (empty = exact match only). Accepted when oldest <= declared <= current, all decimal numbers: a module built for any protocol of the
+// core's base is served by this core, a module newer than the core, or older than the base, is not. A string that is not a plain number is
+// accepted only when it equals `current`.
+inline bool ProtocolAcceptable(std::string_view declared, std::string_view current, std::string_view oldest)
+{
+    if (declared == current)
+        return true;
+    auto number = [](std::string_view text, unsigned long long& out)
+    {
+        if (text.empty() || text.size() > 9)
+            return false;
+        out = 0;
+        for (char c : text)
+        {
+            if (c < '0' || c > '9')
+                return false;
+            out = out * 10 + static_cast<unsigned long long>(c - '0');
+        }
+        return true;
+    };
+    unsigned long long d = 0, c = 0, o = 0;
+    return !oldest.empty() && number(declared, d) && number(current, c) && number(oldest, o) && o <= d && d <= c;
+}
+
 class ModuleSession
 {
     public:
@@ -58,7 +83,8 @@ class ModuleSession
             std::string Endpoint;                         // Unix domain socket path
             std::chrono::milliseconds HandshakeTimeout{5000};
             std::chrono::milliseconds HeartbeatTimeout{15000};
-            std::string ExpectedProtocolVersion;          // exact match against HandshakeRequest.protocol_version
+            std::string ExpectedProtocolVersion;          // the core's protocol; HandshakeRequest.protocol_version must equal it, or fall in the range below
+            std::string OldestProtocolVersion;            // the lowest protocol of the core's layout base (kModuleProtocolBase); empty = exact match only
             std::string ExpectedModuleName;               // exact match against HandshakeRequest.module_name; empty skips the check
             std::vector<std::string> SupportedHooks;      // requested Tier 1 hooks must all be in this list
             // When set, requested hooks and Tier 2 must also be inside this declaration. Unset means the

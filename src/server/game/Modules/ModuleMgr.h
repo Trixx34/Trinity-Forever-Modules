@@ -41,9 +41,15 @@ class ModuleTier2Region;
 struct ModuleActionSet;
 
 // Wire protocol this core speaks (Tier 1 schema + Tier 2 layout). Must equal kProtocolVersion in
-// forever-module-sdk's include/forever_module/protocol_version.h. Exact match only, no compat
-// shims in v1 (doc/module-system/02-phase0-decisions.md §3, doc/module-system/11-sdk-scope.md).
+// forever-module-sdk's include/forever_module/protocol_version.h (that is what the CI sync checks compare).
+// Layout 25 on: a module is served when its protocol is between kModuleProtocolBase and kModuleProtocolVersion (ProtocolAcceptable in
+// ModuleSession.h), i.e. a newer core of the same layout base accepts the older module; a different base is refused. The Tier 2 region
+// carries the layout base too, and the SDK reads it (Tier2Session::Attach). docs/122-layout-25-design.md in forever-ops has the rule.
 inline constexpr char const* kModuleProtocolVersion = "26"; // 26: Tier 2 layout 25 (party view and member pool, 8 ground effects, telegraphs, position probes kProbePoint, kStopCast, kTransport reserved, aggro radius, role hint, section table). 25: Tier 2 layout 24 (the bot's perception: nearby victim, threat, cast, type, flags; gcd, movement, transport, banker, target auras, result ring). 24: GuildAction invite op and player_guid (SDK protocol 24). 23: GuildAction create op and name. 22: group-invite-declined event, layout 23 (capital city, guild, item level, shared quest). 21: emote and LFG-join actions, party/guild speak, guild-level and LFG-queue events
+
+// The lowest protocol of the current layout base. Raise it to kModuleProtocolVersion on a BREAK only (a Tier 1 schema change an older module cannot
+// live with, or kTier2LayoutBase going up); an append (new fields at the end, new message fields, new enum values) leaves it alone.
+inline constexpr char const* kModuleProtocolBase = "26"; // layout base 25
 
 enum class ModuleStatus : uint8
 {
@@ -138,8 +144,8 @@ class TC_GAME_API ModuleMgr
         // any still running, then stops the supervisor.
         void Unload();
 
-        // Handshake gate: true only when a module's declared protocol_version exactly equals
-        // kModuleProtocolVersion. On mismatch, fills reason with a message naming both versions for
+        // Handshake gate: true when a module's declared protocol_version is in kModuleProtocolBase..kModuleProtocolVersion
+        // (the layout base rule; today the range is one number). On mismatch, fills reason with a message naming both versions for
         // the log (doc 04: mismatch → permanent failure, never spawned, no restart attempts).
         static bool CheckProtocolVersion(std::string const& declared, std::string& reason);
 

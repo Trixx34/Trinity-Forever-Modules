@@ -307,6 +307,7 @@ bool ModuleMgr::SpawnModule(ModuleId id)
     settings.HandshakeTimeout = std::chrono::milliseconds(_config.HandshakeTimeoutMs);
     settings.HeartbeatTimeout = std::chrono::milliseconds(_config.HeartbeatTimeoutMs);
     settings.ExpectedProtocolVersion = kModuleProtocolVersion;
+    settings.OldestProtocolVersion = kModuleProtocolBase;
     settings.ExpectedModuleName = name;
     settings.SupportedHooks = SupportedTier1Hooks;
     if (!_config.AutoApprove)
@@ -1303,11 +1304,11 @@ std::vector<ModuleSnapshot> ModuleMgr::GetSnapshots()
 
 bool ModuleMgr::CheckProtocolVersion(std::string const& declared, std::string& reason)
 {
-    if (declared == kModuleProtocolVersion)
+    if (ProtocolAcceptable(declared, kModuleProtocolVersion, kModuleProtocolBase))
         return true;
 
-    reason = "protocol_version mismatch: core speaks \"" + std::string(kModuleProtocolVersion) +
-             "\", module declared \"" + declared + "\"";
+    reason = "protocol_version mismatch: core speaks \"" + std::string(kModuleProtocolVersion) + "\" and serves modules of \"" +
+             std::string(kModuleProtocolBase) + "\" to \"" + std::string(kModuleProtocolVersion) + "\", module declared \"" + declared + "\"";
     return false;
 }
 

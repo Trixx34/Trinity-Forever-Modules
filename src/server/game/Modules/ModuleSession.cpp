@@ -460,7 +460,7 @@ void ModuleSession::Run()
         }
 
         std::string reason;
-        if (request.ProtocolVersion != _settings.ExpectedProtocolVersion)
+        if (!ProtocolAcceptable(request.ProtocolVersion, _settings.ExpectedProtocolVersion, _settings.OldestProtocolVersion))
             reason = "protocol_version mismatch: core speaks \"" + _settings.ExpectedProtocolVersion +
                      "\", module declared \"" + request.ProtocolVersion + "\"";
         else if (!_settings.ExpectedModuleName.empty() && request.ModuleName != _settings.ExpectedModuleName)

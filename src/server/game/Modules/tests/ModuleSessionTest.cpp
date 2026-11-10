@@ -301,6 +301,78 @@ void RejectsProtocolMismatch()
     session.Stop();
 }
 
+// The layout base rule: a core at protocol 27 whose base starts at 26 serves a module that declares 26 or 27, refuses 25 (a different base) and 28
+// (a newer module than the core); with no base given the check is exact.
+void ProtocolBaseRule()
+{
+    CHECK(ProtocolAcceptable("27", "27", "26"));
+    CHECK(ProtocolAcceptable("26", "27", "26"));   // an older module of the same base: accepted
+    CHECK(!ProtocolAcceptable("25", "27", "26"));  // a different base: refused
+    CHECK(!ProtocolAcceptable("28", "27", "26"));  // a module newer than the core: refused
+    CHECK(!ProtocolAcceptable("26", "27", ""));    // no base: exact match only
+    CHECK(ProtocolAcceptable("27", "27", ""));
+    CHECK(!ProtocolAcceptable("x26", "27", "26") && !ProtocolAcceptable("", "27", "26"));
+    CHECK(ProtocolAcceptable("9", "10", "9") && !ProtocolAcceptable("8", "10", "9")); // numbers, not strings ("9" > "10" as text)
+
+    std::string const path = SocketPath("base");
+    std::atomic<int> accepted{0};
+    std::atomic<int> rejected{0};
+    auto settings = TestSettings(path);
+    settings.ExpectedProtocolVersion = "27";
+    settings.OldestProtocolVersion = "26";
+    ModuleSession session(settings, 8, [&](ModuleSession::Event e, std::string const&)
+    {
+        if (e == ModuleSession::Event::Accepted)
+            ++accepted;
+        else if (e == ModuleSession::Event::Rejected)
+            ++rejected;
+    });
+    std::string error;
+    CHECK(session.Listen(error));
+    session.Start();
+    int fd = Connect(path);
+    CHECK(fd >= 0);
+    if (fd >= 0)
+    {
+        CHECK(SendEnvelope(fd, HandshakeRequest("26", "PlayerScript.OnLootItem")));
+        forever_module::Envelope in;
+        CHECK(RecvEnvelope(fd, in));
+        CHECK(in.payload_case() == forever_module::Envelope::kHandshakeResponse);
+        CHECK(in.handshake_response().accepted());
+        ::close(fd);
+    }
+    for (int i = 0; i < 200 && accepted == 0; ++i)
+        std::this_thread::sleep_for(5ms);
+    CHECK(accepted == 1);
+    session.Stop();
+
+    // A different base is refused by a fresh session (a session takes one connection).
+    std::string const path2 = SocketPath("base2");
+    settings.Endpoint = path2;
+    ModuleSession second(settings, 8, [&](ModuleSession::Event e, std::string const&)
+    {
+        if (e == ModuleSession::Event::Rejected)
+            ++rejected;
+    });
+    CHECK(second.Listen(error));
+    second.Start();
+    fd = Connect(path2);
+    CHECK(fd >= 0);
+    if (fd >= 0)
+    {
+        CHECK(SendEnvelope(fd, HandshakeRequest("25", "PlayerScript.OnLootItem")));
+        forever_module::Envelope in;
+        CHECK(RecvEnvelope(fd, in));
+        CHECK(!in.handshake_response().accepted());
+        CHECK(in.handshake_response().reason().find("protocol_version") != std::string::npos);
+        ::close(fd);
+    }
+    for (int i = 0; i < 200 && rejected == 0; ++i)
+        std::this_thread::sleep_for(5ms);
+    CHECK(rejected == 1);
+    second.Stop();
+}
+
 // An approved grant is a ceiling: a hook or Tier 2 the operator did not approve is a rejection, and the
 // handshake name must be the module that was spawned.
 void RejectsUnapprovedCapabilities()
@@ -583,6 +655,7 @@ int main()
 {
     AcceptAndActions();
     RejectsProtocolMismatch();
+    ProtocolBaseRule();
     RejectsUnapprovedCapabilities();
     TimesOutWithoutConnection();
     Tier2Handshake();
