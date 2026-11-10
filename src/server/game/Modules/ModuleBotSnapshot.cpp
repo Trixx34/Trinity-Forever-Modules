@@ -1037,6 +1037,10 @@ void FillPerception(Player& bot, Unit& unit, forever_module::NearbyUnit& near, P
         near.creature_rank = (creature->IsDungeonBoss() || creature->isWorldBoss()) ? 3 : (creature->IsElite() ? 1 : 0);
         if (creature->IsInEvadeMode())
             flags |= kNearbyEvading;
+        if (creature->GetCreatureTemplate()->flags_extra & CREATURE_FLAG_EXTRA_NO_TAUNT)
+            flags |= kNearbyTauntImmune;
+        if (unit.GetMechanicImmunityMask() & (UI64LIT(1) << MECHANIC_STUN))
+            flags |= kNearbyStunImmune;
     }
     if (unit.IsPet() || unit.IsGuardian())
         flags |= kNearbyPetOrGuardian;
@@ -1087,7 +1091,8 @@ void FillPerception(Player& bot, Unit& unit, forever_module::NearbyUnit& near, P
         {
             near.cast_spell_id = spell->GetSpellInfo()->Id;
             near.cast_remaining_ms = uint32(std::max(spell->GetTimer(), 0));
-            near.cast_interruptible = spell->IsInterruptable() && near.cast_remaining_ms > 0 ? 1 : 0;
+            bool const kickImmune = (unit.GetMechanicImmunityMask() & (UI64LIT(1) << MECHANIC_INTERRUPT)) != 0;
+            near.cast_interruptible = (spell->IsInterruptable() && near.cast_remaining_ms > 0 && !kickImmune) ? 1 : 0;
         }
     }
 
