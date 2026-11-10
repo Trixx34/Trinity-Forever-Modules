@@ -50,12 +50,16 @@ std::shared_ptr<ModuleTier2Region> ModuleTier2Region::Create(std::string const& 
 {
     using namespace boost::interprocess;
 
-    std::size_t const total = Tier2RegionBytes(bounds.MaxBots, bounds.MaxNearbyUnits, bounds.MaxActions);
+    // Layout 25: resolve the party slots once; the header carries them, so a module needs no formula.
+    bounds.MaxPartyViews = bounds.MaxPartyViews == 0 ? Tier2PartyViewSlots(bounds.MaxBots)
+                                                     : std::min<uint32>(bounds.MaxPartyViews, std::max<uint32>(bounds.MaxBots, 1));
+    uint32 const partyMembers = Tier2PartyMemberSlots(bounds.MaxBots, bounds.MaxPartyViews);
+    std::size_t const total = Tier2RegionBytes(bounds.MaxBots, bounds.MaxNearbyUnits, bounds.MaxActions, bounds.MaxPartyViews, partyMembers);
 
     std::shared_ptr<ModuleTier2Region> region(new ModuleTier2Region(name, bounds));
     region->_snapshotOffset = Tier2HeaderBytes();
-    region->_snapshotBytes = Tier2SnapshotBufferBytes(bounds.MaxBots, bounds.MaxNearbyUnits);
-    region->_actionOffset = Tier2ActionBufferOffset(bounds.MaxBots, bounds.MaxNearbyUnits, bounds.MaxActions, 0);
+    region->_snapshotBytes = Tier2SnapshotBufferBytes(bounds.MaxBots, bounds.MaxNearbyUnits, bounds.MaxPartyViews, partyMembers);
+    region->_actionOffset = Tier2ActionBufferOffset(bounds.MaxBots, bounds.MaxNearbyUnits, bounds.MaxActions, bounds.MaxPartyViews, partyMembers, 0);
     region->_actionBytes = Tier2ActionBufferBytes(bounds.MaxActions);
 
     try
@@ -79,7 +83,8 @@ std::shared_ptr<ModuleTier2Region> ModuleTier2Region::Create(std::string const& 
     region->_header->max_nearby_units = bounds.MaxNearbyUnits;
     region->_header->max_actions = bounds.MaxActions;
     region->_header->tick_interval = bounds.TickInterval;
-    // Layout 25: the geometry and the section table, from the bounds just set.
+    region->_header->max_party_views = bounds.MaxPartyViews;
+    // Layout 25: the geometry and the section table, from the bounds just set (the member pool follows the view count).
     Tier2DescribeRegion(*region->_header);
     return region;
 }
@@ -132,7 +137,7 @@ void ModuleTier2Region::PublishSnapshot(uint64 tick, std::vector<ModuleSnapshotB
     if (viewCount > 0)
         std::memcpy(static_cast<void*>(buffer + Tier2PartyViewsSectionOffset(maxBots, maxNearby)), parties.Views.data(), viewCount * sizeof(PartyView));
     if (memberCount > 0)
-        std::memcpy(static_cast<void*>(buffer + Tier2PartyMembersSectionOffset(maxBots, maxNearby)), parties.Members.data(),
+        std::memcpy(static_cast<void*>(buffer + Tier2PartyMembersSectionOffset(maxBots, maxNearby, MaxPartyViews())), parties.Members.data(),
                     memberCount * sizeof(PartyMember));
 
     _header->published_snapshot_tick.store(tick, std::memory_order_release);

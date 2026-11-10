@@ -98,6 +98,7 @@ int main()
     CHECK(offsetof(forever_module::PartyView, loose_mobs) == 112);
     CHECK(offsetof(forever_module::Tier2RegionHeader, sections) == 112);
     CHECK(forever_module::Tier2PartyViewSlots(4) == 3 && forever_module::Tier2PartyMemberSlots(4) == 8);
+    CHECK(forever_module::Tier2PartyMemberSlots(4, 2) == 8 && forever_module::Tier2PartyMemberSlots(4, 9) == 18);
 
     std::string const name = "trinity_module_test_" + std::to_string(::getpid()) + "_tier2";
 
@@ -134,8 +135,9 @@ int main()
     CHECK(header->layout_base == forever_module::kTier2LayoutBase);
     CHECK(header->max_party_views == 3 && header->max_party_members == 8);
     CHECK(header->header_bytes == forever_module::Tier2HeaderBytes());
-    CHECK(header->snapshot_bytes == forever_module::Tier2SnapshotBufferBytes(4, 2));
-    CHECK(header->action_offset == forever_module::Tier2ActionBufferOffset(4, 2, 8, 0));
+    CHECK(header->snapshot_bytes == forever_module::Tier2SnapshotBufferBytes(4, 2, 3, 8));
+    CHECK(region->MaxPartyViews() == 3 && region->MaxPartyMembers() == 8);
+    CHECK(header->action_offset == forever_module::Tier2ActionBufferOffset(4, 2, 8, 3, 8, 0));
     CHECK(header->action_bytes == forever_module::Tier2ActionBufferBytes(8));
     CHECK(header->action_header_bytes == sizeof(forever_module::ActionQueueHeader) && header->action_stride == sizeof(forever_module::BotAction));
     CHECK(header->section_count == 4);
@@ -497,6 +499,45 @@ int main()
             base + forever_module::Tier2SnapshotBufferOffset(4, 2, noPartyBuffer));
         CHECK(noPartySnap->party_view_count == 0 && noPartySnap->party_member_count == 0);
         CHECK(reinterpret_cast<forever_module::BotSnapshot const*>(noPartySnap + 1)->party_view_index == forever_module::kNoPartyView);
+    }
+
+    // Layout 25: the view count is a bound (Modules.Tier2.MaxPartyViews). 2 views for 4 bots keep the default pool of 8 members; 9 is capped at the 4
+    // bots, and the pool grows to 2 * views = 8; both numbers are in the header and in the section table, and the publish clamps to them.
+    {
+        std::string const slotsName = name + "_slots";
+        std::string slotsError;
+        ModuleTier2Region::Bounds small = bounds;
+        small.MaxPartyViews = 2;
+        auto smallRegion = ModuleTier2Region::Create(slotsName, small, slotsError);
+        CHECK(smallRegion != nullptr);
+        if (smallRegion)
+        {
+            CHECK(smallRegion->MaxPartyViews() == 2 && smallRegion->MaxPartyMembers() == 8);
+            bi::shared_memory_object slotsShm(bi::open_only, slotsName.c_str(), bi::read_only);
+            bi::mapped_region slotsMap(slotsShm, bi::read_only);
+            auto const* slotsHeader = static_cast<forever_module::Tier2RegionHeader const*>(slotsMap.get_address());
+            CHECK(slotsHeader->max_party_views == 2 && slotsHeader->max_party_members == 8);
+            CHECK(slotsHeader->sections[2].count == 2 && slotsHeader->sections[3].count == 8);
+            CHECK(slotsHeader->snapshot_bytes == forever_module::Tier2SnapshotBufferBytes(4, 2, 2, 8));
+            CHECK(slotsHeader->sections[3].offset == forever_module::Tier2PartyMembersSectionOffset(4, 2, 2));
+            CHECK(slotsHeader->action_offset == forever_module::Tier2ActionBufferOffset(4, 2, 8, 2, 8, 0));
+            ModuleSnapshotParties four;
+            four.Views.resize(4);
+            four.Views[0].group_id = 1;
+            four.Views[1].group_id = 2;
+            four.Views[2].group_id = 3;
+            four.Members.resize(3);
+            smallRegion->PublishSnapshot(1, {}, four);
+            auto const* slotsBase = static_cast<std::byte const*>(slotsMap.get_address());
+            auto const* slotsSnap = reinterpret_cast<forever_module::WorldTickSnapshotHeader const*>(
+                slotsBase + forever_module::Tier2SnapshotBufferOffset(4, 2, 2, 8, slotsHeader->published_snapshot_buffer.load()));
+            CHECK(slotsSnap->party_view_count == 2 && slotsSnap->party_member_count == 3);
+        }
+        small.MaxPartyViews = 9;
+        auto bigRegion = ModuleTier2Region::Create(slotsName + "b", small, slotsError);
+        CHECK(bigRegion != nullptr);
+        if (bigRegion)
+            CHECK(bigRegion->MaxPartyViews() == 4 && bigRegion->MaxPartyMembers() == 8);
     }
 
     // Removing the region drops the name, so a later module attach fails.

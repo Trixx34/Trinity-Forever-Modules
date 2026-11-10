@@ -234,6 +234,8 @@ class TC_GAME_API ModuleMgr
             // Each bot's nearby units are queried on one tick in this many, staggered by guid, so the world thread pays for a
             // fraction of the range queries per tick. 0 (auto) picks one tick in ceil(bots / 400): 1 up to 400 bots, 4 at 1500.
             uint32 Tier2NearbyRefreshTicks = 0;
+            // Layout 25: party view slots of a region (Modules.Tier2.MaxPartyViews). 0 = max_bots / 2 + 1; the member pool follows. Written into the region header.
+            uint32 Tier2MaxPartyViews = 0;
             bool AutoApprove = false;
         };
 

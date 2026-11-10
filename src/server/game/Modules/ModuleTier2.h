@@ -46,7 +46,7 @@ struct ModuleSnapshotBot
 };
 
 // Layout 25: the party views of a snapshot and the member pool they index into (ModuleBotPartyView.cpp builds them). Views beyond
-// Tier2PartyViewSlots(MaxBots) and members beyond Tier2PartyMemberSlots(MaxBots) are dropped at publish.
+// the region's view slots (Modules.Tier2.MaxPartyViews) and members beyond its member pool are dropped at publish.
 struct ModuleSnapshotParties
 {
     std::vector<forever_module::PartyView> Views;
@@ -62,6 +62,9 @@ class ModuleTier2Region
             uint32 MaxNearbyUnits = 0;
             uint32 MaxActions = 0;
             uint32 TickInterval = 1;
+            // Layout 25: party view slots (Modules.Tier2.MaxPartyViews). 0 = the default, Tier2PartyViewSlots(MaxBots); otherwise capped at MaxBots.
+            // The member pool follows (Tier2PartyMemberSlots(MaxBots, views)); both numbers go into the region header, where the module reads them.
+            uint32 MaxPartyViews = 0;
         };
 
         // Creates the region named `name`, replacing any leftover one with the same name.
@@ -73,9 +76,10 @@ class ModuleTier2Region
 
         std::string const& Name() const { return _name; }
         Bounds const& GetBounds() const { return _bounds; }
-        // Layout 25: the party slots of this region (a function of MaxBots).
-        uint32 MaxPartyViews() const { return forever_module::Tier2PartyViewSlots(_bounds.MaxBots); }
-        uint32 MaxPartyMembers() const { return forever_module::Tier2PartyMemberSlots(_bounds.MaxBots); }
+        // Layout 25: the party slots of this region: the bounds' view count resolved at Create, the member pool following it. Taken from the
+        // bounds, not read back from the header, which the module can write.
+        uint32 MaxPartyViews() const { return _bounds.MaxPartyViews; }
+        uint32 MaxPartyMembers() const { return forever_module::Tier2PartyMemberSlots(_bounds.MaxBots, _bounds.MaxPartyViews); }
 
         // True when a snapshot is due at this server tick, given the module's tick_interval.
         bool SnapshotDue(uint64 tick) const;

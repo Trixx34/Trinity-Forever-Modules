@@ -117,6 +117,7 @@ void ModuleMgr::LoadModules()
     _config.Tier2MaxBots = static_cast<uint32>(sConfigMgr->GetIntDefault("Modules.Tier2.MaxBots", 1500));
     _config.Tier2MaxNearbyUnits = static_cast<uint32>(sConfigMgr->GetIntDefault("Modules.Tier2.MaxNearbyUnits", 16));
     _config.Tier2MaxActions = static_cast<uint32>(sConfigMgr->GetIntDefault("Modules.Tier2.MaxActions", 3000));
+    _config.Tier2MaxPartyViews = static_cast<uint32>(std::clamp<int32>(sConfigMgr->GetIntDefault("Modules.Tier2.MaxPartyViews", 0), 0, 100000));
     _config.Tier2MaxTickInterval = static_cast<uint32>(sConfigMgr->GetIntDefault("Modules.Tier2.MaxTickInterval", 100));
     _config.Tier2NearbyRefreshTicks = static_cast<uint32>(std::clamp<int32>(sConfigMgr->GetIntDefault("Modules.Tier2.NearbyRefreshTicks", 0), 0, 16));
 
@@ -409,6 +410,7 @@ bool ModuleMgr::NegotiateTier2(ModuleId id, ModuleWire::HandshakeRequest const& 
     bounds.MaxBots = std::min(request.RequestedMaxBots, capBots);
     bounds.MaxNearbyUnits = std::min(request.RequestedMaxNearbyUnits, capNearby);
     bounds.MaxActions = std::min(request.RequestedMaxActions, capActions);
+    bounds.MaxPartyViews = _config.Tier2MaxPartyViews; // 0 = the default; the region resolves it and caps it at the bot bound
     uint32 const requestedInterval = request.RequestedTickInterval == 0 ? 1 : request.RequestedTickInterval;
     bounds.TickInterval = std::min(requestedInterval, capInterval);
 
