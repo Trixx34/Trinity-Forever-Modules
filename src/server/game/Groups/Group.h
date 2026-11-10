@@ -353,6 +353,14 @@ class TC_GAME_API Group
         void ChangeMembersGroup(ObjectGuid guid, uint8 group);
         void SwapMembersGroups(ObjectGuid firstGuid, ObjectGuid secondGuid);
         void SetTargetIcon(uint8 symbol, ObjectGuid target, ObjectGuid changedBy);
+        // The raid target icon (1..8) on the unit, 0 when it has none.
+        uint8 GetTargetIconOf(ObjectGuid target) const
+        {
+            for (uint8 i = 0; i < TARGET_ICONS_COUNT; ++i)
+                if (m_targetIcons[i] == target)
+                    return i + 1;
+            return 0;
+        }
         void SetGroupMemberFlag(ObjectGuid guid, bool apply, GroupMemberFlags flag);
         void RemoveUniqueGroupMemberFlag(GroupMemberFlags flag);
 

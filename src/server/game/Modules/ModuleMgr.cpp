@@ -1079,6 +1079,7 @@ void ModuleMgr::OnWorldTick(uint64 tick)
             }
 
             std::vector<ModuleSnapshotBot> bots;
+            static bool const everyTickInCombat = sConfigMgr->GetBoolDefault("Bot.Snapshot.EveryTickInCombat", true);
             // Auto: one refresh tick per 400 bots, so a bot's nearby list is at most that many ticks old.
             uint32 const refreshEvery = _config.Tier2NearbyRefreshTicks != 0
                                             ? _config.Tier2NearbyRefreshTicks
@@ -1090,7 +1091,8 @@ void ModuleMgr::OnWorldTick(uint64 tick)
                     continue;
 
                 // Staggered by guid: each bot refreshes on one tick in refreshEvery, so the cost is spread over the ticks.
-                bool const refresh = refreshEvery <= 1 || (tick + guid) % refreshEvery == 0;
+                // Layout 24: a bot in combat, or inside an instance, refreshes every tick (Bot.Snapshot.EveryTickInCombat); only idle open-world bots keep the stagger.
+                bool const refresh = refreshEvery <= 1 || (tick + guid) % refreshEvery == 0 || (everyTickInCombat && NeedsFreshNearby(*bot));
                 ModuleSnapshotBot entry = BuildSnapshotBot(*bot, region->GetBounds().MaxNearbyUnits, refresh,
                                                             _nearbyCache[guid], _snapshotWatch[guid], _nearbyScratch);
                 if (auto result = _actionResults.find(guid); result != _actionResults.end())
@@ -1099,6 +1101,7 @@ void ModuleMgr::OnWorldTick(uint64 tick)
                     entry.Bot.last_action_status = result->second.Status;
                     entry.Bot.last_action_spell = result->second.Spell;
                     entry.Bot.last_action_sequence = result->second.Sequence;
+                    std::copy(result->second.Ring.begin(), result->second.Ring.end(), entry.Bot.results);
                 }
                 bots.push_back(entry);
             }
@@ -1136,6 +1139,13 @@ void ModuleMgr::RecordActionResult(uint64 botGuid, forever_module::BotAction con
     result.Type = uint8(action.type);
     result.Spell = action.type == forever_module::ActionType::kCastSpell ? action.spell_id : 0;
     ++result.Sequence;
+    // Layout 24: the ring of the latest results, newest first, so several actions applied in one tick each report back.
+    for (size_t i = result.Ring.size() - 1; i > 0; --i)
+        result.Ring[i] = result.Ring[i - 1];
+    result.Ring[0].type = result.Type;
+    result.Ring[0].status = uint8(result.Status);
+    result.Ring[0].spell_id = result.Spell;
+    result.Ring[0].sequence = result.Sequence;
 }
 
 void ModuleMgr::ApplyModuleActions(ModuleId module, ModuleActionSet const& actions)

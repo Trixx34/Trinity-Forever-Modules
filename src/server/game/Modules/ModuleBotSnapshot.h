@@ -50,6 +50,9 @@ struct NearbySnapshotScratch
     std::vector<Unit*> Chosen;
 };
 
+// Layout 24: whether the bot wants a fresh nearby list on every tick: in combat, or on a dungeon or raid map.
+bool NeedsFreshNearby(Player const& bot);
+
 // Records a hit a bot took (Unit::DealDamage calls this for every hit). Only a bot with a damage log keeps it: the logs are made on the
 // bot's first snapshot, so the hits kept are the ones of the bots a module controls. amount 0 is not a hit. spellId 0 is a melee or auto attack.
 void RecordBotDamage(Unit const& victim, Unit const* attacker, uint32 spellId, uint32 amount);

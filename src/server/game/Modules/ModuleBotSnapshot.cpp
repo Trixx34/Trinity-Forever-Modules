@@ -15,6 +15,7 @@
 #include "CellImpl.h"
 #include "CreatureData.h"
 #include "Group.h"
+#include "LFG.h"
 #include "DB2Stores.h"
 #include "Item.h"
 #include "Log.h"
@@ -177,6 +178,7 @@ struct VendorSpot
     bool OtherService;                     // it also vends, repairs or auctions: a pure flight master is not a vendor
     FactionTemplateEntry const* Faction;   // the creature's faction, so a bot does not walk to a town that kills it
     ModuleBotSupplies::VendorStock Stock;  // what it sells that a bot needs (layout 15): the lowest required level of each kind
+    bool Banker = false;                   // the creature is a banker (UNIT_NPC_FLAG_BANKER, layout 24)
 };
 
 // The NPC behind a layout-6/9 position as a unit reference a module can name in an action (layout 13). It is built from the
@@ -205,7 +207,7 @@ std::unordered_map<uint32, std::vector<VendorSpot>> const& VendorsByMap()
             CreatureData const& spawn = spawnEntry.second;
             ++spawns;
             CreatureTemplate const* templ = sObjectMgr->GetCreatureTemplate(spawn.id);
-            if (!templ || (templ->npcflag & (UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR | UNIT_NPC_FLAG_AUCTIONEER | UNIT_NPC_FLAG_FLIGHTMASTER)) == 0)
+            if (!templ || (templ->npcflag & (UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR | UNIT_NPC_FLAG_AUCTIONEER | UNIT_NPC_FLAG_FLIGHTMASTER | UNIT_NPC_FLAG_BANKER)) == 0)
                 continue;
             uint32 const factionId = templ->faction;
             auto stock = stockOf.find(spawn.id);
@@ -216,8 +218,9 @@ std::unordered_map<uint32, std::vector<VendorSpot>> const& VendorsByMap()
                                              (templ->npcflag & UNIT_NPC_FLAG_REPAIR) != 0,
                                              (templ->npcflag & UNIT_NPC_FLAG_AUCTIONEER) != 0,
                                              (templ->npcflag & UNIT_NPC_FLAG_FLIGHTMASTER) != 0,
-                                             (templ->npcflag & (UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR | UNIT_NPC_FLAG_AUCTIONEER)) != 0,
-                                             sFactionTemplateStore.LookupEntry(factionId), stock->second });
+                                             (templ->npcflag & (UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR | UNIT_NPC_FLAG_AUCTIONEER | UNIT_NPC_FLAG_BANKER)) != 0,
+                                             sFactionTemplateStore.LookupEntry(factionId), stock->second,
+                                             (templ->npcflag & UNIT_NPC_FLAG_BANKER) != 0 });
         }
 
         // One scan of every creature spawn, inside the first snapshot: its cost is logged, since it is a stall of one world update.
@@ -249,6 +252,8 @@ struct VendorLookup
     VendorSpot Repairman{};
     bool FoundAuctioneer = false;   // ... and an auctioneer
     VendorSpot Auctioneer{};
+    bool FoundBanker = false;       // layout 24: ... and a banker
+    VendorSpot BankerSpot{};
     bool FoundTaxiMaster = false;   // layout 17: ... and a flight master the bot can walk to
     VendorSpot TaxiMaster{};
     bool TaxiChecked = false;       // the route to it was looked at (it is looked at once per lookup, and again when the lookup is)
@@ -698,6 +703,7 @@ void FillNearestVendor(Player& bot, BotSnapshot& entry)
             float bestVendorSq = std::numeric_limits<float>::max();
             float bestRepairSq = std::numeric_limits<float>::max();
             float bestAuctionSq = std::numeric_limits<float>::max();
+            float bestBankerSq = std::numeric_limits<float>::max();
             for (VendorSpot const& spot : onMap->second)
             {
                 if (mine && spot.Faction && mine->IsHostileTo(spot.Faction))
@@ -718,6 +724,12 @@ void FillNearestVendor(Player& bot, BotSnapshot& entry)
                     bestRepairSq = distSq;
                     last.Repairman = spot;
                     last.FoundRepair = true;
+                }
+                if (spot.Banker && distSq < bestBankerSq)
+                {
+                    bestBankerSq = distSq;
+                    last.BankerSpot = spot;
+                    last.FoundBanker = true;
                 }
                 if (spot.Auctioneer && distSq < bestAuctionSq)
                 {
@@ -754,6 +766,15 @@ void FillNearestVendor(Player& bot, BotSnapshot& entry)
         entry.auctioneer_y = last.Auctioneer.Y;
         entry.auctioneer_z = last.Auctioneer.Z;
         entry.auctioneer_valid = 1;
+    }
+
+    if (last.FoundBanker)
+    {
+        entry.banker_guid = VendorSpotRef(last.BankerSpot);
+        entry.banker_x = last.BankerSpot.X;
+        entry.banker_y = last.BankerSpot.Y;
+        entry.banker_z = last.BankerSpot.Z;
+        entry.banker_valid = 1;
     }
 
     FillSupplies(bot, entry, last);
@@ -984,6 +1005,136 @@ void FillNearbyAuras(Unit const& unit, NearbyUnit& near)
     near.aura_mask = mask;
 }
 
+// Layout 24: the bot's perception of one unit: who it fights, what it casts, what it is, and the bot's own debuffs on it. Threat, line of sight and cast
+// details are separate switches (Bot.Snapshot.Threat, Bot.Snapshot.LosFlags, Bot.Snapshot.CastInfo); threat is read only on dungeon and raid maps.
+struct PerceptionContext
+{
+    bool Instance = false;      // the bot is on a dungeon or raid map
+    bool Threat = false;
+    bool CastInfo = false;
+    bool Los = false;
+    uint32 LosBudget = 0;       // line-of-sight checks left for this bot's refresh
+    Group* BotGroup = nullptr;
+};
+
+void FillPerception(Player& bot, Unit& unit, forever_module::NearbyUnit& near, PerceptionContext& ctx)
+{
+    using namespace forever_module;
+    near.orientation = unit.GetOrientation();
+
+    if (Unit* victim = unit.GetVictim())
+    {
+        uint64 ref = 0;
+        if (EncodeUnitRef(*victim, ref))
+            near.victim_ref = ref;
+    }
+
+    uint32 flags = 0;
+    Creature* creature = unit.ToCreature();
+    if (creature)
+    {
+        near.creature_type = uint8(std::min<uint32>(creature->GetCreatureType(), 255));
+        near.creature_rank = (creature->IsDungeonBoss() || creature->isWorldBoss()) ? 3 : (creature->IsElite() ? 1 : 0);
+        if (creature->IsInEvadeMode())
+            flags |= kNearbyEvading;
+    }
+    if (unit.IsPet() || unit.IsGuardian())
+        flags |= kNearbyPetOrGuardian;
+    if (unit.IsTotem())
+        flags |= kNearbyTotem;
+    if (unit.HasUnitState(UNIT_STATE_FLEEING))
+        flags |= kNearbyFleeing;
+    constexpr uint64 ccMechanics = (UI64LIT(1) << MECHANIC_STUN) | (UI64LIT(1) << MECHANIC_FEAR) | (UI64LIT(1) << MECHANIC_POLYMORPH) | (UI64LIT(1) << MECHANIC_SLEEP) |
+                                   (UI64LIT(1) << MECHANIC_BANISH) | (UI64LIT(1) << MECHANIC_CHARM);
+    if (unit.HasAuraWithMechanic(ccMechanics))
+        flags |= kNearbyCcLocked;
+    if (unit.HasAuraWithMechanic(UI64LIT(1) << MECHANIC_SNARE))
+        flags |= kNearbySnared;
+    if (unit.HasAuraWithMechanic(UI64LIT(1) << MECHANIC_ENRAGED))
+        flags |= kNearbyEnraged;
+
+    // The bot's own harmful auras on a hostile creature (its DOTs and debuffs), and whether a dispellable magic buff sits on it.
+    if (creature)
+    {
+        uint32 own = 0;
+        for (auto const& [spellId, application] : unit.GetAppliedAuras())
+        {
+            (void)spellId;
+            Aura const* aura = application->GetBase();
+            if (!aura)
+                continue;
+            if (application->IsPositive())
+            {
+                if (aura->GetSpellInfo()->Dispel == DISPEL_MAGIC)
+                    flags |= kNearbyHasMagicBuff;
+                continue;
+            }
+            if (own < kMaxOwnDebuffs && aura->GetCasterGUID() == bot.GetGUID())
+            {
+                near.my_debuffs[own].spell_id = aura->GetId();
+                near.my_debuffs[own].remaining_ms = aura->IsPermanent() ? 0xFFFFFFFFu : uint32(std::max(aura->GetDuration(), 0));
+                ++own;
+            }
+        }
+    }
+
+    if (ctx.CastInfo)
+    {
+        Spell* spell = unit.GetCurrentSpell(CURRENT_GENERIC_SPELL);
+        if (!spell || spell->getState() == SPELL_STATE_FINISHED)
+            spell = unit.GetCurrentSpell(CURRENT_CHANNELED_SPELL);
+        if (spell && spell->getState() != SPELL_STATE_FINISHED && spell->GetSpellInfo())
+        {
+            near.cast_spell_id = spell->GetSpellInfo()->Id;
+            near.cast_remaining_ms = uint32(std::max(spell->GetTimer(), 0));
+            near.cast_interruptible = spell->IsInterruptable() && near.cast_remaining_ms > 0 ? 1 : 0;
+        }
+    }
+
+    if (ctx.BotGroup)
+        near.raid_mark = ctx.BotGroup->GetTargetIconOf(unit.GetGUID());
+
+    // Threat: who holds it, and how close the bot is to the top. Only on a dungeon or raid map, and only for an engaged creature.
+    if (ctx.Threat && creature && creature->IsAlive())
+    {
+        ThreatManager& threat = creature->GetThreatManager();
+        if (!threat.IsThreatListEmpty())
+        {
+            if (Unit* top = threat.GetCurrentVictim())
+            {
+                uint64 ref = 0;
+                if (EncodeUnitRef(*top, ref))
+                    near.threat_top_ref = ref;
+                if (top == &bot)
+                    near.bot_threat_pct = 255;
+                else
+                {
+                    float const topThreat = threat.GetThreat(top);
+                    float const mine = threat.GetThreat(&bot);
+                    near.bot_threat_pct = topThreat <= 0.0f ? 0 : uint8(std::min(254.0f, mine * 100.0f / topThreat));
+                }
+                if (ctx.BotGroup && top->IsPlayer())
+                {
+                    ObjectGuid const topGuid = top->GetGUID();
+                    if (ctx.BotGroup->IsMember(topGuid) &&
+                        ((ctx.BotGroup->GetMemberFlags(topGuid) & MEMBER_FLAG_MAINTANK) != 0 || (ctx.BotGroup->GetLfgRoles(topGuid) & lfg::PLAYER_ROLE_TANK) != 0))
+                        near.top_is_tank = 1;
+                }
+            }
+        }
+    }
+
+    // Line of sight to a hostile living creature within 40 yd, for instance bots, within a per-refresh budget.
+    if (ctx.Los && ctx.Instance && creature && creature->IsAlive() && ctx.LosBudget > 0 && near.is_hostile)
+    {
+        --ctx.LosBudget;
+        flags |= kNearbyLosKnown;
+        if (bot.IsWithinLOSInMap(&unit))
+            flags |= kNearbyInLosOfBot;
+    }
+    near.state_flags = flags;
+}
+
 // The bot's own pet (layout 13), as fact instead of what refused casts imply: pet_state 0 none, 1 alive, 2 dead.
 void FillPet(Player& bot, BotSnapshot& entry)
 {
@@ -1061,6 +1212,15 @@ uint32 ClassifyTargetLoss(Player& bot, ObjectGuid const& victim)
 }
 
 } // namespace
+
+// A bot in combat, or on a dungeon or raid map, wants a fresh nearby list every tick.
+bool NeedsFreshNearby(Player const& bot)
+{
+    if (bot.IsInCombat())
+        return true;
+    Map const* map = bot.FindMap();
+    return map && (map->IsDungeon() || map->IsRaid());
+}
 
 bool EncodeUnitRef(Unit const& unit, uint64& ref)
 {
@@ -1156,6 +1316,30 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
     FillMoneyAndBags(bot, entry);
     FillGroundEffects(bot, entry);
 
+    // Layout 24: global cooldown, movement state, transport, and the auras on the current target.
+    entry.gcd_remaining_ms = uint32(std::max<int64>(0, bot.GetSpellHistory()->GetLongestRemainingGlobalCooldown().count()));
+    uint32 movement = 0;
+    if (bot.IsInWater())
+        movement |= 1u << 0;
+    if (bot.IsFlying())
+        movement |= 1u << 1;
+    if (bot.IsFalling())
+        movement |= 1u << 2;
+    if (!bot.GetTransGUID().IsEmpty())
+    {
+        movement |= 1u << 3;
+        entry.transport_guid = bot.GetTransGUID().GetEntry(); // the transport's entry: a ship or elevator is a game object, which a unit reference cannot name
+    }
+    entry.movement_flags = movement;
+    if (Unit* target = bot.GetVictim())
+    {
+        AuraFact facts[forever_module::kMaxTargetAuras];
+        uint32 const count = CollectAuras(*target, facts, forever_module::kMaxTargetAuras);
+        entry.target_aura_count = uint8(count);
+        for (uint32 i = 0; i < count; ++i)
+            entry.target_auras[i] = { facts[i].SpellId, facts[i].RemainingMs, facts[i].Stacks };
+    }
+
     // Layout 13: why the bot lost the target it had on the previous tick. The reason is worked out once, on the tick the
     // victim goes away, and kept until the bot picks a new one, so the module reads it on the tick that carries
     // threat_target_guid == 0. A bot that still has its victim clears it.
@@ -1239,13 +1423,43 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
         ModuleBotSnapshotRules::SortNearestPrefix(units, maxNearby, closerFirst);
     };
     sortPrefix(players);
-    sortPrefix(creatures);
+    // Layout 24: creatures fighting the bot or its group come first, so sleeping mobs never crowd them out.
+    {
+        Group const* group = bot.GetGroup();
+        auto engaged = [&](Unit* creature)
+        {
+            if (!creature->IsInCombat())
+                return false;
+            Unit* victim = creature->GetVictim();
+            if (!victim)
+                return false;
+            if (victim == &bot)
+                return true;
+            Unit const* owner = victim->GetCharmerOrOwner();
+            Unit const* who = owner ? owner : victim;
+            return who == &bot || (group && who->IsPlayer() && group->IsMember(who->GetGUID()));
+        };
+        ModuleBotSnapshotRules::EngagedFirst(creatures, maxNearby, closerFirst, engaged);
+    }
     sortPrefix(corpses);
 
     // The closest few players, then living creatures, then corpses, then any players that are left if there is still room. Corpses
     // come after the living so that they never take a slot a live target needs.
     ModuleBotSnapshotRules::ChooseNearby(players, creatures, corpses, chosen, maxNearby, kNearbyPlayerSlots, closerFirst);
 
+    PerceptionContext perception;
+    {
+        static bool const threatOn = sConfigMgr->GetBoolDefault("Bot.Snapshot.Threat", true);
+        static bool const castOn = sConfigMgr->GetBoolDefault("Bot.Snapshot.CastInfo", true);
+        static bool const losOn = sConfigMgr->GetBoolDefault("Bot.Snapshot.LosFlags", false);
+        Map const* botMap = bot.FindMap();
+        perception.Instance = botMap && (botMap->IsDungeon() || botMap->IsRaid());
+        perception.Threat = threatOn && perception.Instance;
+        perception.CastInfo = castOn;
+        perception.Los = losOn;
+        perception.LosBudget = 12;
+        perception.BotGroup = bot.GetGroup();
+    }
     for (Unit* unit : chosen)
     {
         NearbyUnit near;
@@ -1263,6 +1477,7 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
         near.elite = unit->IsCreature() && unit->ToCreature()->IsElite() ? 1 : 0;
         near.casting = unit->IsNonMeleeSpellCast(false) ? 1 : 0;
         FillNearbyAuras(*unit, near); // layout 13
+        FillPerception(bot, *unit, near, perception); // layout 24
         // Layout 23: a player's best equipped item level, and whether the bot is on one of its quests. Both stay 0 for a creature.
         if (Player const* player = unit->ToPlayer())
         {

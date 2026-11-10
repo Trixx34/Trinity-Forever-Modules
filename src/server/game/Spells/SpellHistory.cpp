@@ -15,6 +15,7 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
 #include "SpellHistory.h"
 #include "CharmInfo.h"
 #include "DB2Stores.h"
@@ -1030,6 +1031,20 @@ void SpellHistory::AddGlobalCooldown(SpellInfo const* spellInfo, Duration durati
 void SpellHistory::CancelGlobalCooldown(SpellInfo const* spellInfo)
 {
     _globalCooldowns[spellInfo->StartRecoveryCategory] = TimePoint(Duration(0));
+}
+
+SpellHistory::Duration SpellHistory::GetLongestRemainingGlobalCooldown() const
+{
+    TimePoint now = time_point_cast<Duration>(GameTime::GetTime<Clock>());
+    Duration longest = Duration::zero();
+    for (auto const& [category, end] : _globalCooldowns)
+    {
+        (void)category;
+        if (end <= now)
+            continue;
+        longest = std::max(longest, duration_cast<Milliseconds>(end - now));
+    }
+    return longest;
 }
 
 SpellHistory::Duration SpellHistory::GetRemainingGlobalCooldown(SpellInfo const* spellInfo) const

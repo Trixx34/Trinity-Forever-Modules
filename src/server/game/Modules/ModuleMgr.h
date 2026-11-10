@@ -9,6 +9,7 @@
 #ifndef TRINITYCORE_MODULEMGR_H
 #define TRINITYCORE_MODULEMGR_H
 
+#include <array>
 #include "Define.h"
 #include "ModuleApproval.h"
 #include "ModuleBotBackend.h"
@@ -41,7 +42,7 @@ struct ModuleActionSet;
 // Wire protocol this core speaks (Tier 1 schema + Tier 2 layout). Must equal kProtocolVersion in
 // forever-module-sdk's include/forever_module/protocol_version.h. Exact match only, no compat
 // shims in v1 (doc/module-system/02-phase0-decisions.md §3, doc/module-system/11-sdk-scope.md).
-inline constexpr char const* kModuleProtocolVersion = "24"; // 24: GuildAction invite op and player_guid (SDK protocol 24). 23: GuildAction create op and name. 22: group-invite-declined event, layout 23 (capital city, guild, item level, shared quest). 21: emote and LFG-join actions, party/guild speak, guild-level and LFG-queue events
+inline constexpr char const* kModuleProtocolVersion = "25"; // 25: Tier 2 layout 24 (the bot's perception: nearby victim, threat, cast, type, flags; gcd, movement, transport, banker, target auras, result ring). 24: GuildAction invite op and player_guid (SDK protocol 24). 23: GuildAction create op and name. 22: group-invite-declined event, layout 23 (capital city, guild, item level, shared quest). 21: emote and LFG-join actions, party/guild speak, guild-level and LFG-queue events
 
 enum class ModuleStatus : uint8
 {
@@ -241,6 +242,8 @@ class TC_GAME_API ModuleMgr
             uint8 Type = 0;   // ActionType
             uint32 Spell = 0;
             uint32 Sequence = 0;
+            // Layout 24: the last kMaxActionResults results, newest first.
+            std::array<forever_module::ActionResult, forever_module::kMaxActionResults> Ring{};
         };
         std::unordered_map<uint64, ActionResult> _actionResults;
         // The last nearby units of each controlled bot (world thread only), reused between refreshes.

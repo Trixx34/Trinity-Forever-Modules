@@ -114,6 +114,24 @@ inline void ChooseNearby(std::vector<T> const& players, std::vector<T> const& cr
     std::sort(chosen.begin(), chosen.end(), less);
 }
 
+// Layout 24: puts the engaged units ahead of the rest, so that a pack fighting the bot's group is never crowded out of the list by sleeping mobs.
+// Each part is ordered nearest first up to `limit` units, and the engaged part comes first. `units` is rewritten in place.
+template <typename T, typename Less, typename Engaged>
+inline void EngagedFirst(std::vector<T>& units, std::size_t limit, Less less, Engaged engaged)
+{
+    auto const middle = std::stable_partition(units.begin(), units.end(), engaged);
+    auto sortPart = [&](auto first, auto last)
+    {
+        std::size_t const size = std::size_t(last - first);
+        if (size > limit)
+            std::partial_sort(first, first + limit, last, less);
+        else
+            std::sort(first, last, less);
+    };
+    sortPart(units.begin(), middle);
+    sortPart(middle, units.end());
+}
+
 // AuraEntry::remaining_ms for an aura with no duration.
 inline constexpr uint32 kInfiniteAuraMs = std::numeric_limits<uint32>::max();
 

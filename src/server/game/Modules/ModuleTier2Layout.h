@@ -24,11 +24,35 @@ namespace forever_module {
 
 // Explicit layout version, checked by the module when it attaches to the region. Lets a mismatch
 // be detected from the shared memory itself, independent of the Tier 1 handshake.
-inline constexpr std::uint32_t kTier2LayoutVersion = 23;
+inline constexpr std::uint32_t kTier2LayoutVersion = 24;
 
 // Small, fixed cap -- see doc/module-system/07-phase5-reference-module-design.md, this value is
 // still open pending real measurement from a spell-casting test module.
-inline constexpr std::size_t kMaxTrackedCooldowns = 8;
+// Layout 24: 16 slots (was 8), for rotations with many abilities.
+inline constexpr std::size_t kMaxTrackedCooldowns = 16;
+
+// Layout 24: one aura the bot itself put on a unit (a DOT, a debuff, a CC). spell_id 0 marks an unused slot. remaining_ms is 0xFFFFFFFF for an aura with no duration.
+inline constexpr std::size_t kMaxOwnDebuffs = 4;
+struct OwnDebuff {
+    std::uint32_t spell_id = 0;
+    std::uint32_t remaining_ms = 0;
+};
+
+// Layout 24: bits of NearbyUnit::state_flags.
+enum NearbyStateFlag : std::uint32_t {
+    kNearbyCcLocked = 1u << 0,        // a crowd-control aura holds it (stun, fear, sheep, root, sleep...)
+    kNearbyFleeing = 1u << 1,
+    kNearbyTauntImmune = 1u << 2,
+    kNearbyStunImmune = 1u << 3,
+    kNearbyHasMagicBuff = 1u << 4,    // a dispellable magic buff (purge, tranquilizing shot)
+    kNearbyEnraged = 1u << 5,
+    kNearbySnared = 1u << 6,
+    kNearbyEvading = 1u << 7,
+    kNearbyInLosOfBot = 1u << 8,      // only meaningful with kNearbyLosKnown
+    kNearbyLosKnown = 1u << 9,        // the core computed line of sight for this unit (instance bots, hostile units within 40 yd); else bit 8 is 0 and means unknown
+    kNearbyPetOrGuardian = 1u << 10,
+    kNearbyTotem = 1u << 11,
+};
 
 struct NearbyUnit {
     std::uint64_t guid = 0;
@@ -50,6 +74,23 @@ struct NearbyUnit {
     // is on too (shared_objective; the bot's quest log is in its snapshot). Both are 0 for a unit that is not a player.
     std::uint32_t item_level = 0;
     std::uint8_t shared_objective = 0;
+    // Layout 24: who the unit is fighting, what it casts, what kind of unit it is. All 0 when unknown or not filled (the core's Bot.Snapshot.* switches).
+    // victim_ref: the unit it is attacking (a unit reference, as guid), 0 for none. threat_top_ref: the unit at the top of its threat list (0 for none or
+    // when Bot.Snapshot.Threat is off or the bot is not in a dungeon or raid). bot_threat_pct: the bot's threat as a percentage of the top, 255 when the bot
+    // is on top (or 100% and above); top_is_tank: threat_top_ref is a member of the bot's group with a tank role.
+    std::uint64_t victim_ref = 0;
+    std::uint64_t threat_top_ref = 0;
+    std::uint32_t cast_spell_id = 0;      // the spell it is casting or channeling, 0 for none
+    std::uint32_t cast_remaining_ms = 0;
+    std::uint32_t state_flags = 0;        // NearbyStateFlag
+    float orientation = 0.0f;
+    std::uint8_t bot_threat_pct = 0;
+    std::uint8_t top_is_tank = 0;
+    std::uint8_t cast_interruptible = 0;
+    std::uint8_t creature_type = 0;       // CreatureType (1 beast, 2 dragonkin, 3 demon, 4 elemental, 5 giant, 6 undead, 7 humanoid ...), 0 for a player or unknown
+    std::uint8_t creature_rank = 0;       // 0 normal, 1 elite, 2 rare elite, 3 boss, 4 rare
+    std::uint8_t raid_mark = 0;           // the raid target icon on it, 1..8, 0 for none
+    OwnDebuff my_debuffs[kMaxOwnDebuffs] = {};
 };
 
 // What happened to a bot's action in the last action set the core applied. Reported in the next snapshot.
@@ -126,6 +167,17 @@ struct DamageHit {
     std::uint64_t source_guid = 0;
     std::uint32_t spell_id = 0;
     std::uint32_t amount = 0;
+    std::uint32_t sequence = 0;
+};
+
+// Layout 24: the result of one applied action, for the ring in BotSnapshot::results. type is the ActionType, status a BotActionStatus (as its integer value).
+inline constexpr std::size_t kMaxActionResults = 4;
+inline constexpr std::size_t kMaxTargetAuras = 8;
+struct ActionResult {
+    std::uint8_t type = 0;
+    std::uint8_t status = 0;
+    std::uint16_t reserved = 0;
+    std::uint32_t spell_id = 0;
     std::uint32_t sequence = 0;
 };
 
@@ -307,6 +359,24 @@ struct BotSnapshot {
     std::uint64_t guild_guid = 0;
     // Layout 23: the best equipped item level of the bot (CityInspect compares it with the player's; 0 unknown).
     std::uint32_t item_level = 0;
+    // Layout 24: the time left on the global cooldown the bot is under (0 when it is free), the bot's movement state, the transport it stands on,
+    // the nearest banker, the auras on the bot's current target, and a ring of the last action results.
+    // movement_flags: bit 0 swimming (in water), bit 1 flying, bit 2 falling, bit 3 on a transport. transport_guid: the entry of the transport
+    // (a ship, zeppelin or elevator, a game object) the bot is on, 0 for none.
+    std::uint32_t gcd_remaining_ms = 0;
+    std::uint32_t movement_flags = 0;
+    std::uint64_t transport_guid = 0;
+    // The nearest banker on the bot's map that it can walk to (position and valid flag, and the unit reference), like auctioneer_*.
+    std::uint8_t banker_valid = 0;
+    float banker_x = 0.0f;
+    float banker_y = 0.0f;
+    float banker_z = 0.0f;
+    std::uint64_t banker_guid = 0;
+    // The first target_aura_count entries of target_auras[]: the auras on the bot's current target (threat_target_guid's unit), when it is in the view.
+    std::uint8_t target_aura_count = 0;
+    AuraEntry target_auras[kMaxTargetAuras] = {};
+    // The results of the last actions the core applied for this bot, newest first; sequence 0 marks an unused entry. last_action_* mirrors results[0].
+    ActionResult results[kMaxActionResults] = {};
     // NearbyUnit entries for this bot live in the region's flexible nearby-units area,
     // offset-addressed using Tier2RegionHeader::max_nearby_units; Tier2Session exposes them through NearbyOf().
 };
@@ -342,6 +412,11 @@ enum class ActionType : std::uint32_t {
     kTrain = 7,  // learn every spell the trainer in interaction range teaches this bot now (M4). Refused in combat.
     kGroup = 8,  // party actions (M8). spell_id 1 invites the bot named by target_guid, 2 accepts the bot's pending invite,
                  // 3 leaves the bot's party. Refused in combat.
+                 // 40-man raid support (doc 108): spell_id 4 converts the bot's own party to a raid (leader/assistant only, idempotent
+                 // once it already is one); spell_id 5 moves the player named by target_guid into the subgroup number given in dest_x
+                 // (0-7, leader/assistant only, the group must already be a raid). No new wire field: both reuse the existing generic
+                 // spell_id/target_guid/dest_x of this one ActionType, the same way kVendor and kPetCommand already overload spell_id.
+
     kLoot = 9,   // loot the corpse named by target_guid: every item the bot may take, and the money (M7). The corpse must be
                  // dead, within 30 yards, and one the bot has the right to loot; an empty or partly looted corpse is not an error.
     kTeleport = 11, // put the bot at (map = spell_id, dest_x, dest_y, dest_z) (scenarios, doc 19). The core refuses it unless
@@ -411,9 +486,12 @@ enum class ActionType : std::uint32_t {
                          // Bot.Actions.Gossip is off (a scenario tool, like Bot.Actions.UseObject).
     kRespecTalents = 29,   // talent respec: unlearn every talent point the bot has spent, pay the core's reset cost (its gold), then spend the points again by
                          // the profile for spec_id/role (dest_x: 1 tank, 2 healer, 3 dps, 0 none; spell_id: a TalentSpec, 0 none), as SpendBotTalents does.
-                         // Refused in combat and dead, below level 10, short of gold, and unless Bot.Talents.Respec is on (default off).
-    kEmote = 30,           // SDK 0.25 (protocol 21): reserved. The bot emote is the Tier 1 EmoteAction (ActionRequest field 27); a Tier 2 action of this type is refused.
-    kLfgJoin = 31,         // SDK 0.25 (protocol 21): reserved. The dungeon finder join is the Tier 1 LfgJoinAction (ActionRequest field 28); a Tier 2 action of this type is refused.
+                         // Uses the core's talent reset cost (GetNextResetTalentsCost), so a bot short of gold is refused (kRefused, "not enough gold for the
+                         // respec"), nothing is unlearned, and nothing is paid. Refused in combat and dead, below level 10, and unless the core's
+                         // Bot.Talents.Respec is on (default off). kApplied when the reset is done; the reason is empty when the points were spent again,
+                         // else it says the spend was refused and the points stay unspent (SpendBotTalents spends them later, never a second reset).
+    kEmote = 30,           // SDK 0.25 (protocol 21): a bot emote. The Tier 1 request is ModuleClient::BotEmote (EmoteAction); this value reserves the number for core.
+    kLfgJoin = 31,         // SDK 0.25 (protocol 21): a bot joins the dungeon finder. The Tier 1 request is ModuleClient::BotLfgJoin (LfgJoinAction).
     kLastActionType = kLfgJoin, // the highest valid value; PublishActions refuses anything above it
 };
 
@@ -475,8 +553,6 @@ struct Tier2RegionHeader {
     std::atomic<std::uint64_t> published_snapshot_tick{0};
     std::atomic<std::uint8_t> published_snapshot_buffer{0}; // 0 or 1
 
-    // Sequence for the action buffers. The module stores this after the buffer contents (release).
-    // The core loads it before the copy and again after (acquire). A change means the copy raced a publish.
     std::atomic<std::uint64_t> published_action_tick{0};
     std::atomic<std::uint8_t> published_action_buffer{0}; // 0 or 1
 

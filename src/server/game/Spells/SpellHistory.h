@@ -195,6 +195,8 @@ public:
     void AddGlobalCooldown(SpellInfo const* spellInfo, Duration duration);
     void CancelGlobalCooldown(SpellInfo const* spellInfo);
     Duration GetRemainingGlobalCooldown(SpellInfo const* spellInfo) const;
+    // The longest global cooldown still running in any category (the bot snapshot reports it; 0 when none runs).
+    Duration GetLongestRemainingGlobalCooldown() const;
 
     bool IsPaused() const { return _pauseTime.has_value(); }
     void PauseCooldowns();

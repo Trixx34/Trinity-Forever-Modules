@@ -2,6 +2,7 @@
 #include "tc_catch2.h"
 
 #include <cstddef>
+#include <functional>
 #include <initializer_list>
 #include <limits>
 #include <vector>
@@ -374,4 +375,30 @@ TEST_CASE("SpellIdCache remembers a null result", "[ModuleBotSnapshotRules]")
     CHECK(cache.Get(5, nullptr, [&calls]() -> int const* { ++calls; return nullptr; }) == nullptr);
     CHECK(cache.Get(5, nullptr, [&calls]() -> int const* { ++calls; return nullptr; }) == nullptr);
     CHECK(calls == 1);
+}
+
+TEST_CASE("Engaged units come first and each part is nearest first", "[ModuleBotSnapshotRules]")
+{
+    // value = distance; units 5, 9 and 30 are engaged
+    std::vector<int> units{ 2, 5, 3, 9, 30, 1, 4 };
+    auto isEngaged = [](int v) { return v == 5 || v == 9 || v == 30; };
+    ModuleBotSnapshotRules::EngagedFirst(units, 3, std::less<int>(), isEngaged);
+    REQUIRE(units.size() == 7);
+    CHECK(units[0] == 5);
+    CHECK(units[1] == 9);
+    CHECK(units[2] == 30);
+    // the quiet part: its nearest three come first, in order
+    CHECK(units[3] == 1);
+    CHECK(units[4] == 2);
+    CHECK(units[5] == 3);
+}
+
+TEST_CASE("Engaged units beyond the limit still lead the list", "[ModuleBotSnapshotRules]")
+{
+    std::vector<int> units{ 50, 40, 1, 2, 60 };
+    auto isEngaged = [](int v) { return v >= 40; };
+    ModuleBotSnapshotRules::EngagedFirst(units, 2, std::less<int>(), isEngaged);
+    CHECK(units[0] == 40);
+    CHECK(units[1] == 50);
+    CHECK(units[2] == 60);
 }
