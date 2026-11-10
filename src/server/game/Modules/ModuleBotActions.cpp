@@ -836,7 +836,7 @@ uint32 EquipBagUpgrades(Player& bot, std::vector<int32> const& preferred)
     return equipped;
 }
 
-int32 BotGearUpgradeScore(Player& bot, ItemTemplate const& item)
+int32 BotGearUpgradeScore(Player const& bot, ItemTemplate const& item)
 {
     if (item.GetClass() != ITEM_CLASS_WEAPON && item.GetClass() != ITEM_CLASS_ARMOR)
         return 0;

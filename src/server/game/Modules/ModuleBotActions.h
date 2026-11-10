@@ -27,6 +27,6 @@ forever_module::BotActionStatus ApplyBotAction(Player& bot, forever_module::BotA
 // uses; the class-only profile), for the auction buy (ModuleActions.cpp). 0 when it is no upgrade the bot would wear: not a weapon or armour, a level or a
 // class the bot cannot use it at, armour too heavy, or an item level that does not beat the worn piece (the rule EquipBagUpgrades keeps), so an item with a
 // score above 0 is one a bot that owns it wears.
-int32 BotGearUpgradeScore(Player& bot, ItemTemplate const& item);
+int32 BotGearUpgradeScore(Player const& bot, ItemTemplate const& item);
 
 #endif // TRINITYCORE_MODULE_BOT_ACTIONS_H
