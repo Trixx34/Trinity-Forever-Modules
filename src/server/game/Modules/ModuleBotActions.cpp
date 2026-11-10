@@ -2385,12 +2385,6 @@ BotActionStatus ConsumeAction(Player& bot, BotAction const& action, std::string&
 // in PetHandler.cpp), so the pet AI reads the order the same way it reads one from a client.
 BotActionStatus PetCommandAction(Player& bot, BotAction const& action, std::string& reason)
 {
-    if (bot.IsInCombat())
-    {
-        reason = "bot is in combat";
-        return BotActionStatus::kRefused;
-    }
-
     Pet* pet = bot.GetPet();
     if (!pet || !pet->IsInWorld() || !pet->IsAlive())
     {
@@ -2401,6 +2395,16 @@ BotActionStatus PetCommandAction(Player& bot, BotAction const& action, std::stri
     if (!charm)
     {
         reason = "the bot's pet has no command state";
+        return BotActionStatus::kRefused;
+    }
+    // Attack, follow and stay are needed precisely while the bot is in combat (redirecting the pet onto a loose mob or a new
+    // threat-hold target, or calling it back before a disengage): refusing every pet command in combat left a bot's pet
+    // committed to whatever it was first sent at for the whole fight (forever-bots issue: "pet attack order is refused while
+    // the owner is in combat", 2026-11-10 report). Only the stance change stays out-of-combat only, like a player's own pet
+    // bar: it is not something the bot AI needs to change mid-fight, and the module never sends it in combat anyway.
+    if (action.spell_id == 4 && bot.IsInCombat())
+    {
+        reason = "bot is in combat";
         return BotActionStatus::kRefused;
     }
 
