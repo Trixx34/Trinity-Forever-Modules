@@ -793,11 +793,10 @@ GearResult GiveAndEquip(Player& bot, std::vector<int32> const& preferred, ItemTe
 // spell_id bit 1: a tank (one-hand weapon and shield).
 // Gear the bot was given or looted: an item in the bags that the bot can use and that has a higher item level than what is worn where it
 // would go is worn instead (the displaced item goes to the bags). The quality cap of the item pool does not apply: a rare that a player
-// trades to a bot is worn. The comparison is the gear score, the same rule GiveAndEquip keeps a worn item by, so the two passes cannot
-// undo each other.
-uint32 EquipBagUpgrades(Player& bot)
+// trades to a bot is worn. The comparison is the gear score with the wanted stats the caller passes (the profile AutoGearAction picked by),
+// the same rule the main pass keeps a worn item by, so the two passes cannot undo each other.
+uint32 EquipBagUpgrades(Player& bot, std::vector<int32> const& preferred)
 {
-    std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile::StrStam);
     std::vector<Item*> candidates;
     bot.ForEachItem(ItemSearchLocation::Inventory, [&candidates](Item* item)
     {
@@ -896,7 +895,7 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
     }
     if (bagOnly)
     {
-        EquipBagUpgrades(bot);
+        EquipBagUpgrades(bot, PreferredStats(bot.GetClass(), GearProfile(ModuleBotSupplyRules::AutoGearProfileOf(flags))));
         return BotActionStatus::kApplied;
     }
 
@@ -1045,7 +1044,7 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
     }
 
     // Gear the bot already carries (a trade, a loot) is worn when it beats what is worn.
-    equipped += EquipBagUpgrades(bot);
+    equipped += EquipBagUpgrades(bot, preferred);
 
     // What the bot wears now, from the loaded item template store, each against the quality cap.
     uint32 const maxQuality = uint32(std::max(1, sConfigMgr->GetIntDefault("Bot.AutoGear.MaxQuality", 2)));
