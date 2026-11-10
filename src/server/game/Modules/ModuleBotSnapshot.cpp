@@ -1454,8 +1454,8 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
 
     PerceptionContext perception;
     {
-        static bool const threatOn = sConfigMgr->GetBoolDefault("Bot.Snapshot.Threat", true);
-        static bool const castOn = sConfigMgr->GetBoolDefault("Bot.Snapshot.CastInfo", true);
+        static bool const threatOn = sConfigMgr->GetBoolDefault("Bot.Snapshot.Threat", false);
+        static bool const castOn = sConfigMgr->GetBoolDefault("Bot.Snapshot.CastInfo", false);
         static bool const losOn = sConfigMgr->GetBoolDefault("Bot.Snapshot.LosFlags", false);
         Map const* botMap = bot.FindMap();
         perception.Instance = botMap && (botMap->IsDungeon() || botMap->IsRaid());

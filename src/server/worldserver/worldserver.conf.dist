@@ -1848,12 +1848,12 @@ Bot.Limit.MaxDbQueue = 5000
 #            asks for it (forever-bots: AvoidGroundEffects).
 #
 #    Bot.Snapshot.Threat
-#        Default:     1
+#        Default:     0
 #        1 = on a dungeon or raid map, each nearby creature in a bot's snapshot carries the threat table's top holder, how close the bot is to it, and whether that
 #            holder is a group tank (layout 24). One threat lookup per engaged creature. Never read in the open world.
 #
 #    Bot.Snapshot.CastInfo
-#        Default:     1
+#        Default:     0
 #        1 = each nearby unit that is casting carries the spell, the time left and whether it can be interrupted (layout 24).
 #
 #    Bot.Snapshot.LosFlags
@@ -1861,7 +1861,7 @@ Bot.Limit.MaxDbQueue = 5000
 #        1 = on a dungeon or raid map, hostile creatures near a bot carry whether the bot has a line of sight to them (layout 24), at most 12 checks per bot per refresh.
 #
 #    Bot.Snapshot.EveryTickInCombat
-#        Default:     1
+#        Default:     0
 #        1 = a bot in combat or on a dungeon or raid map refreshes its nearby list on every snapshot tick instead of one tick in N (layout 24). Idle open-world bots keep the stagger.
 #
 #    Bot.Taxi.Enabled

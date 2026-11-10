@@ -1079,7 +1079,7 @@ void ModuleMgr::OnWorldTick(uint64 tick)
             }
 
             std::vector<ModuleSnapshotBot> bots;
-            static bool const everyTickInCombat = sConfigMgr->GetBoolDefault("Bot.Snapshot.EveryTickInCombat", true);
+            static bool const everyTickInCombat = sConfigMgr->GetBoolDefault("Bot.Snapshot.EveryTickInCombat", false);
             // Auto: one refresh tick per 400 bots, so a bot's nearby list is at most that many ticks old.
             uint32 const refreshEvery = _config.Tier2NearbyRefreshTicks != 0
                                             ? _config.Tier2NearbyRefreshTicks
