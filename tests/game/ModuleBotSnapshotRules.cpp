@@ -420,7 +420,7 @@ TEST_CASE("Party role bits come from the LFG roles, the main tank flag, then the
     CHECK(PartyRoleBits(0x00, 0, 3) == 4);
     CHECK(PartyRoleBits(0x08, 0, 1) == 4);                 // ... but never overrides what the group says
     CHECK(PartyRoleBits(0x00, 0, 9) == 0);                 // an unknown talent role is no role
-    CHECK(ModuleBotSnapshotRules::IsPartyTank(1) && ModuleBotSnapshotRules::IsPartyTank(3) && !ModuleBotSnapshotRules::IsPartyTank(6));
+    CHECK((ModuleBotSnapshotRules::IsPartyTank(1) && ModuleBotSnapshotRules::IsPartyTank(3) && !ModuleBotSnapshotRules::IsPartyTank(6)));
 }
 
 TEST_CASE("Party debuffs list the dispellable ones first, then the longest remaining", "[ModuleBotSnapshotRules]")
