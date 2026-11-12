@@ -2002,6 +2002,14 @@ Bot.Limit.MaxDbQueue = 5000
 #        Default:     2
 #        The highest item quality auto gear hands out: 1 common, 2 uncommon (green), 3 rare (blue).
 #
+#    Bot.Gear.RoleWeights
+#        Default:     0
+#        1 = every gear decision (the auto gear item pool, bag upgrades, the worn-item rule, the gain of a purchase and the sell rule of Bot.Vendor.SellGear) scores an item
+#            with one role table: the bot's class and gear profile give an archetype (tank, melee strength, melee agility, hunter, caster, healer) that weighs each stat
+#            (a primary the role wants 3, tank stamina, defence, dodge and parry 2, attack power, spell power, crit, hit and haste 1 where the role uses them, a primary it
+#            does not use -3). The numbers are those of the Forever bots module (src/gear_score.cpp). Bots may swap worn gear at the next auto gear pass.
+#            0 = the class stat list as before (the sell rule adds attack power, spell power and hit for the role).
+#
 #    Bot.Bags.Item
 #        Default:     3914 (Journeyman's Backpack)
 #        The bag a bot gets in each empty bag slot when it is created, and when it logs in with empty slots (never an alt, a player's own
@@ -2123,6 +2131,7 @@ Bot.Actions.Grant = 0
 Bot.Actions.AutoGear = 1
 Bot.AutoGear.MaxQuality = 2
 Bot.Actions.EquipUpgrades = 1
+Bot.Gear.RoleWeights = 0
 
 Bot.Bags.Item = 3914
 Bot.Bags.Count = 4
@@ -2191,6 +2200,14 @@ Bot.Hunter.PetEntries = "3425,2069,3243,2071,2237"
 #        after about half an hour and, being Rebellious after the taming, runs away for good ten minutes later. 0 = vanilla rules.
 
 Bot.Pet.NoUpkeep = 1
+
+#    Pet.WildAbilities.Enabled
+#        Default:     1
+#        A freshly tamed hunter pet starts with Growl and the abilities its beast had in the wild (table classic_pet_tame_spell), each at
+#        the highest rank its level allows. A beast that is not in the table, or whose wild abilities are all above the pet's level, gets
+#        its family's combat abilities instead. 0 = family abilities only.
+
+Pet.WildAbilities.Enabled = 1
 
 #    Bot.Dump.Abilities
 #        Default:     0

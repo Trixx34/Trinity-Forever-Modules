@@ -3,7 +3,8 @@
  * the bot wears, so a vendor may take it. The same rule as JudgeBagGear in MOD-Forever-Bots src/gear_score.*. No Player or Item types: the caller turns the
  * items into GearItem (with the score it computed), so the decisions are tested without a world. Items are judged by their numbers, never by item id.
  *
- * Also the per-role stat weights: what a role adds on top of the class stat list of GearScore (attack power, spell power, haste...), see RoleStatExtra.
+ * Also RoleStatExtra: what the sell rule adds on top of the class stat list while Bot.Gear.RoleWeights is 0. With it on, every gear decision (equip and sell)
+ * scores with the one role table of ModuleBotGearWeights.h and RoleStatExtra is not used.
  */
 
 #ifndef TRINITYCORE_MODULE_BOT_GEAR_SELL_RULES_H
@@ -25,7 +26,8 @@ constexpr uint32 kGearProfileMask = 7;
 inline uint32 GearProfileOf(uint32 services) { return (services >> kGearProfileShift) & kGearProfileMask; }
 
 // A stat the class list does not name, but the role wants: one point per point of attack power for a physical profile (0 and 1 strength/agility, 5 and 6 are
-// tanks and take none), spell power for a caster or healer profile (2, 3, 4), and hit for both damage kinds. Added to the class score only by the sell rule.
+// tanks and take none), spell power for a caster or healer profile (2, 3, 4), and hit for both damage kinds. Added to the class score only by the sell rule, and
+// only while Bot.Gear.RoleWeights is 0 (legacy: the role table replaces it).
 inline int32 RoleStatExtra(uint32 profile, int32 stat, int32 amount)
 {
     bool const physical = profile == 0 || profile == 1;

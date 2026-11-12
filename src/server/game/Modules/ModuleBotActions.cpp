@@ -1,6 +1,7 @@
 #include "ModuleBotActions.h"
 #include "ModuleBotActionRules.h"
 #include "ModuleBotGearSellRules.h"
+#include "ModuleBotGearWeights.h"
 #include "ModuleGroupRules.h"
 #include "ModuleMgr.h"
 #include "BotProfessions.h"
@@ -710,8 +711,33 @@ std::vector<int32> PreferredStats(uint8 classId, GearProfile profile)
     }
 }
 
-// Higher is better: the item level first, then how well its stats suit the class (a stat the class does not use counts against it).
-int32 GearScore(std::vector<int32> const& preferred, ItemTemplate const& item)
+// What the gear score needs besides the item: the class, the gear profile and the wanted stat list of that profile. Built once per pass by MakeGearCtx.
+// RoleWeights = Bot.Gear.RoleWeights: score with the role table (ModuleBotGearWeights::RoleWeight) instead of the class stat list.
+struct GearScoreCtx
+{
+    uint32 ClassId = 0;
+    uint32 Profile = 0;
+    std::vector<int32> Preferred;
+    bool RoleWeights = false;
+    bool LegacySellExtra = false;   // RoleWeights off, sell rule: the old RoleStatExtra on top of the class list (set by SellOutclassedGear only)
+};
+
+// clampProfile: the sell rule has always read a profile above 6 as 6 for the stat list; the equip passes pass it on unchanged (7 = the class default list).
+GearScoreCtx MakeGearCtx(uint8 classId, uint32 profile, bool clampProfile = false)
+{
+    static bool const roleWeights = sConfigMgr->GetBoolDefault("Bot.Gear.RoleWeights", false);
+    GearScoreCtx ctx;
+    ctx.ClassId = classId;
+    ctx.Profile = profile;
+    ctx.Preferred = PreferredStats(classId, GearProfile(clampProfile ? std::min<uint32>(profile, uint32(GearProfile::AgiStamDef)) : profile));
+    ctx.RoleWeights = roleWeights;
+    return ctx;
+}
+
+// Higher is better: the item level first, then how well its stats suit the class (a stat the class does not use counts against it). The one score every
+// gear decision uses (pool pass, bag upgrades, worn-item rule, purchase gain, sell rule). With Bot.Gear.RoleWeights on the stats are weighed by the role
+// table of ModuleBotGearWeights.h; off, by the class stat list (and the sell rule adds RoleStatExtra), exactly as before the option existed.
+int32 GearScore(GearScoreCtx const& ctx, ItemTemplate const& item)
 {
     int32 stats = 0;
     for (uint32 i = 0; i < MAX_ITEM_PROTO_STATS; ++i)
@@ -720,17 +746,24 @@ int32 GearScore(std::vector<int32> const& preferred, ItemTemplate const& item)
         int32 const amount = item.GetStatPercentEditor(i);
         if (amount <= 0)
             continue;
-        bool const wanted = std::find(preferred.begin(), preferred.end(), stat) != preferred.end();
+        if (ctx.RoleWeights)
+        {
+            stats += ModuleBotGearWeights::RoleWeight(ctx.ClassId, ctx.Profile, stat) * amount;
+            continue;
+        }
+        bool const wanted = std::find(ctx.Preferred.begin(), ctx.Preferred.end(), stat) != ctx.Preferred.end();
         bool const primary = stat == ITEM_MOD_STRENGTH || stat == ITEM_MOD_AGILITY || stat == ITEM_MOD_INTELLECT || stat == ITEM_MOD_SPIRIT;
         stats += ModuleBotSupplyRules::StatScore(wanted, primary, amount);
+        if (ctx.LegacySellExtra)
+            stats += ModuleBotGearSell::RoleStatExtra(ctx.Profile, stat, amount);
     }
     return ModuleBotSupplyRules::CombineGearScore(int32(item.GetBaseItemLevel()), stats);
 }
 
 // Whether the worn item stays against this candidate: the gear score rule plus the armour weight preference (BotGearRules::KeepWorn).
-bool KeepWornItem(Player const& bot, std::vector<int32> const& preferred, ItemTemplate const& worn, ItemTemplate const& candidate)
+bool KeepWornItem(Player const& bot, GearScoreCtx const& ctx, ItemTemplate const& worn, ItemTemplate const& candidate)
 {
-    return BotGearRules::KeepWorn(GearScore(preferred, worn), GearScore(preferred, candidate), ArmorLighterThanMax(bot, worn), ArmorLighterThanMax(bot, candidate));
+    return BotGearRules::KeepWorn(GearScore(ctx, worn), GearScore(ctx, candidate), ArmorLighterThanMax(bot, worn), ArmorLighterThanMax(bot, candidate));
 }
 
 struct GearPick
@@ -762,11 +795,11 @@ char const* GearResultName(GearResult result)
 
 // Creates the item in the bags and moves it into `slot`, unless the slot already holds an item of at least this gear score (worn armour
 // lighter than the class maximum is replaced by a maximum-subclass item whatever the scores).
-GearResult GiveAndEquip(Player& bot, std::vector<int32> const& preferred, ItemTemplate const& item, uint8 slot, uint32& equipError)
+GearResult GiveAndEquip(Player& bot, GearScoreCtx const& ctx, ItemTemplate const& item, uint8 slot, uint32& equipError)
 {
     equipError = 0;
     Item* current = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-    if (current && KeepWornItem(bot, preferred, *current->GetTemplate(), item))
+    if (current && KeepWornItem(bot, ctx, *current->GetTemplate(), item))
         return GearResult::KeptBetter;
 
     // A unique-equipped item already worn in the other slot of a pair (rings, trinkets) is not worn twice: skipped, not an error.
@@ -801,7 +834,7 @@ GearResult GiveAndEquip(Player& bot, std::vector<int32> const& preferred, ItemTe
 // would go is worn instead (the displaced item goes to the bags). The quality cap of the item pool does not apply: a rare that a player
 // trades to a bot is worn. The comparison is the gear score with the wanted stats the caller passes (the profile AutoGearAction picked by),
 // the same rule the main pass keeps a worn item by, so the two passes cannot undo each other.
-uint32 EquipBagUpgrades(Player& bot, std::vector<int32> const& preferred)
+uint32 EquipBagUpgrades(Player& bot, GearScoreCtx const& ctx)
 {
     std::vector<Item*> candidates;
     bot.ForEachItem(ItemSearchLocation::Inventory, [&candidates](Item* item)
@@ -813,9 +846,9 @@ uint32 EquipBagUpgrades(Player& bot, std::vector<int32> const& preferred)
         return ItemSearchCallbackResult::Continue;
     });
     // the best gear score first
-    std::stable_sort(candidates.begin(), candidates.end(), [&preferred](Item const* a, Item const* b)
+    std::stable_sort(candidates.begin(), candidates.end(), [&ctx](Item const* a, Item const* b)
     {
-        return GearScore(preferred, *a->GetTemplate()) > GearScore(preferred, *b->GetTemplate());
+        return GearScore(ctx, *a->GetTemplate()) > GearScore(ctx, *b->GetTemplate());
     });
 
     uint32 equipped = 0;
@@ -829,7 +862,7 @@ uint32 EquipBagUpgrades(Player& bot, std::vector<int32> const& preferred)
             continue;
         uint8 const slot = uint8(destination & 255);
         Item* worn = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-        if (worn && KeepWornItem(bot, preferred, *worn->GetTemplate(), *proto))
+        if (worn && KeepWornItem(bot, ctx, *worn->GetTemplate(), *proto))
             continue;
         bot.SwapItem(item->GetPos(), destination);
         if (bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot) == item)
@@ -842,20 +875,7 @@ uint32 EquipBagUpgrades(Player& bot, std::vector<int32> const& preferred)
     return equipped;
 }
 
-// GearScore plus what the role wants beyond the class stat list (ModuleBotGearSell::RoleStatExtra). Used by the sell rule only: the equip passes keep GearScore.
-int32 GearScoreRole(std::vector<int32> const& preferred, uint32 profile, ItemTemplate const& item)
-{
-    int32 score = GearScore(preferred, item);
-    for (uint32 i = 0; i < MAX_ITEM_PROTO_STATS; ++i)
-    {
-        int32 const amount = item.GetStatPercentEditor(i);
-        if (amount > 0)
-            score += ModuleBotGearSell::RoleStatExtra(profile, item.GetStatModifierBonusStat(i), amount);
-    }
-    return score;
-}
-
-ModuleBotGearSell::GearItem GearItemOf(Player const& bot, std::vector<int32> const& preferred, uint32 profile, ItemTemplate const& proto)
+ModuleBotGearSell::GearItem GearItemOf(Player const& bot, GearScoreCtx const& ctx, ItemTemplate const& proto)
 {
     ModuleBotGearSell::GearItem out;
     out.ItemLevel = proto.GetBaseItemLevel();
@@ -868,7 +888,7 @@ ModuleBotGearSell::GearItem GearItemOf(Player const& bot, std::vector<int32> con
     out.QuestItem = proto.GetClass() == ITEM_CLASS_QUEST || proto.GetBonding() == BIND_QUEST || proto.GetStartQuest() != 0;
     out.SetItem = proto.GetItemSet() != 0;
     out.Usable = bot.CanUseItem(&proto) == EQUIP_ERR_OK && !ArmorTooHeavy(bot, proto);
-    out.Score = GearScoreRole(preferred, profile, proto);
+    out.Score = GearScore(ctx, proto);
     return out;
 }
 
@@ -877,7 +897,8 @@ ModuleBotGearSell::GearItem GearItemOf(Player const& bot, std::vector<int32> con
 // Returns how many stacks were sold; each is logged as vendor_sell_gear.
 uint32 SellOutclassedGear(Player& bot, uint32 profile)
 {
-    std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile(std::min<uint32>(profile, uint32(GearProfile::AgiStamDef))));
+    GearScoreCtx ctx = MakeGearCtx(bot.GetClass(), profile, true);
+    ctx.LegacySellExtra = !ctx.RoleWeights;   // off: the sell rule scores as before (class list plus RoleStatExtra)
     struct Sale { Item* Bag; std::string Reason; };
     std::vector<Sale> sales;
     bot.ForEachItem(ItemSearchLocation::Inventory, [&](Item* item)
@@ -885,7 +906,7 @@ uint32 SellOutclassedGear(Player& bot, uint32 profile)
         ItemTemplate const* proto = item->GetTemplate();
         if (!proto || proto->GetSellPrice() == 0)
             return ItemSearchCallbackResult::Continue;
-        ModuleBotGearSell::GearItem const bag = GearItemOf(bot, preferred, profile, *proto);
+        ModuleBotGearSell::GearItem const bag = GearItemOf(bot, ctx, *proto);
         if (bag.InventoryType == 0)
             return ItemSearchCallbackResult::Continue;
         InventoryType const type = proto->GetInventoryType();
@@ -895,7 +916,7 @@ uint32 SellOutclassedGear(Player& bot, uint32 profile)
         size_t wornCount = 0;
         for (size_t i = 0; i < slots; ++i)
             if (Item* wornItem = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, uint8(first + i)))
-                worn[wornCount++] = GearItemOf(bot, preferred, profile, *wornItem->GetTemplate());
+                worn[wornCount++] = GearItemOf(bot, ctx, *wornItem->GetTemplate());
         ModuleBotGearSell::Verdict const verdict = ModuleBotGearSell::JudgeBagGear(bot.GetLevel(), bag, worn, wornCount, slots);
         if (verdict != ModuleBotGearSell::Verdict::Sell)
             return ItemSearchCallbackResult::Continue;
@@ -932,18 +953,18 @@ int32 BotGearUpgradeScore(Player const& bot, ItemTemplate const& item)
         return 0;
 
     // Where the item goes: one slot, or the weaker of the two for rings and trinkets (an empty one first).
-    std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile::StrStam);
+    GearScoreCtx const ctx = MakeGearCtx(bot.GetClass(), uint32(GearProfile::StrStam));
     Item* worn = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, first);
     if ((type == INVTYPE_FINGER || type == INVTYPE_TRINKET) && worn)
     {
         Item* second = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, uint8(first + 1));
-        if (!second || GearScore(preferred, *second->GetTemplate()) < GearScore(preferred, *worn->GetTemplate()))
+        if (!second || GearScore(ctx, *second->GetTemplate()) < GearScore(ctx, *worn->GetTemplate()))
             worn = second;
     }
-    if (worn && KeepWornItem(bot, preferred, *worn->GetTemplate(), item))
+    if (worn && KeepWornItem(bot, ctx, *worn->GetTemplate(), item))
         return 0;
 
-    int32 const gain = GearScore(preferred, item) - (worn ? GearScore(preferred, *worn->GetTemplate()) : 0);
+    int32 const gain = GearScore(ctx, item) - (worn ? GearScore(ctx, *worn->GetTemplate()) : 0);
     return ModuleBotSupplyRules::PositiveGain(gain);
 }
 
@@ -976,7 +997,7 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
     }
     if (bagOnly)
     {
-        EquipBagUpgrades(bot, PreferredStats(bot.GetClass(), GearProfile(ModuleBotSupplyRules::AutoGearProfileOf(flags))));
+        EquipBagUpgrades(bot, MakeGearCtx(bot.GetClass(), ModuleBotSupplyRules::AutoGearProfileOf(flags)));
         return BotActionStatus::kApplied;
     }
 
@@ -988,7 +1009,7 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
     bot.InterruptNonMeleeSpells(true);
 
     bool const tank = ModuleBotSupplyRules::AutoGearIsTank(flags);
-    std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile(ModuleBotSupplyRules::AutoGearProfileOf(flags)));
+    GearScoreCtx const ctx = MakeGearCtx(bot.GetClass(), ModuleBotSupplyRules::AutoGearProfileOf(flags));
     std::map<uint8, std::vector<BotGearRules::SlotCandidate>> bySlot;   // armour and ranged, by equipment slot (the first slot of a ring or trinket pair)
     GearPick twoHand, shield, holdable;
     std::vector<std::pair<int32, ItemTemplate const*>> oneHand;   // main-hand weapons (one-hand, main hand)
@@ -1008,7 +1029,7 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
             ++cannotUse;
             continue;
         }
-        int32 const score = GearScore(preferred, *item);
+        int32 const score = GearScore(ctx, *item);
         switch (item->GetInventoryType())
         {
             case INVTYPE_WEAPON:
@@ -1069,7 +1090,7 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
         }
         ++tried;
         uint32 equipError = 0;
-        GearResult const result = GiveAndEquip(bot, preferred, *pick.Item, slot, equipError);
+        GearResult const result = GiveAndEquip(bot, ctx, *pick.Item, slot, equipError);
         equipped += result == GearResult::Equipped;
         keptBetter += result == GearResult::KeptBetter;
         failed += result == GearResult::NoBagSpace || result == GearResult::CannotEquip;   // SkippedUnique is neither a failure nor logged as one
@@ -1125,7 +1146,7 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
     }
 
     // Gear the bot already carries (a trade, a loot) is worn when it beats what is worn.
-    equipped += EquipBagUpgrades(bot, preferred);
+    equipped += EquipBagUpgrades(bot, ctx);
 
     // What the bot wears now, from the loaded item template store, each against the quality cap.
     uint32 const maxQuality = uint32(std::max(1, sConfigMgr->GetIntDefault("Bot.AutoGear.MaxQuality", 2)));
