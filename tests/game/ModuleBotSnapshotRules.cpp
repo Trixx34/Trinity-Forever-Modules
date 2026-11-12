@@ -483,6 +483,31 @@ TEST_CASE("Telegraph kind follows the spell's shape", "[ModuleBotSnapshotRules]"
     CHECK(TelegraphKind(false, false, false, true) == 0);    // a single-target cast
 }
 
+TEST_CASE("A trap game object is a ground effect only when armed", "[ModuleBotSnapshotRules]")
+{
+    using ModuleBotSnapshotRules::TrapReported;
+    CHECK(TrapReported(true, 19628, true, true));
+    CHECK(!TrapReported(false, 19628, true, true));   // not a trap type
+    CHECK(!TrapReported(true, 0, true, true));        // a trap with no spell
+    CHECK(!TrapReported(true, 19628, false, true));   // waiting to respawn
+    CHECK(!TrapReported(true, 19628, true, false));   // triggered or spent
+}
+
+TEST_CASE("A trap's radius is half the template field, else the spell's", "[ModuleBotSnapshotRules]")
+{
+    using ModuleBotSnapshotRules::TrapRadius;
+    CHECK(TrapRadius(10, 3.0f) == 5.0f);    // Jeklik's bomb: field 10, radius 5
+    CHECK(TrapRadius(5, 0.0f) == 2.5f);     // Lava Bomb
+    CHECK(TrapRadius(0, 3.5f) == 3.5f);     // no field: the spell's radius
+    CHECK(TrapRadius(0, 0.0f) == 0.0f);     // neither: not known
+}
+
+TEST_CASE("Trap ground effects share the eight slots with the others", "[ModuleBotSnapshotRules]")
+{
+    CHECK(ModuleBotSnapshotRules::CapCount(11, 8) == 8);
+    CHECK(ModuleBotSnapshotRules::CapCount(3, 8) == 3);
+}
+
 TEST_CASE("Telegraphs are ordered soonest to land first, the larger area on a tie", "[ModuleBotSnapshotRules]")
 {
     using Key = ModuleBotSnapshotRules::TelegraphOrderKey;

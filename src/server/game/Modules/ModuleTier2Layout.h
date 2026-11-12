@@ -132,7 +132,7 @@ enum class BotActionStatus : std::uint8_t {
 
 // Layout 21: one harmful-looking thing on the ground near a bot: a dynamic object (a spell's persistent area, such as Flamestrike or Blizzard) or an area trigger. The
 // core lists the ones within kGroundEffectRangeYards of the bot, the one the bot stands in or nearest to first, up to kMaxGroundEffects. radius is the effect's radius in
-// yards (0: not known). kind: 1 dynamic object, 2 area trigger. hostile is 1 when the effect's caster is hostile to the bot (a creature's spell, not a party member's).
+// yards (0: not known). kind: 1 dynamic object, 2 area trigger, 3 trap game object (spell_id is the trap's spell; Bot.Snapshot.GroundEffects.GameObjects). hostile is 1 when the effect's caster is hostile to the bot (a creature's spell, not a party member's).
 // spell_id 0 marks an unused slot. Only filled when Bot.Snapshot.GroundEffects is on in the core. Layout 25: 8 slots (was 4).
 inline constexpr std::size_t kMaxGroundEffects = 8;
 inline constexpr float kGroundEffectRangeYards = 30.0f;
