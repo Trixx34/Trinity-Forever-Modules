@@ -3138,7 +3138,7 @@ static BotActionStatus ApplyBotActionImpl(Player& bot, BotAction const& action, 
             }
 
             uint32 const services = action.spell_id;
-            static bool const sellGearAllowed = sConfigMgr->GetBoolDefault("Bot.Vendor.SellGear", false);
+            static bool const sellGearAllowed = sConfigMgr->GetBoolDefault("Bot.Vendor.SellGear", true);
             if ((services & kServiceSellGearBit) && !sellGearAllowed)
             {
                 reason = "Bot.Vendor.SellGear is off";

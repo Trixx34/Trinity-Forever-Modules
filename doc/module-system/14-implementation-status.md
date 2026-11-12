@@ -71,7 +71,7 @@ the code is the reference and the difference is listed.
 
 ## Protocol 27 (SDK 0.28): todo-core2 additions, all uncompiled until Jenkins builds them
 
-- `kVendor` bit 2048 (`Bot.Vendor.SellGear`, default 0): sells bag gear the worn gear outclasses. Pure rule `ModuleBotGearSellRules.h` (tests in `tests/game/ModuleBotGearSellRules.cpp`), core function `SellOutclassedGear`.
+- `kVendor` bit 2048 (`Bot.Vendor.SellGear`, default 1): sells bag gear the worn gear outclasses. Pure rule `ModuleBotGearSellRules.h` (tests in `tests/game/ModuleBotGearSellRules.cpp`), core function `SellOutclassedGear`.
   Green or lower, usable, required level reached, not quest or set, every slot of the type worn by the same inventory type with an item level at least as high and a score 30 higher
   (the score is `GearScore` plus `RoleStatExtra`: attack power, spell power and hit by the profile in bits 12-14 of `spell_id`), never heavier body armour; never by item id.
   Logs `vendor_sell_gear bot item reason`. The equip passes keep plain `GearScore`; moving them to the role weights is a separate decision (it changes what every bot wears).
