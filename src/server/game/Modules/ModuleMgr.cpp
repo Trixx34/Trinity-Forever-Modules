@@ -1149,7 +1149,7 @@ void ModuleMgr::OnWorldTick(uint64 tick)
     }
 }
 
-void ModuleMgr::RecordActionResult(uint64 botGuid, forever_module::BotAction const& action, forever_module::BotActionStatus status)
+void ModuleMgr::RecordActionResult(uint64 botGuid, forever_module::BotAction const& action, forever_module::BotActionStatus status, uint16 reasonCode)
 {
     ActionResult& result = _actionResults[botGuid];
     result.Status = status;
@@ -1161,6 +1161,7 @@ void ModuleMgr::RecordActionResult(uint64 botGuid, forever_module::BotAction con
         result.Ring[i] = result.Ring[i - 1];
     result.Ring[0].type = result.Type;
     result.Ring[0].status = uint8(result.Status);
+    result.Ring[0].reason = reasonCode;
     result.Ring[0].spell_id = result.Spell;
     result.Ring[0].sequence = result.Sequence;
 }
@@ -1191,8 +1192,9 @@ void ModuleMgr::ApplyModuleActions(ModuleId module, ModuleActionSet const& actio
         }
 
         std::string reason;
-        forever_module::BotActionStatus const status = ApplyBotAction(*bot, action, reason, module);
-        RecordActionResult(action.bot_guid, action, status);
+        uint16 reasonCode = 0;
+        forever_module::BotActionStatus const status = ApplyBotAction(*bot, action, reason, module, &reasonCode);
+        RecordActionResult(action.bot_guid, action, status, reasonCode);
         if (status != forever_module::BotActionStatus::kApplied)
         {
             TC_LOG_DEBUG("modules", "module {}: action on bot {} refused ({}): {}.", module, action.bot_guid, int(status), reason);

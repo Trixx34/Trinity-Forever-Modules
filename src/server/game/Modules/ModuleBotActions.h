@@ -20,8 +20,10 @@
 class ItemTemplate;
 class Player;
 
-// Applies the action and returns what happened. Anything but kApplied comes with the reason in `reason` (for the log).
-forever_module::BotActionStatus ApplyBotAction(Player& bot, forever_module::BotAction const& action, std::string& reason, uint32 module = 0);
+// Applies the action and returns what happened. Anything but kApplied comes with the reason in `reason` (for the log). `reasonOut`, when given, receives
+// the ActionReason code of a refusal the handler classifies (kQuest accept: ActionResult::reason), else 0.
+forever_module::BotActionStatus ApplyBotAction(Player& bot, forever_module::BotAction const& action, std::string& reason, uint32 module = 0,
+                                                   uint16* reasonOut = nullptr);
 
 // How much better `item` is for the bot than what it wears where the item goes, by the AutoGear score (item level first, then the stats the bot's class
 // uses; the class-only profile), for the auction buy (ModuleActions.cpp). 0 when it is no upgrade the bot would wear: not a weapon or armour, a level or a

@@ -200,6 +200,51 @@ inline bool TransportJoinInRange(float distanceToLeader, float maxYards)
 {
     return distanceToLeader <= maxYards;
 }
+
+// ---- why a quest accept was refused (ActionResult::reason) ----
+
+// The checks of Player::CanTakeQuest, each true when it is satisfied, in the order the core makes them. QuestTakeRefusal names the first that fails.
+struct QuestTakeChecks
+{
+    bool NotDisabled = true;
+    bool NotRewarded = true;        // SatisfyQuestStatus: the quest is not rewarded already...
+    bool NotInLog = true;           // ... and not in the log
+    bool ExclusiveGroup = true;
+    bool ClassOk = true;
+    bool RaceOk = true;
+    bool MinLevelOk = true;
+    bool MaxLevelOk = true;
+    bool SkillOk = true;
+    bool ReputationOk = true;
+    bool DependentQuestsOk = true;  // previous quests and breadcrumbs
+    bool TimedOk = true;
+    bool PeriodOk = true;           // day, week, month and season
+    bool ConditionsOk = true;
+    bool ExpansionOk = true;
+};
+
+inline forever_module::ActionReason QuestTakeRefusal(QuestTakeChecks const& c)
+{
+    using forever_module::ActionReason;
+    if (!c.NotDisabled) return ActionReason::kOther;
+    if (!c.NotRewarded) return ActionReason::kAlreadyDone;
+    if (!c.NotInLog) return ActionReason::kAlreadyOnQuest;
+    if (!c.ExclusiveGroup) return ActionReason::kPrerequisite;
+    if (!c.ClassOk || !c.RaceOk) return ActionReason::kWrongClassOrRace;
+    if (!c.MinLevelOk) return ActionReason::kLevelTooLow;
+    if (!c.MaxLevelOk) return ActionReason::kLevelTooHigh;
+    if (!c.SkillOk || !c.ReputationOk) return ActionReason::kSkillOrReputation;
+    if (!c.DependentQuestsOk) return ActionReason::kPrerequisite;
+    if (!c.PeriodOk) return ActionReason::kAlreadyDone;
+    if (!c.TimedOk || !c.ConditionsOk || !c.ExpansionOk) return ActionReason::kOther;
+    return ActionReason::kNone;
+}
+
+// CanAddQuest failed: the quest log is full, else the source item did not fit in the bags.
+inline forever_module::ActionReason QuestAddRefusal(bool logHasRoom)
+{
+    return logHasRoom ? forever_module::ActionReason::kBagsFull : forever_module::ActionReason::kLogFull;
+}
 } // namespace BotActionRules
 
 #endif

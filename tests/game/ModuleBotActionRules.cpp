@@ -263,3 +263,45 @@ TEST_CASE("kTransport: the orders, the board offset, the leave rule and the join
     CHECK(TransportJoinInRange(100.0f, 100.0f));
     CHECK_FALSE(TransportJoinInRange(100.5f, 100.0f));
 }
+
+TEST_CASE("A refused quest accept names the first check of CanTakeQuest that fails", "[ModuleBotActionRules]")
+{
+    using forever_module::ActionReason;
+    QuestTakeChecks checks;
+    CHECK(QuestTakeRefusal(checks) == ActionReason::kNone);
+
+    { QuestTakeChecks c; c.MinLevelOk = false; CHECK(QuestTakeRefusal(c) == ActionReason::kLevelTooLow); }
+    { QuestTakeChecks c; c.MaxLevelOk = false; CHECK(QuestTakeRefusal(c) == ActionReason::kLevelTooHigh); }
+    { QuestTakeChecks c; c.ClassOk = false; CHECK(QuestTakeRefusal(c) == ActionReason::kWrongClassOrRace); }
+    { QuestTakeChecks c; c.RaceOk = false; CHECK(QuestTakeRefusal(c) == ActionReason::kWrongClassOrRace); }
+    { QuestTakeChecks c; c.DependentQuestsOk = false; CHECK(QuestTakeRefusal(c) == ActionReason::kPrerequisite); }
+    { QuestTakeChecks c; c.ExclusiveGroup = false; CHECK(QuestTakeRefusal(c) == ActionReason::kPrerequisite); }
+    { QuestTakeChecks c; c.NotRewarded = false; CHECK(QuestTakeRefusal(c) == ActionReason::kAlreadyDone); }
+    { QuestTakeChecks c; c.PeriodOk = false; CHECK(QuestTakeRefusal(c) == ActionReason::kAlreadyDone); }
+    { QuestTakeChecks c; c.NotInLog = false; CHECK(QuestTakeRefusal(c) == ActionReason::kAlreadyOnQuest); }
+    { QuestTakeChecks c; c.SkillOk = false; CHECK(QuestTakeRefusal(c) == ActionReason::kSkillOrReputation); }
+    { QuestTakeChecks c; c.ConditionsOk = false; CHECK(QuestTakeRefusal(c) == ActionReason::kOther); }
+    { QuestTakeChecks c; c.NotDisabled = false; CHECK(QuestTakeRefusal(c) == ActionReason::kOther); }
+
+    // several failures: the order of CanTakeQuest decides (status before class before level before prerequisites)
+    QuestTakeChecks many;
+    many.MinLevelOk = false;
+    many.DependentQuestsOk = false;
+    many.ClassOk = false;
+    CHECK(QuestTakeRefusal(many) == ActionReason::kWrongClassOrRace);
+    many.ClassOk = true;
+    CHECK(QuestTakeRefusal(many) == ActionReason::kLevelTooLow);
+    many.NotRewarded = false;
+    CHECK(QuestTakeRefusal(many) == ActionReason::kAlreadyDone);
+
+    CHECK(QuestAddRefusal(false) == ActionReason::kLogFull);
+    CHECK(QuestAddRefusal(true) == ActionReason::kBagsFull);
+}
+
+TEST_CASE("The action result's reason fits the reserved 16 bits and starts at none", "[ModuleBotActionRules]")
+{
+    forever_module::ActionResult result;
+    CHECK(result.reason == 0);
+    CHECK(sizeof(result) == 12);
+    CHECK(static_cast<uint32>(forever_module::ActionReason::kNone) == 0);
+}

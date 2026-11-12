@@ -263,7 +263,7 @@ class TC_GAME_API ModuleMgr
         std::unordered_map<uint64, BotSnapshotWatch> _snapshotWatch;
         // Layout 25: per group, the party view built last and what it needs from the previous tick (world thread only). Pruned by BuildPartyViews.
         PartyViewWatchMap _partyViewWatch;
-        void RecordActionResult(uint64 botGuid, forever_module::BotAction const& action, forever_module::BotActionStatus status);
+        void RecordActionResult(uint64 botGuid, forever_module::BotAction const& action, forever_module::BotActionStatus status, uint16 reasonCode = 0);
         void LoadApprovalStore(); // called with _mutex held, or before any module threads exist
         std::string ApprovalStorePath() const;
         // Starts one attempt: listen, spawn the process, start the session. Callers must not hold _mutex.

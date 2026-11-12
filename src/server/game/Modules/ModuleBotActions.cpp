@@ -27,6 +27,7 @@
 #include "Creature.h"
 #include "CreatureAI.h"
 #include "DB2Structure.h"
+#include "DisableMgr.h"
 #include "GossipDef.h"
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
@@ -1204,7 +1205,7 @@ uint32 PickQuestReward(Player& bot, Quest const& quest)
 // kQuest: spell_id = (operation << 24) | quest id. 1 accepts the quest from a giver in range, 2 hands it in at an ender in range
 // (picking the reward), 3 abandons it, 4 completes it with its reward and no objectives, anywhere (what the GM command
 // `.quest reward` does; the planner sends it for class quests).
-BotActionStatus QuestAction(Player& bot, uint32 code, std::string& reason)
+BotActionStatus QuestAction(Player& bot, uint32 code, std::string& reason, uint16& reasonCode)
 {
     uint32 const operation = code >> 24;
     uint32 const questId = code & 0xFFFFFF;
@@ -1258,6 +1259,7 @@ BotActionStatus QuestAction(Player& bot, uint32 code, std::string& reason)
     Creature* npc = NearestQuestNpc(bot, questId, operation == 2);
     if (!npc)
     {
+        reasonCode = uint16(forever_module::ActionReason::kNoGiver);
         reason = operation == 1 ? "no giver of the quest within interaction range" : "no ender of the quest within interaction range";
         return BotActionStatus::kRefused;
     }
@@ -1266,11 +1268,31 @@ BotActionStatus QuestAction(Player& bot, uint32 code, std::string& reason)
     {
         if (!bot.CanTakeQuest(quest, false))
         {
+            // The same checks in CanTakeQuest's order, so the module learns which one failed (ActionResult::reason).
+            BotActionRules::QuestTakeChecks checks;
+            checks.NotDisabled = !DisableMgr::IsDisabledFor(DISABLE_TYPE_QUEST, questId, &bot);
+            checks.NotRewarded = bot.GetQuestStatus(questId) != QUEST_STATUS_REWARDED;
+            checks.NotInLog = bot.GetQuestStatus(questId) == QUEST_STATUS_REWARDED || bot.GetQuestStatus(questId) == QUEST_STATUS_NONE;
+            checks.ExclusiveGroup = bot.SatisfyQuestExclusiveGroup(quest, false);
+            checks.ClassOk = bot.SatisfyQuestClass(quest, false);
+            checks.RaceOk = bot.SatisfyQuestRace(quest, false);
+            checks.MinLevelOk = bot.SatisfyQuestMinLevel(quest, false);
+            checks.MaxLevelOk = bot.SatisfyQuestMaxLevel(quest, false);
+            checks.SkillOk = bot.SatisfyQuestSkill(quest, false);
+            checks.ReputationOk = bot.SatisfyQuestReputation(quest, false);
+            checks.DependentQuestsOk = bot.SatisfyQuestDependentQuests(quest, false);
+            checks.TimedOk = bot.SatisfyQuestTimed(quest, false);
+            checks.PeriodOk = bot.SatisfyQuestDay(quest, false) && bot.SatisfyQuestWeek(quest, false) && bot.SatisfyQuestMonth(quest, false) &&
+                bot.SatisfyQuestSeasonal(quest, false);
+            checks.ConditionsOk = bot.SatisfyQuestConditions(quest, false);
+            checks.ExpansionOk = bot.SatisfyQuestExpansion(quest, false);
+            reasonCode = uint16(BotActionRules::QuestTakeRefusal(checks));
             reason = "bot cannot take the quest";
             return BotActionStatus::kRefused;
         }
         if (!bot.CanAddQuest(quest, false))
         {
+            reasonCode = uint16(BotActionRules::QuestAddRefusal(bot.SatisfyQuestLog(false)));
             reason = "bot cannot add the quest (log or bags full)";
             return BotActionStatus::kRefused;
         }
@@ -1286,6 +1308,7 @@ BotActionStatus QuestAction(Player& bot, uint32 code, std::string& reason)
     uint32 const reward = PickQuestReward(bot, *quest);
     if (!bot.CanRewardQuest(quest, LootItemType::Item, reward, false))
     {
+        reasonCode = uint16(forever_module::ActionReason::kBagsFull);
         reason = "bot cannot receive the reward (bags full)";
         return BotActionStatus::kRefused;
     }
@@ -2964,7 +2987,18 @@ BotActionStatus TransportAction(Player& bot, BotAction const& action, std::strin
     return BoardTransportAt(bot, leaderTransport->GetTransportGUID(), leader->GetMapId(), leader->GetTransOffset(), reason);
 }
 
-BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string& reason, uint32 module)
+static BotActionStatus ApplyBotActionImpl(Player& bot, BotAction const& action, std::string& reason, uint32 module, uint16& reasonCode);
+
+BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string& reason, uint32 module, uint16* reasonOut)
+{
+    uint16 reasonCode = 0; // ActionResult::reason, set by the handlers that classify their refusals
+    BotActionStatus const status = ApplyBotActionImpl(bot, action, reason, module, reasonCode);
+    if (reasonOut)
+        *reasonOut = reasonCode;
+    return status;
+}
+
+static BotActionStatus ApplyBotActionImpl(Player& bot, BotAction const& action, std::string& reason, uint32 module, uint16& reasonCode)
 {
     switch (action.type)
     {
@@ -3205,7 +3239,7 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             return ReclaimCorpseAction(bot, reason);
 
         case ActionType::kQuest:
-            return QuestAction(bot, action.spell_id, reason);
+            return QuestAction(bot, action.spell_id, reason, reasonCode);
 
         case ActionType::kTeleport:
             return TeleportAction(bot, action, reason);
