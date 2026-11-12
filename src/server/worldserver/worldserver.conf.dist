@@ -2007,7 +2007,14 @@ Bot.Limit.MaxDbQueue = 5000
 #        Default:     0
 #        1 = a module may summon the bots of a group to a group member (kSummon), resurrect a dead bot and bring it there (kRevive), and
 #            mount or dismount a bot (kMount). The bots module's summon, revive, mount and dismount chat orders use them. A summon is refused
-#            while the bot or the speaker fights, or when an instance is involved on another map; a revive is refused on a hardcore realm.
+#            while the bot or the speaker fights, or when the speaker is in an instance (see Bot.Summon.EnterInstance); a revive is refused on a hardcore realm.
+#
+#    Bot.Summon.EnterInstance
+#        Default:     0
+#        1 = a summon (and the move of a revive) to a speaker inside a dungeon or raid instance puts the bot into that very instance, when the bot is in the
+#            speaker's group and the instance lets it in (player cap, encounter in progress, owning group): the bot of a dungeon group that stayed outside
+#            joins it. Never a battleground or arena. The bot is put on the speaker's own spot when a spiral point beside it is not in sight. 0 = the summon
+#            stays one way: a bot in a dungeon may join a speaker in the open world, a speaker in an instance is refused.
 #
 #    Bot.Chat.Orders.ReviveSickness
 #        Default:     1
@@ -2106,6 +2113,7 @@ Bot.Alt.MaxPerAccount = 4
 
 Bot.Chat.Orders.Enabled = 0
 Bot.Chat.Orders.ReviveSickness = 1
+Bot.Summon.EnterInstance = 0
 
 Bot.Trade.Enabled = 0
 Bot.Trade.Scope = 1

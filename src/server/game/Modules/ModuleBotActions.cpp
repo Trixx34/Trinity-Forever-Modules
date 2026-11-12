@@ -1873,15 +1873,32 @@ BotActionStatus MoveToSpeaker(Player& bot, Player& speaker, uint32 index, std::s
         return BotActionStatus::kRefused;
     }
     bool const sameMap = bot.GetMapId() == speaker.GetMapId() && bot.GetInstanceId() == speaker.GetInstanceId();
+    bool enterInstance = false; // the speaker is in a dungeon or raid instance the bot is not in: the bot is put into that very instance
     if (!sameMap)
     {
-        Map const* speakerMap = speaker.GetMap();
-        // One way: a bot inside a dungeon may join a speaker in the open world. The core cannot put a bot into the
-        // speaker's own instance (instance targeting is a todo), so a speaker inside an instance is refused.
+        Map* speakerMap = speaker.GetMap();
+        // One way by default: a bot inside a dungeon may join a speaker in the open world, but a speaker inside an instance is refused. With
+        // Bot.Summon.EnterInstance on, a bot of the speaker's group is put into the speaker's own instance (a dungeon or raid, never a battleground).
         if (speakerMap && speakerMap->Instanceable())
         {
-            reason = "the speaker is in an instance";
-            return BotActionStatus::kRefused;
+            static bool const allowEnter = sConfigMgr->GetBoolDefault("Bot.Summon.EnterInstance", false);
+            if (!allowEnter)
+            {
+                reason = "the speaker is in an instance";
+                return BotActionStatus::kRefused;
+            }
+            if (speakerMap->IsBattlegroundOrArena())
+            {
+                reason = "the speaker is in a battleground";
+                return BotActionStatus::kRefused;
+            }
+            // The checks the arrival would make (HandleMoveWorldportAck), done first: a refusal there sends the bot to its homebind.
+            if (TransferAbortParams const denied = speakerMap->CannotEnter(&bot))
+            {
+                reason = "the speaker's instance does not let the bot in (reason " + std::to_string(uint32(denied.Reason)) + ")";
+                return BotActionStatus::kRefused;
+            }
+            enterInstance = true;
         }
     }
     else if (bot.GetExactDist2d(&speaker) < 5.0f)
@@ -1892,14 +1909,33 @@ BotActionStatus MoveToSpeaker(Player& bot, Player& speaker, uint32 index, std::s
 
     float const angle = float(index) * 2.4f;
     float const radius = 2.5f + 0.9f * float(index);
-    float const x = speaker.GetPositionX() + std::cos(angle) * radius;
-    float const y = speaker.GetPositionY() + std::sin(angle) * radius;
+    float x = speaker.GetPositionX() + std::cos(angle) * radius;
+    float y = speaker.GetPositionY() + std::sin(angle) * radius;
     float z = speaker.GetPositionZ();
     if (sameMap)
     {
         float const ground = speaker.GetMap()->GetHeight(speaker.GetPhaseShift(), x, y, z + 2.0f);
         if (ground > INVALID_HEIGHT)
             z = ground;
+    }
+    if (enterInstance)
+    {
+        // Inside a dungeon a spiral point may be in a wall: if the speaker cannot see it, the bot is put on the speaker's own spot.
+        if (!speaker.IsWithinLOS(x, y, z + 1.5f))
+        {
+            x = speaker.GetPositionX();
+            y = speaker.GetPositionY();
+            z = speaker.GetPositionZ();
+        }
+        TeleportLocation destination;
+        destination.Location = WorldLocation(speaker.GetMapId(), x, y, z, speaker.GetOrientation());
+        destination.InstanceId = speaker.GetInstanceId();
+        if (!bot.TeleportTo(destination))
+        {
+            reason = "the teleport into the speaker's instance was refused";
+            return BotActionStatus::kRefused;
+        }
+        return BotActionStatus::kApplied;
     }
     if (!bot.TeleportTo(speaker.GetMapId(), x, y, z, speaker.GetOrientation()))
     {
