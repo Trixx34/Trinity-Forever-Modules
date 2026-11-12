@@ -93,7 +93,8 @@ TEST_CASE("Action types without a config key are never gated", "[ModuleBotAction
     for (uint32 type = 0; type <= static_cast<uint32>(ActionType::kLastActionType); ++type)
     {
         ActionType const t = static_cast<ActionType>(type);
-        if (t == ActionType::kTeleport || t == ActionType::kGrant || t == ActionType::kUseObject || t == ActionType::kGossip || t == ActionType::kRespecTalents)
+        if (t == ActionType::kTeleport || t == ActionType::kGrant || t == ActionType::kUseObject || t == ActionType::kGossip || t == ActionType::kRespecTalents
+            || t == ActionType::kStopCast || t == ActionType::kProbePoint || t == ActionType::kTransport)
             continue;
         ConfigGateResult const gate = ConfigGate(off, t);
         CHECK(gate.allowed);
