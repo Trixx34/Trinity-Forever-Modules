@@ -1,5 +1,6 @@
 #include "ModuleBotActions.h"
 #include "ModuleBotActionRules.h"
+#include "ModuleBotGearSellRules.h"
 #include "ModuleGroupRules.h"
 #include "ModuleMgr.h"
 #include "BotProfessions.h"
@@ -176,6 +177,7 @@ constexpr uint32 kServiceBuyManaPotionBit = 128;   // ... mana potions (Bot.Supp
 constexpr uint32 kServiceBuyBandageBit = 256;      // ... bandages (Bot.Supplies.BandageTarget)
 constexpr uint32 kServiceBuyReagentBit = 512;      // ... the reagent the core noted a cast was missing (Bot.Supplies.ReagentTarget)
 constexpr uint32 kServiceSellJunkBit = 1024;       // SDK 0.16: also sell white junk (trade goods, spare bags, miscellaneous items) with the grey items
+constexpr uint32 kServiceSellGearBit = ModuleBotGearSell::kServiceSellGearBit; // SDK 0.26: sell outclassed bag gear (Bot.Vendor.SellGear); bits 12-14 the gear profile
 constexpr uint32 kServiceBuyMask = kServiceBuyAmmoBit | kServiceBuyFoodBit | kServiceBuyDrinkBit | kServiceBuyHealthPotionBit |
     kServiceBuyManaPotionBit | kServiceBuyBandageBit | kServiceBuyReagentBit;
 constexpr float kMaxSupplyTarget = 2000.0f; // a sanity bound on the counts a module asks for
@@ -837,6 +839,81 @@ uint32 EquipBagUpgrades(Player& bot, std::vector<int32> const& preferred)
         }
     }
     return equipped;
+}
+
+// GearScore plus what the role wants beyond the class stat list (ModuleBotGearSell::RoleStatExtra). Used by the sell rule only: the equip passes keep GearScore.
+int32 GearScoreRole(std::vector<int32> const& preferred, uint32 profile, ItemTemplate const& item)
+{
+    int32 score = GearScore(preferred, item);
+    for (uint32 i = 0; i < MAX_ITEM_PROTO_STATS; ++i)
+    {
+        int32 const amount = item.GetStatPercentEditor(i);
+        if (amount > 0)
+            score += ModuleBotGearSell::RoleStatExtra(profile, item.GetStatModifierBonusStat(i), amount);
+    }
+    return score;
+}
+
+ModuleBotGearSell::GearItem GearItemOf(Player const& bot, std::vector<int32> const& preferred, uint32 profile, ItemTemplate const& proto)
+{
+    ModuleBotGearSell::GearItem out;
+    out.ItemLevel = proto.GetBaseItemLevel();
+    out.Quality = uint32(proto.GetQuality());
+    out.RequiredLevel = proto.GetBaseRequiredLevel() > 0 ? uint32(proto.GetBaseRequiredLevel()) : 0;
+    bool const equipment = (proto.GetClass() == ITEM_CLASS_WEAPON || proto.GetClass() == ITEM_CLASS_ARMOR) && proto.GetInventoryType() != INVTYPE_BODY &&
+        EquipSlotFor(proto.GetInventoryType()) != NULL_SLOT;
+    out.InventoryType = equipment ? uint32(proto.GetInventoryType()) : 0;
+    out.ArmorSubclass = proto.GetClass() == ITEM_CLASS_ARMOR && BotGearRules::IsBodyArmorSlot(proto.GetInventoryType()) ? proto.GetSubClass() : 0;
+    out.QuestItem = proto.GetClass() == ITEM_CLASS_QUEST || proto.GetBonding() == BIND_QUEST || proto.GetStartQuest() != 0;
+    out.SetItem = proto.GetItemSet() != 0;
+    out.Usable = bot.CanUseItem(&proto) == EQUIP_ERR_OK && !ArmorTooHeavy(bot, proto);
+    out.Score = GearScoreRole(preferred, profile, proto);
+    return out;
+}
+
+// kVendor bit 2048: sells the gear in the bags that what the bot wears outclasses (ModuleBotGearSell::JudgeBagGear: green or lower, usable, not a quest or set
+// item, every slot of the type worn by an item of the same type with a higher item level and a higher score). By the numbers of the items, never by item id.
+// Returns how many stacks were sold; each is logged as vendor_sell_gear.
+uint32 SellOutclassedGear(Player& bot, uint32 profile)
+{
+    std::vector<int32> const preferred = PreferredStats(bot.GetClass(), GearProfile(std::min<uint32>(profile, uint32(GearProfile::AgiStamDef))));
+    struct Sale { Item* Bag; std::string Reason; };
+    std::vector<Sale> sales;
+    bot.ForEachItem(ItemSearchLocation::Inventory, [&](Item* item)
+    {
+        ItemTemplate const* proto = item->GetTemplate();
+        if (!proto || proto->GetSellPrice() == 0)
+            return ItemSearchCallbackResult::Continue;
+        ModuleBotGearSell::GearItem const bag = GearItemOf(bot, preferred, profile, *proto);
+        if (bag.InventoryType == 0)
+            return ItemSearchCallbackResult::Continue;
+        InventoryType const type = proto->GetInventoryType();
+        uint8 const first = EquipSlotFor(type);
+        size_t const slots = (type == INVTYPE_FINGER || type == INVTYPE_TRINKET || type == INVTYPE_WEAPON) ? 2 : 1;
+        ModuleBotGearSell::GearItem worn[2];
+        size_t wornCount = 0;
+        for (size_t i = 0; i < slots; ++i)
+            if (Item* wornItem = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, uint8(first + i)))
+                worn[wornCount++] = GearItemOf(bot, preferred, profile, *wornItem->GetTemplate());
+        ModuleBotGearSell::Verdict const verdict = ModuleBotGearSell::JudgeBagGear(bot.GetLevel(), bag, worn, wornCount, slots);
+        if (verdict != ModuleBotGearSell::Verdict::Sell)
+            return ItemSearchCallbackResult::Continue;
+        sales.push_back({ item, std::string(ModuleBotGearSell::VerdictName(verdict)) + " ilvl=" + std::to_string(bag.ItemLevel) + " score=" +
+            std::to_string(bag.Score) + " worn_score=" + std::to_string(worn[0].Score) });
+        return ItemSearchCallbackResult::Continue;
+    });
+
+    uint32 sold = 0;
+    for (Sale const& sale : sales)
+    {
+        uint32 const entry = sale.Bag->GetEntry();
+        if (!bot.SellItemToVendor(sale.Bag, sale.Bag->GetCount())) // no value means it was sold
+        {
+            ++sold;
+            TC_LOG_INFO("server.worldserver", "BotMgr: vendor_sell_gear bot={} item={} reason={}", bot.GetName(), entry, sale.Reason);
+        }
+    }
+    return sold;
 }
 
 int32 BotGearUpgradeScore(Player const& bot, ItemTemplate const& item)
@@ -2967,8 +3044,14 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             }
 
             uint32 const services = action.spell_id;
+            static bool const sellGearAllowed = sConfigMgr->GetBoolDefault("Bot.Vendor.SellGear", false);
+            if ((services & kServiceSellGearBit) && !sellGearAllowed)
+            {
+                reason = "Bot.Vendor.SellGear is off";
+                return BotActionStatus::kRefused;
+            }
             bool const buying = (services & kServiceBuyMask) != 0 && ModuleBotSupplies::Enabled();
-            if (services & (kServiceSellBit | kServiceSellJunkBit | kServiceRepairBit) || buying)
+            if (services & (kServiceSellBit | kServiceSellJunkBit | kServiceSellGearBit | kServiceRepairBit) || buying)
             {
                 // Layout 13: the module can name the NPC (BotSnapshot::vendor_guid / repair_guid, which is where a BuyItem
                 // action gets its vendor from). A reference the core cannot use is not an error -- the nearest NPC in
@@ -2989,6 +3072,8 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
                 }
                 if ((services & (kServiceSellBit | kServiceSellJunkBit)) && npc->HasNpcFlag(UNIT_NPC_FLAG_VENDOR_MASK))
                     SellGreyItems(bot, (services & kServiceSellJunkBit) != 0);
+                if ((services & kServiceSellGearBit) && npc->HasNpcFlag(UNIT_NPC_FLAG_VENDOR_MASK))
+                    SellOutclassedGear(bot, ModuleBotGearSell::GearProfileOf(services));
                 if ((services & kServiceRepairBit) && npc->HasNpcFlag(UNIT_NPC_FLAG_REPAIR))
                     bot.DurabilityRepairAll(true, 0.0f, false);
                 // Buying comes last, from the money the sale left and the repair did not take. A vendor without the goods buys nothing and

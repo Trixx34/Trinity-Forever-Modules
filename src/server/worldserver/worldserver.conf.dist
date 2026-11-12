@@ -1839,6 +1839,12 @@ Bot.Limit.MaxDbQueue = 5000
 #            food or drink the bot may use at its level, bought until the bot carries the count the module asked for or its money or bags run
 #            out. The snapshot always tells the module what the bot carries and where the nearest vendor that sells it is.
 #
+#    Bot.Vendor.SellGear
+#        Default:     0
+#        1 = a module may add bit 2048 to a kVendor action: the bot sells the gear in its bags that what it wears outclasses (green or lower, usable, not a quest or
+#            set item, every slot of that type worn by an item of the same type with an item level at least as high and a gear score 30 higher, scored with the
+#            role's stats; never by item id). Each sale is logged as "vendor_sell_gear bot item reason". 0 = a kVendor action with the bit is refused.
+#
 #    Bot.Professions.Enabled
 #        Default:     1
 #        1 = every bot (not an alt) is assigned two primary professions that make sense together and is taught them for free when it logs in or levels up, like its class

@@ -615,6 +615,10 @@ enum class ActionType : std::uint32_t {
                  // SDK 0.16: 1024 also sells white junk with the grey items of bit 1 (or alone): spare bags, miscellaneous items, and the surplus of trade
                  // goods (a bot keeps 60 pieces of each kind, for First Aid, Cooking or the auction house). Never a quest item, an equipped bag, a
                  // consumable, a reagent, ammunition, a weapon or armour. Meant for a bot whose bags are nearly full.
+                 // SDK 0.26: 2048 sells the bag gear the bot's worn gear outclasses (needs Bot.Vendor.SellGear in the core, else kRefused). The rule: green or
+                 // lower, usable, required level reached, not a quest or set item, every slot of that type worn by an item of the same inventory type with an
+                 // item level at least as high and a gear score 30 higher, never heavier body armour than worn. By the numbers, never by item id. Bits 12-14 of
+                 // spell_id carry the gear profile (AutoGearAction's profile 0-6) whose stat list scores the items. The core logs vendor_sell_gear.
     kTrain = 7,  // learn every spell the trainer in interaction range teaches this bot now (M4). Refused in combat.
     kGroup = 8,  // party actions (M8). spell_id 1 invites the bot named by target_guid, 2 accepts the bot's pending invite,
                  // 3 leaves the bot's party. Refused in combat.
