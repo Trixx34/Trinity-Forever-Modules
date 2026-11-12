@@ -10,6 +10,8 @@
 #include "Define.h"
 #include "ModuleTier2Layout.h"
 
+#include <cmath>
+
 namespace BotActionRules
 {
 using forever_module::ActionType;
@@ -156,6 +158,47 @@ inline BotActionStatus StatusForCastResult(int32 result)
         default:
             return BotActionStatus::kRefused;
     }
+}
+
+// ---- kTransport (layout 25, doc/transports.md of the bots module) ----
+// spell_id of the action: 1 board the transport with the entry in target_guid, 2 leave the transport, 3 join the group leader's transport.
+inline constexpr uint32 kTransportBoard = 1;
+inline constexpr uint32 kTransportLeave = 2;
+inline constexpr uint32 kTransportJoinLeader = 3;
+
+inline bool IsTransportOrder(uint32 order)
+{
+    return order >= kTransportBoard && order <= kTransportJoinLeader;
+}
+
+// The most a passenger's offset to the transport may be on one axis: the limit the movement handler puts on a client's transport position (75 yards).
+inline constexpr float kTransportMaxOffset = 75.0f;
+// A deck is not far above or below the transport's origin; a bot further up or down than this is on a cliff, not at the ship.
+inline constexpr float kTransportMaxOffsetZ = 20.0f;
+
+// Whether a bot standing at this offset to a transport's origin may board it: every axis within the handler's limit, the vertical offset within
+// kTransportMaxOffsetZ, and the straight distance to the origin within `rangeYards` (Bot.Transport.BoardRangeYards).
+inline bool TransportBoardOffsetOk(float x, float y, float z, float rangeYards)
+{
+    if (std::fabs(x) > kTransportMaxOffset || std::fabs(y) > kTransportMaxOffset || std::fabs(z) > kTransportMaxOffsetZ)
+        return false;
+    return x * x + y * y + z * z <= rangeYards * rangeYards;
+}
+
+// Whether a passenger may step off: the transport is stopped (at a dock), or the ground below the bot is known and within `maxYards`.
+// heightAboveGround is only read when hasGround.
+inline bool TransportLeaveAllowed(bool stopped, bool hasGround, float heightAboveGround, float maxYards)
+{
+    if (stopped)
+        return true;
+    return hasGround && heightAboveGround <= maxYards;
+}
+
+// Whether a bot far from the leader on the same map may be put on the leader's transport: within `maxYards` of the leader (a ship leaves a dock
+// quickly, so a bot far behind walks closer first; kOutOfRange tells the module so).
+inline bool TransportJoinInRange(float distanceToLeader, float maxYards)
+{
+    return distanceToLeader <= maxYards;
 }
 } // namespace BotActionRules
 

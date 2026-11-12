@@ -3644,6 +3644,24 @@ Transport* Map::GetTransport(ObjectGuid const& guid)
     return go ? go->ToTransport() : nullptr;
 }
 
+Transport* Map::FindTransportByEntry(uint32 entry, WorldObject const* nearTo) const
+{
+    Transport* best = nullptr;
+    float bestDistance = 0.0f;
+    for (Transport* transport : _transports)
+    {
+        if (transport->GetEntry() != entry || !transport->IsInWorld() || transport->FindMap() != this)
+            continue;
+        float const distance = nearTo ? transport->GetExactDist(nearTo) : 0.0f;
+        if (!best || distance < bestDistance)
+        {
+            best = transport;
+            bestDistance = distance;
+        }
+    }
+    return best;
+}
+
 Creature* Map::GetCreatureBySpawnId(ObjectGuid::LowType spawnId) const
 {
     auto const bounds = GetCreatureBySpawnIdStore().equal_range(spawnId);

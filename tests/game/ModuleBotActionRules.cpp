@@ -225,3 +225,40 @@ TEST_CASE("A cast result maps to the status the module sees", "[ModuleBotActionR
     CHECK(StatusForCastResult(-1) == BotActionStatus::kRefused);
     CHECK(StatusForCastResult(100000) == BotActionStatus::kRefused);
 }
+
+TEST_CASE("kTransport: the orders, the board offset, the leave rule and the join range", "[ModuleBotActionRules]")
+{
+    CHECK_FALSE(IsTransportOrder(0));
+    CHECK(IsTransportOrder(kTransportBoard));
+    CHECK(IsTransportOrder(kTransportLeave));
+    CHECK(IsTransportOrder(kTransportJoinLeader));
+    CHECK_FALSE(IsTransportOrder(4));
+
+    // off by default, with the key in the reason
+    ConfigGateResult const gate = ConfigGate(ActionType::kTransport, false);
+    CHECK_FALSE(gate.allowed);
+    CHECK(gate.status == BotActionStatus::kRefused);
+    CHECK(std::string(gate.reason) == "Bot.Actions.Transport is off");
+    CHECK(ConfigGate(ActionType::kTransport, true).allowed);
+
+    // board: on the deck or the gangplank, not on the next hill, not under the sea
+    CHECK(TransportBoardOffsetOk(5.0f, 2.0f, 6.0f, 45.0f));
+    CHECK(TransportBoardOffsetOk(-30.0f, 8.0f, 4.0f, 45.0f));
+    CHECK_FALSE(TransportBoardOffsetOk(60.0f, 0.0f, 0.0f, 45.0f));   // beyond the range
+    CHECK_FALSE(TransportBoardOffsetOk(0.0f, 0.0f, 25.0f, 100.0f));  // too high above the origin
+    CHECK_FALSE(TransportBoardOffsetOk(0.0f, 0.0f, -25.0f, 100.0f)); // too far below it
+    CHECK_FALSE(TransportBoardOffsetOk(80.0f, 0.0f, 0.0f, 200.0f));  // over the movement handler's 75 yard limit however wide the range
+    CHECK_FALSE(TransportBoardOffsetOk(0.0f, -76.0f, 0.0f, 200.0f));
+    CHECK(TransportBoardOffsetOk(75.0f, 0.0f, 0.0f, 200.0f));
+
+    // leave: at a dock, or with the ground close below
+    CHECK(TransportLeaveAllowed(true, false, 0.0f, 10.0f));
+    CHECK(TransportLeaveAllowed(false, true, 3.0f, 10.0f));
+    CHECK(TransportLeaveAllowed(false, true, 10.0f, 10.0f));
+    CHECK_FALSE(TransportLeaveAllowed(false, true, 40.0f, 10.0f));   // in the middle of the sea
+    CHECK_FALSE(TransportLeaveAllowed(false, false, 0.0f, 10.0f));   // no ground known
+
+    CHECK(TransportJoinInRange(60.0f, 100.0f));
+    CHECK(TransportJoinInRange(100.0f, 100.0f));
+    CHECK_FALSE(TransportJoinInRange(100.5f, 100.0f));
+}

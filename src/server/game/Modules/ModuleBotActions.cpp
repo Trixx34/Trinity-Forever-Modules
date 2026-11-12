@@ -29,6 +29,7 @@
 #include "GossipDef.h"
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
+#include "GameObject.h"
 #include "Group.h"
 #include "GroupMgr.h"
 #include "Item.h"
@@ -50,6 +51,7 @@
 #include "SpellInfo.h"
 #include "DB2Stores.h"
 #include "TaxiPathGraph.h"
+#include "Transport.h"
 #include "SpellMgr.h"
 #include "Trainer.h"
 #include "World.h"
@@ -2654,6 +2656,184 @@ static BotActionStatus ProbePointAction(Player& bot, BotAction const& action, st
     return BotActionStatus::kApplied;
 }
 
+// ---- kTransport (layout 25): ships, zeppelins and elevators ----
+// A bot has no client, so no movement packet ever names a transport and it is never made a passenger (Transport::AddPassenger is called from the
+// movement handler only). The server-side way aboard is a teleport that carries the transport's guid and the offset to it: the near teleport (same map,
+// HandleMoveTeleportAck) and the far one (HandleMoveWorldportAck) both call AddPassenger, and BotMgr::PumpTeleports answers their acknowledgements.
+// Leaving is a near teleport without the guid, which takes the bot off first (Player::TeleportTo).
+
+// The transport game object with this entry on the bot's map: a ship by the map's transport list, an elevator by the grid. Null when there is none.
+static GameObject* FindTransportObject(Player& bot, uint32 entry)
+{
+    Map* map = bot.GetMap();
+    if (!map)
+        return nullptr;
+    if (Transport* ship = map->FindTransportByEntry(entry, &bot))
+        return ship;
+    GameObject* elevator = bot.FindNearestGameObject(entry, 120.0f);
+    return elevator && elevator->ToTransportBase() ? elevator : nullptr;
+}
+
+// Puts the bot on the transport at the given offset: a teleport with the transport's guid, on the transport's own map.
+static BotActionStatus BoardTransportAt(Player& bot, ObjectGuid transportGuid, uint32 mapId, Position const& offset, std::string& reason)
+{
+    TeleportLocation destination;
+    destination.Location = WorldLocation(mapId, offset.GetPositionX(), offset.GetPositionY(), offset.GetPositionZ(), offset.GetOrientation());
+    destination.TransportGuid = transportGuid;
+    if (!bot.TeleportTo(destination))
+    {
+        reason = "the teleport onto the transport was refused";
+        return BotActionStatus::kRefused;
+    }
+    return BotActionStatus::kApplied;
+}
+
+BotActionStatus TransportAction(Player& bot, BotAction const& action, std::string& reason)
+{
+    static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Actions.Transport", false);
+    if (BotActionRules::ConfigGateResult const gate = BotActionRules::ConfigGate(ActionType::kTransport, allowed); !gate.allowed)
+    {
+        reason = gate.reason;
+        return gate.status;
+    }
+    if (!BotActionRules::IsTransportOrder(action.spell_id))
+    {
+        reason = "unknown transport order (spell_id 1 board, 2 leave, 3 join the leader's transport)";
+        return BotActionStatus::kRefused;
+    }
+    static float const boardRange = std::clamp(sConfigMgr->GetFloatDefault("Bot.Transport.BoardRangeYards", 45.0f), 5.0f, 75.0f);
+    static float const joinMaxYards = std::clamp(sConfigMgr->GetFloatDefault("Bot.Transport.JoinMaxYards", 100.0f), 10.0f, 500.0f);
+    static float const leaveGroundYards = std::clamp(sConfigMgr->GetFloatDefault("Bot.Transport.LeaveGroundYards", 10.0f), 1.0f, 40.0f);
+
+    if (!bot.IsInWorld() || !bot.GetMap())
+    {
+        reason = "the bot is not on a map";
+        return BotActionStatus::kRefused;
+    }
+    if (bot.IsBeingTeleported())
+    {
+        reason = "bot is being teleported";
+        return BotActionStatus::kBusy;
+    }
+
+    if (action.spell_id == BotActionRules::kTransportLeave)
+    {
+        TransportBase* current = bot.GetTransport();
+        if (!current)
+        {
+            reason = "bot is not on a transport";
+            return BotActionStatus::kRefused;
+        }
+        if (bot.IsInCombat())
+        {
+            reason = "bot is in combat";
+            return BotActionStatus::kRefused;
+        }
+        Transport const* ship = bot.GetMap()->GetTransport(current->GetTransportGUID());
+        bool const stopped = ship && ship->IsStopped();
+        float const x = bot.GetPositionX();
+        float const y = bot.GetPositionY();
+        float const z = bot.GetPositionZ();
+        // The static ground (map and models, not the transport's own deck): the sea floor over the water, the dock beside a quay.
+        float const ground = bot.GetMap()->GetStaticHeight(bot.GetPhaseShift(), x, y, z + 2.0f);
+        bool const hasGround = ground > INVALID_HEIGHT;
+        if (!BotActionRules::TransportLeaveAllowed(stopped, hasGround, z - ground, leaveGroundYards))
+        {
+            reason = "the transport is under way and the ground is not within " + std::to_string(int(leaveGroundYards)) + " yards";
+            return BotActionStatus::kRefused;
+        }
+        // A teleport on the same map without the transport's guid: Player::TeleportTo takes the bot off the transport first. At a dock the bot keeps its
+        // height (the deck is level with the quay); under way it is put on the ground.
+        float const landZ = stopped ? z : ground + 0.5f;
+        if (!bot.TeleportTo(bot.GetMapId(), x, y, landZ, bot.GetOrientation()))
+        {
+            reason = "the teleport off the transport was refused";
+            return BotActionStatus::kRefused;
+        }
+        return BotActionStatus::kApplied;
+    }
+
+    // Boarding: the state checks of the other walking actions, no instance (transports are on open-world maps), nothing aboard already.
+    if (BotActionRules::StateGateResult const state = BotActionRules::AliveIdleGate(bot.IsAlive(), bot.IsInCombat(), bot.IsInFlight()); !state.allowed)
+    {
+        reason = state.reason;
+        return state.status;
+    }
+    if (bot.GetMap()->Instanceable())
+    {
+        reason = "bot is in an instance";
+        return BotActionStatus::kRefused;
+    }
+    if (bot.IsInWater())
+    {
+        reason = "bot is in the water";
+        return BotActionStatus::kRefused;
+    }
+
+    if (action.spell_id == BotActionRules::kTransportBoard)
+    {
+        uint32 const entry = uint32(action.target_guid);
+        if (entry == 0 || action.target_guid > std::numeric_limits<uint32>::max())
+        {
+            reason = "target_guid is the entry of the transport (the snapshot's transport_guid or a party member's transport_entry)";
+            return BotActionStatus::kInvalidTarget;
+        }
+        GameObject* object = FindTransportObject(bot, entry);
+        TransportBase* transport = object ? object->ToTransportBase() : nullptr;
+        if (!transport)
+        {
+            reason = "no transport with that entry on the bot's map";
+            return BotActionStatus::kInvalidTarget;
+        }
+        if (TransportBase* current = bot.GetTransport())
+        {
+            reason = current->GetTransportGUID() == transport->GetTransportGUID() ? "bot is already on that transport" : "bot is on another transport: leave it first";
+            return BotActionStatus::kRefused;
+        }
+        Position const offset = transport->GetPositionOffsetTo(bot.GetPosition());
+        if (!BotActionRules::TransportBoardOffsetOk(offset.GetPositionX(), offset.GetPositionY(), offset.GetPositionZ(), boardRange))
+        {
+            reason = "the bot is " + std::to_string(int(object->GetExactDist(&bot))) + " yards from the transport: walk to the deck side";
+            return BotActionStatus::kOutOfRange;
+        }
+        return BoardTransportAt(bot, transport->GetTransportGUID(), bot.GetMapId(), offset, reason);
+    }
+
+    // kTransportJoinLeader: the transport the group leader stands on.
+    Group* group = bot.GetGroup();
+    Player* leader = group ? ObjectAccessor::FindConnectedPlayer(group->GetLeaderGUID()) : nullptr;
+    if (!leader || leader == &bot || !leader->IsInWorld())
+    {
+        reason = "the bot has no leader in the world";
+        return BotActionStatus::kInvalidTarget;
+    }
+    TransportBase* leaderTransport = leader->GetTransport();
+    if (!leaderTransport)
+    {
+        reason = "the leader is not on a transport";
+        return BotActionStatus::kRefused;
+    }
+    Map* leaderMap = leader->GetMap();
+    if (leaderMap->Instanceable())
+    {
+        reason = "the leader is in an instance";
+        return BotActionStatus::kRefused;
+    }
+    if (TransportBase* current = bot.GetTransport(); current && current->GetTransportGUID() == leaderTransport->GetTransportGUID())
+    {
+        reason = "bot is already on the leader's transport";
+        return BotActionStatus::kRefused;
+    }
+    bool const sameMap = bot.GetMapId() == leader->GetMapId();
+    if (sameMap && !BotActionRules::TransportJoinInRange(bot.GetExactDist(leader), joinMaxYards))
+    {
+        reason = "the bot is " + std::to_string(int(bot.GetExactDist(leader))) + " yards from the leader: walk closer";
+        return BotActionStatus::kOutOfRange;
+    }
+    // The leader's own offset: the bot stands where the leader stands on the deck (players overlap; nothing is blocked by it).
+    return BoardTransportAt(bot, leaderTransport->GetTransportGUID(), leader->GetMapId(), leader->GetTransOffset(), reason);
+}
+
 BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string& reason, uint32 module)
 {
     switch (action.type)
@@ -2671,17 +2851,7 @@ BotActionStatus ApplyBotAction(Player& bot, BotAction const& action, std::string
             return ProbePointAction(bot, action, reason);
 
         case ActionType::kTransport:
-        {
-            // Layout 25: the number is reserved for the transport design (MOD-Forever-Bots doc/transports.md); nothing boards yet.
-            static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Actions.Transport", false);
-            if (BotActionRules::ConfigGateResult const gate = BotActionRules::ConfigGate(ActionType::kTransport, allowed); !gate.allowed)
-            {
-                reason = gate.reason;
-                return gate.status;
-            }
-            reason = "kTransport is reserved in layout 25 and not implemented in this core";
-            return BotActionStatus::kRefused;
-        }
+            return TransportAction(bot, action, reason);
 
         case ActionType::kMoveTo:
         {

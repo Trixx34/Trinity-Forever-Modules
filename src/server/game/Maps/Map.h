@@ -443,6 +443,9 @@ class TC_GAME_API Map : public GridRefManager<NGridType>
         GameObject* GetGameObject(ObjectGuid const& guid);
         Pet* GetPet(ObjectGuid const& guid);
         Transport* GetTransport(ObjectGuid const& guid);
+        // The transport (a ship or zeppelin, a map object transport) of this map with the entry that is nearest to `nearTo` (the first found without it).
+        // Transports are not in the grids, so no creature or game object search finds them. Null when none is in the world on this map.
+        Transport* FindTransportByEntry(uint32 entry, WorldObject const* nearTo = nullptr) const;
         Creature* GetCreatureBySpawnId(ObjectGuid::LowType spawnId) const;
         GameObject* GetGameObjectBySpawnId(ObjectGuid::LowType spawnId) const;
         AreaTrigger* GetAreaTriggerBySpawnId(ObjectGuid::LowType spawnId) const;

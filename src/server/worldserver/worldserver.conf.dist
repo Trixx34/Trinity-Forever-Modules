@@ -1917,7 +1917,25 @@ Bot.Limit.MaxDbQueue = 5000
 #
 #    Bot.Actions.Transport
 #        Default:     0
-#        Reserved (layout 25, kTransport): the action number exists so a module can carry the code; this core refuses it with a reason whatever the value.
+#        1 = a module may put a bot on a ship, zeppelin or elevator and take it off again (kTransport, layout 25). A bot has no client, so it never becomes a
+#            passenger by walking onto a deck: the core boards it with a teleport that carries the transport's guid and the offset to it, the same step that
+#            puts a player back on a ship at login. spell_id 1 boards the transport with the entry in target_guid (the bot must stand within
+#            Bot.Transport.BoardRangeYards of it), 2 takes the bot off (the transport is stopped at a dock, or the ground is within
+#            Bot.Transport.LeaveGroundYards below it), 3 puts the bot on the transport its group leader stands on, at the leader's place (a bot on the same map
+#            must be within Bot.Transport.JoinMaxYards of the leader; a bot on another map is brought to the leader's map). Refused in combat, dead, on a
+#            flight, in an instance and in the water. Needs Bot.Snapshot.PartyView for a module to see its leader's transport.
+#
+#    Bot.Transport.BoardRangeYards
+#        Default:     45
+#        The straight distance from a transport's origin within which a bot may board it (5 to 75; a ship's origin is its middle, a zeppelin is long).
+#
+#    Bot.Transport.JoinMaxYards
+#        Default:     100
+#        How far from its leader a bot on the same map may be and still be put on the leader's transport (10 to 500).
+#
+#    Bot.Transport.LeaveGroundYards
+#        Default:     10
+#        A bot may leave a moving transport when the ground (map and models, not the deck) is within this many yards below it (1 to 40).
 #
 #    Bot.Taxi.Enabled
 #        Default:     1
