@@ -115,6 +115,51 @@ inline StateGateResult ReclaimCorpseGate(bool alive, bool ghost)
     return { true, BotActionStatus::kApplied, "" };
 }
 
+// kResurrect spell_id 2 (protocol 28): take the spirit healer. What the handler does next, from the bot state and what the world search found.
+enum class SpiritHealerStep : uint8
+{
+    kRefuse,           // answer `status` with `reason`
+    kFallbackReclaim,  // the map has no spirit healer within reach: do what kReclaimCorpse does
+    kWalk,             // a spirit healer is near but out of interaction range: walk to it, answer kMoving
+    kTake              // in interaction range: SendSpiritResurrect
+};
+
+struct SpiritHealerResult
+{
+    SpiritHealerStep step;
+    BotActionStatus status; // kApplied for kTake and kFallbackReclaim (the reclaim answers for itself), kMoving for kWalk, kRefused otherwise
+    char const* reason;     // empty when the step is not a refusal
+};
+
+// Order of the checks: alive, not a ghost, the config key Bot.Actions.SpiritHealer, a hardcore realm, no spirit healer found (fallback to the reclaim),
+// out of interaction range (walk), in range (take it).
+inline SpiritHealerResult SpiritHealerGate(bool alive, bool ghost, bool enabled, bool hardcore, bool healerFound, bool inInteractionRange)
+{
+    if (alive)
+        return { SpiritHealerStep::kRefuse, BotActionStatus::kRefused, "bot is alive" };
+    if (!ghost)
+        return { SpiritHealerStep::kRefuse, BotActionStatus::kRefused, "spirit is not released" };
+    if (!enabled)
+        return { SpiritHealerStep::kRefuse, BotActionStatus::kRefused, "Bot.Actions.SpiritHealer is off" };
+    if (hardcore)
+        return { SpiritHealerStep::kRefuse, BotActionStatus::kRefused, "hardcore realm: death is permanent" };
+    if (!healerFound)
+        return { SpiritHealerStep::kFallbackReclaim, BotActionStatus::kApplied, "" };
+    if (!inInteractionRange)
+        return { SpiritHealerStep::kWalk, BotActionStatus::kMoving, "" };
+    return { SpiritHealerStep::kTake, BotActionStatus::kApplied, "" };
+}
+
+// kCastSpell with BotAction::dest_x >= 1 (protocol 28) casts exactly the spell id sent. The rank to cast: the spell itself when the module asked for an exact
+// rank and the bot has it (`exactKnown`), 0 (= kNotKnown) when it asked for one the bot has not learned; without the request (dest_x < 1, or NaN) the highest
+// known rank, `highestKnown`, which is 0 when the bot knows none.
+inline uint32 ResolveCastRank(float destX, uint32 spellId, bool exactKnown, uint32 highestKnown)
+{
+    if (destX >= 1.0f)
+        return exactKnown ? spellId : 0u;
+    return highestKnown;
+}
+
 // SpellCastResult values the status table uses (src/server/game/Miscellaneous/SharedDefines.h, enum SpellCastResult). Mirrored here so this header stays free of
 // SharedDefines.h; the test compares each one with the enum, so a TrinityCore update that renumbers them fails there.
 inline constexpr int32 kCastOk = 0;                  // SPELL_CAST_OK = SPELL_FAILED_SUCCESS

@@ -1928,9 +1928,81 @@ BotActionStatus ReleaseSpiritAction(Player& bot, std::string& reason)
     return BotActionStatus::kApplied;
 }
 
-// Answer a resurrect offer (layout 11): spell_id 0 accepts, 1 declines. The checks of WorldSession::HandleResurrectResponse.
+BotActionStatus ReclaimCorpseAction(Player& bot, std::string& reason);
+
+// How far from the ghost the spirit healer is looked for (a graveyard is usually within this; farther the old corpse reclaim is used).
+constexpr float kSpiritHealerSearchYards = 40.0f;
+
+// Take the spirit healer (protocol 28, kResurrect spell_id 2): the module's way out of a death loop at a corpse that a live mob camps. The decisions are
+// BotActionRules::SpiritHealerGate. In interaction range the bot is resurrected as WorldSession::SendSpiritResurrect does it (50% health, resurrection
+// sickness, 25% durability loss, bones, the graveyard nearest to the corpse). A spirit healer farther away is walked to (kMoving, the module asks again);
+// a map without one falls back to the corpse reclaim.
+BotActionStatus SpiritHealerAction(Player& bot, std::string& reason)
+{
+    static bool const enabled = sConfigMgr->GetBoolDefault("Bot.Actions.SpiritHealer", true);
+    bool const hardcore = sConfigMgr->GetBoolDefault("Classic.Hardcore", false);
+
+    Creature* healer = nullptr;
+    bool inRange = false;
+    if (!bot.IsAlive() && bot.HasPlayerFlag(PLAYER_FLAGS_GHOST))
+    {
+        std::list<Unit*> inReach;
+        Trinity::AnyUnitInObjectRangeCheck check(&bot, kSpiritHealerSearchYards);
+        Trinity::UnitListSearcher<Trinity::AnyUnitInObjectRangeCheck> searcher(&bot, inReach, check);
+        Cell::VisitAllObjects(&bot, searcher, kSpiritHealerSearchYards);
+        float bestDist = kSpiritHealerSearchYards;
+        for (Unit* unit : inReach)
+        {
+            Creature* npc = unit->ToCreature();
+            if (!npc || !npc->HasNpcFlag(UNIT_NPC_FLAG_SPIRIT_HEALER))
+                continue;
+            float const dist = bot.GetDistance(npc);
+            if (dist >= bestDist)
+                continue;
+            healer = npc;
+            bestDist = dist;
+        }
+        inRange = healer && bot.GetNPCIfCanInteractWith(healer->GetGUID(), UNIT_NPC_FLAG_SPIRIT_HEALER, UNIT_NPC_FLAG_2_NONE);
+    }
+
+    BotActionRules::SpiritHealerResult const result = BotActionRules::SpiritHealerGate(bot.IsAlive(), bot.HasPlayerFlag(PLAYER_FLAGS_GHOST), enabled, hardcore,
+                                                                                         healer != nullptr, inRange);
+    switch (result.step)
+    {
+        case BotActionRules::SpiritHealerStep::kRefuse:
+            reason = result.reason;
+            return result.status;
+        case BotActionRules::SpiritHealerStep::kFallbackReclaim:
+            return ReclaimCorpseAction(bot, reason);
+        case BotActionRules::SpiritHealerStep::kWalk:
+        {
+            float x, y, z;
+            healer->GetClosePoint(x, y, z, bot.GetCombatReach(), INTERACTION_DISTANCE - 1.5f, healer->GetAbsoluteAngle(&bot));
+            bot.GetMotionMaster()->Clear();
+            bot.GetMotionMaster()->MovePoint(0, x, y, z);
+            reason = "walking to the spirit healer " + std::to_string(int(bot.GetDistance(healer))) + " yards away";
+            return result.status;
+        }
+        case BotActionRules::SpiritHealerStep::kTake:
+            break;
+    }
+    WorldSession* session = bot.GetSession();
+    if (!session)
+    {
+        reason = "bot has no session";
+        return BotActionStatus::kRefused;
+    }
+    bot.StopMoving();
+    session->SendSpiritResurrect();
+    TC_LOG_INFO("server.worldserver", "BotMgr: bot={} took the spirit healer", bot.GetName());
+    return result.status;
+}
+
+// Answer a resurrect offer (layout 11): spell_id 0 accepts, 1 declines, 2 (protocol 28) takes the spirit healer. The checks of WorldSession::HandleResurrectResponse.
 BotActionStatus ResurrectResponseAction(Player& bot, BotAction const& action, std::string& reason)
 {
+    if (action.spell_id == 2)
+        return SpiritHealerAction(bot, reason);
     if (bot.IsAlive())
     {
         reason = "bot is alive";
@@ -3384,8 +3456,10 @@ static BotActionStatus ApplyBotActionImpl(Player& bot, BotAction const& action, 
             // the same way a cook is given the basic campfire. Without it every tame cast answered "spell not known".
             if (action.spell_id == 1515 && bot.GetClass() == CLASS_HUNTER && bot.GetLevel() >= 10 && !bot.HasSpell(1515))
                 bot.LearnSpell(1515, false);
-            // The module names a rank 1 spell; the bot casts the highest rank it knows.
-            uint32 const castId = HighestKnownRank(bot, action.spell_id);
+            // The module names a rank 1 spell; the bot casts the highest rank it knows. Protocol 28: dest_x >= 1 names the exact rank to cast
+            // (healer downranking); the bot must know it (BotActionRules::ResolveCastRank).
+            uint32 const castId = BotActionRules::ResolveCastRank(action.dest_x, action.spell_id, action.dest_x >= 1.0f && bot.HasSpell(action.spell_id),
+                                                                  action.dest_x >= 1.0f ? 0u : HighestKnownRank(bot, action.spell_id));
             if (!castId)
             {
                 reason = "bot does not know spell " + std::to_string(action.spell_id);

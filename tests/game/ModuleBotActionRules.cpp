@@ -306,3 +306,68 @@ TEST_CASE("The action result's reason fits the reserved 16 bits and starts at no
     CHECK(sizeof(result) == 12);
     CHECK(static_cast<uint32>(forever_module::ActionReason::kNone) == 0);
 }
+
+TEST_CASE("SpiritHealerGate: alive, not a ghost, config, hardcore, then the world decides", "[ModuleBotActionRules]")
+{
+    // SpiritHealerGate(alive, ghost, enabled, hardcore, healerFound, inInteractionRange)
+    SpiritHealerResult result = SpiritHealerGate(true, false, true, false, true, true);
+    CHECK(result.step == SpiritHealerStep::kRefuse);
+    CHECK(result.status == BotActionStatus::kRefused);
+    CHECK(std::string(result.reason) == "bot is alive");
+
+    result = SpiritHealerGate(true, true, true, false, true, true); // alive wins over everything
+    CHECK(std::string(result.reason) == "bot is alive");
+
+    result = SpiritHealerGate(false, false, true, false, true, true);
+    CHECK(result.step == SpiritHealerStep::kRefuse);
+    CHECK(result.status == BotActionStatus::kRefused);
+    CHECK(std::string(result.reason) == "spirit is not released");
+
+    result = SpiritHealerGate(false, true, false, false, true, true);
+    CHECK(result.step == SpiritHealerStep::kRefuse);
+    CHECK(result.status == BotActionStatus::kRefused);
+    CHECK(std::string(result.reason) == "Bot.Actions.SpiritHealer is off");
+
+    result = SpiritHealerGate(false, true, true, true, true, true);
+    CHECK(result.step == SpiritHealerStep::kRefuse);
+    CHECK(std::string(result.reason) == "hardcore realm: death is permanent");
+
+    // the config key is checked before the hardcore realm
+    CHECK(std::string(SpiritHealerGate(false, true, false, true, true, true).reason) == "Bot.Actions.SpiritHealer is off");
+}
+
+TEST_CASE("SpiritHealerGate: no healer falls back to the reclaim, far walks, near takes", "[ModuleBotActionRules]")
+{
+    SpiritHealerResult result = SpiritHealerGate(false, true, true, false, false, false);
+    CHECK(result.step == SpiritHealerStep::kFallbackReclaim);
+    CHECK(result.status == BotActionStatus::kApplied);
+    CHECK(std::string(result.reason).empty());
+
+    result = SpiritHealerGate(false, true, true, false, true, false);
+    CHECK(result.step == SpiritHealerStep::kWalk);
+    CHECK(result.status == BotActionStatus::kMoving);
+    CHECK(std::string(result.reason).empty());
+
+    result = SpiritHealerGate(false, true, true, false, true, true);
+    CHECK(result.step == SpiritHealerStep::kTake);
+    CHECK(result.status == BotActionStatus::kApplied);
+    CHECK(std::string(result.reason).empty());
+}
+
+TEST_CASE("kResurrect has no config-gate key: the spirit healer key is checked inside SpiritHealerGate", "[ModuleBotActionRules]")
+{
+    CHECK(ConfigGate(ActionType::kResurrect, false).allowed);
+}
+
+TEST_CASE("ResolveCastRank: dest_x >= 1 casts exactly the rank asked for, else the highest known", "[ModuleBotActionRules]")
+{
+    // ResolveCastRank(destX, spellId, exactKnown, highestKnown)
+    CHECK(ResolveCastRank(0.0f, 2050, false, 2054) == 2054u);   // no request: the highest known rank
+    CHECK(ResolveCastRank(0.0f, 2050, true, 2054) == 2054u);
+    CHECK(ResolveCastRank(0.0f, 2050, false, 0u) == 0u);        // knows none: kNotKnown
+    CHECK(ResolveCastRank(0.5f, 2050, true, 2054) == 2054u);    // under 1 is no request
+    CHECK(ResolveCastRank(-3.0f, 2050, true, 2054) == 2054u);
+    CHECK(ResolveCastRank(1.0f, 2050, true, 2054) == 2050u);    // exact and known: that rank
+    CHECK(ResolveCastRank(7.0f, 2050, true, 0u) == 2050u);
+    CHECK(ResolveCastRank(1.0f, 2050, false, 2054) == 0u);      // exact and not known: 0, never the highest rank
+}

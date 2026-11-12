@@ -229,11 +229,17 @@ int main()
     forever_module::BotAction revive; revive.bot_guid = 42; revive.type = forever_module::ActionType::kResurrect;
     revive.target_guid = forever_module::MakeUnitRef(2, 0, 7);
     forever_module::BotAction reclaim; reclaim.bot_guid = 42; reclaim.type = forever_module::ActionType::kReclaimCorpse;
-    publishActions(9, {release, revive, reclaim}, 3);
+    // Protocol 28: kResurrect spell_id 2 (the spirit healer) and an exact-rank cast (dest_x >= 1) are plain actions inside layout 25.
+    forever_module::BotAction spiritHealer; spiritHealer.bot_guid = 42; spiritHealer.type = forever_module::ActionType::kResurrect; spiritHealer.spell_id = 2;
+    forever_module::BotAction exactRank; exactRank.bot_guid = 42; exactRank.type = forever_module::ActionType::kCastSpell; exactRank.spell_id = 2050;
+    exactRank.target_guid = forever_module::MakeUnitRef(2, 0, 7); exactRank.dest_x = 1.0f;
+    publishActions(9, {release, revive, reclaim, spiritHealer, exactRank}, 5);
     CHECK(region->ReadNewActions(actions));
-    CHECK(actions.Actions.size() == 3);
-    if (actions.Actions.size() == 3)
+    CHECK(actions.Actions.size() == 5);
+    if (actions.Actions.size() == 5)
     {
+        CHECK(actions.Actions[3].type == forever_module::ActionType::kResurrect && actions.Actions[3].spell_id == 2);
+        CHECK(actions.Actions[4].type == forever_module::ActionType::kCastSpell && actions.Actions[4].spell_id == 2050 && actions.Actions[4].dest_x == 1.0f);
         CHECK(actions.Actions[0].type == forever_module::ActionType::kReleaseSpirit);
         CHECK(actions.Actions[1].type == forever_module::ActionType::kResurrect && actions.Actions[1].target_guid == forever_module::MakeUnitRef(2, 0, 7));
         CHECK(actions.Actions[2].type == forever_module::ActionType::kReclaimCorpse);
@@ -242,7 +248,7 @@ int main()
     // CHECK(actions.Actions.empty()) here, which failed on HEAD: it asserted the set empty immediately after checking it
     // had three actions, and no read happened in between. See git log for the fix.)
     CHECK(!region->ReadNewActions(actions));
-    CHECK(actions.Actions.size() == 3 && actions.Actions[0].type == forever_module::ActionType::kReleaseSpirit);
+    CHECK(actions.Actions.size() == 5 && actions.Actions[0].type == forever_module::ActionType::kReleaseSpirit);
 
     // The layout-12 and layout-13 action types round-trip as well. The core refuses kCraft and kGather with a reason
     // (not implemented), but they are inside the layout, so the region has to carry them unchanged.

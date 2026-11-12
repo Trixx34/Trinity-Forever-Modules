@@ -1913,6 +1913,13 @@ Bot.Limit.MaxDbQueue = 5000
 #        1 = each living hostile creature in a bot's nearby list carries the distance at which it attacks the bot on its own (layout 25, aggro_radius): pull
 #            spots and patrol waits. A formula per creature, no search.
 #
+#    Bot.Actions.SpiritHealer
+#        Default:     1
+#        1 = a module may send a ghost to the spirit healer (kResurrect with spell_id 2, protocol 28): the bot walks to the nearest spirit healer within about
+#            40 yards and is resurrected there at 50% health with resurrection sickness and a 25% durability loss, as a player would be. It is the way out of a
+#            corpse that a live creature camps. On a map with no spirit healer in reach the old corpse reclaim is done instead. Never on a hardcore realm.
+#        0 = the action is refused.
+#
 #    Bot.Actions.StopCast
 #        Default:     0
 #        1 = a module may stop a bot's cast or channel in progress (kStopCast, layout 25): an overheal cancel, a kick no longer needed.
