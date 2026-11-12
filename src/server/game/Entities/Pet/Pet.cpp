@@ -44,8 +44,11 @@
 #include "Util.h"
 #include "World.h"
 #include "WorldSession.h"
+#include <mutex>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #define PET_XP_FACTOR 0.05f
 
@@ -2004,6 +2007,35 @@ void Pet::LearnPetPassives()
     }
 }
 
+// Classic 1.60: the abilities each tameable beast had in the wild (table classic_pet_tame_spell: VMaNGOS creature ->
+// PetSpellDataId, Blizzard's CreatureSpellData; 316 beasts). Loaded once on first use. A beast that is not in the table (a
+// new Forever beast, or one that had no ability in vanilla) falls back to its family's combat abilities.
+static std::vector<uint32> const* GetWildTameSpells(uint32 creatureEntry)
+{
+    static std::unordered_map<uint32, std::vector<uint32>> wild;
+    static std::once_flag loaded;
+    std::call_once(loaded, []()
+    {
+        if (QueryResult result = WorldDatabase.Query("SELECT CreatureEntry, SpellId FROM classic_pet_tame_spell ORDER BY CreatureEntry, SpellId"))
+        {
+            do
+            {
+                Field* fields = result->Fetch();
+                uint32 spellId = fields[1].GetUInt32();
+                if (!sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE))
+                {
+                    TC_LOG_ERROR("sql.sql", "Table `classic_pet_tame_spell` has unknown spell {} for creature {}, skipped.", spellId, fields[0].GetUInt32());
+                    continue;
+                }
+                wild[fields[0].GetUInt32()].push_back(spellId);
+            } while (result->NextRow());
+        }
+    });
+
+    auto itr = wild.find(creatureEntry);
+    return itr != wild.end() ? &itr->second : nullptr;
+}
+
 // Classic 1.60: a freshly tamed hunter pet starts with Growl and its family's combat abilities (vanilla
 // petcreateinfo_spell). The modern default-spell list only covers spell-summoned creatures, so without this a
 // tamed beast knew nothing but the DND family passives: it could never use an ability, and the vanilla loop
@@ -2046,6 +2078,14 @@ void Pet::LearnClassicStartSpells()
 
     // Growl is the one ability every hunter pet starts with (chain base 2649)
     learnHighestRank(2649);
+
+    // the beast's own wild abilities, when the table has them (each at the highest rank the pet's level allows)
+    if (std::vector<uint32> const* wild = GetWildTameSpells(GetEntry()))
+    {
+        for (uint32 spellId : *wild)
+            learnHighestRank(sSpellMgr->GetFirstSpellInChain(spellId));
+        return;
+    }
 
     std::unordered_set<uint32> visitedChains;
     for (int16 skillLineId : cFamily->SkillLine)
