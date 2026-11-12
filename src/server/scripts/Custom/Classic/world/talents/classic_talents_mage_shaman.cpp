@@ -45,7 +45,8 @@ enum ClassicMageTalentSpells
     SPELL_MAGE_HEATING_UP_BUFF              = 400625,   // -25% Pyroblast cast time per stack, 3 stacks, 20 s, 1 charge
     SPELL_MAGE_FINGERS_OF_FROST_TALENT      = 400647,   // effect 0: charges, effect 1: proc chance
     SPELL_MAGE_FINGERS_OF_FROST_IGNORE      = 400669,   // ability ignore aura state (frozen) for the spells that need it
-    SPELL_MAGE_FINGERS_OF_FROST_STACKS      = 400670    // 2 stacks, one used per spell cast
+    SPELL_MAGE_FINGERS_OF_FROST_STACKS      = 400670,   // 2 stacks, one used per spell cast
+    SPELL_MAGE_ARCANE_BLAST_BUFF            = 400573    // 70707: % of Intellect as spell damage and +100% Arcane Blast cost per stack, 4 stacks, 18 s
 };
 
 enum ClassicShamanTalentSpells
@@ -782,8 +783,40 @@ class classic_spell_sha_ancestral_guidance : public AuraScript
     }
 };
 
+// 400574, 1239696, 1239697, 1239699, 1239700 - Arcane Blast (70707): "Each time you cast Arcane Blast, you gain $400573s1% of your
+// Intellect as Spell Damage and the mana cost of Arcane Blast is increased by $400573s2%. Effect stacks up to $400573u times and lasts
+// $400573d from time of initial application." The client spell has only its damage effect, nothing gave 400573, so the buff never
+// stacked (Discord 2026-11-12, pennywhi). A new stack keeps the time left of the first one.
+class classic_spell_mage_arcane_blast : public SpellScript
+{
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_MAGE_ARCANE_BLAST_BUFF });
+    }
+
+    void HandleAfterCast()
+    {
+        Unit* caster = GetCaster();
+        Aura* buff = caster->GetAura(SPELL_MAGE_ARCANE_BLAST_BUFF, caster->GetGUID());
+        int32 const duration = buff ? buff->GetDuration() : 0;
+
+        caster->CastSpell(caster, SPELL_MAGE_ARCANE_BLAST_BUFF, CastSpellExtraArgs(GetSpell()));
+
+        // stacking refreshes the duration; the tooltip counts from the first cast
+        if (duration > 0)
+            if (Aura* stacked = caster->GetAura(SPELL_MAGE_ARCANE_BLAST_BUFF, caster->GetGUID()))
+                stacked->SetDuration(duration);
+    }
+
+    void Register() override
+    {
+        AfterCast += SpellCastFn(classic_spell_mage_arcane_blast::HandleAfterCast);
+    }
+};
+
 void AddSC_classic_talents_mage_shaman()
 {
+    RegisterSpellScript(classic_spell_mage_arcane_blast);
     // Mage
     RegisterSpellScript(classic_spell_mage_ignite);
     RegisterSpellScript(classic_spell_mage_ignite_dot);
