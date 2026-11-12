@@ -29817,6 +29817,68 @@ void Player::_LoadTraits(PreparedQueryResult configsResult, PreparedQueryResult 
         } while (configsResult->NextRow());
     }
 
+    // Classic 1.60: the Legacy perk Talented (a Generic config) adds talent points before level 10, and the combat config is
+    // checked against those points. Configs came in id order, so the combat config was checked before the Legacy config was
+    // added: the extra points were missing, the check failed and every talent spent with them was wiped on each login.
+    // Add the other configs first, then the combat ones.
+    std::ranges::stable_partition(loadedConfigs, [](WorldPackets::Traits::TraitConfig const& traitConfig)
+    {
+        return traitConfig.Type != TraitConfigType::Combat;
+    });
+
+    // spent ranks of a config, to see the ranks the check at login takes away without failing (removeInvalidEntries drops an entry
+    // whose node conditions or parent nodes are not met and carries on, with no log line at the default log level)
+    auto spentRanks = [](WorldPackets::Traits::TraitConfig const& traitConfig)
+    {
+        int32 ranks = 0;
+        for (WorldPackets::Traits::TraitEntry const& entry : traitConfig.Entries)
+            ranks += entry.Rank;
+        return ranks;
+    };
+
+    for (WorldPackets::Traits::TraitConfig& traitConfig : loadedConfigs)
+    {
+        int32 const ranksBefore = spentRanks(traitConfig);
+        std::vector<WorldPackets::Traits::TraitEntry> const entriesBefore = traitConfig.Entries;
+        TraitMgr::LearnResult const validateResult = TraitMgr::ValidateConfig(traitConfig, this, false, true);
+        if (validateResult == TraitMgr::LearnResult::Ok && spentRanks(traitConfig) < ranksBefore)
+        {
+            std::string dropped;
+            for (WorldPackets::Traits::TraitEntry const& before : entriesBefore)
+            {
+                auto itr = std::ranges::find_if(traitConfig.Entries, [&](WorldPackets::Traits::TraitEntry const& after)
+                {
+                    return after.TraitNodeID == before.TraitNodeID && after.TraitNodeEntryID == before.TraitNodeEntryID;
+                });
+                int32 const rankAfter = itr != traitConfig.Entries.end() ? itr->Rank : 0;
+                if (before.Rank > rankAfter)
+                    dropped += Trinity::StringFormat(" node {} entry {} rank {}->{}", before.TraitNodeID, before.TraitNodeEntryID, before.Rank, rankAfter);
+            }
+            TC_LOG_WARN("entities.player.talents", "[talent_login] Player {} ({}): talent config {} (type {}, spec {}) lost {} of {} spent ranks in the check at login, level {}:{}",
+                GetName(), GetGUID().ToString(), traitConfig.ID, AsUnderlyingType(traitConfig.Type), traitConfig.ChrSpecializationID,
+                ranksBefore - spentRanks(traitConfig), ranksBefore, GetLevel(), dropped);
+        }
+
+        if (validateResult != TraitMgr::LearnResult::Ok)
+        {
+            // Players report talents reset after a restart or an alt login (player report, 3 Nov) and the cause is not known yet.
+            // Say which config was wiped and why, so the next report can be matched to a log line.
+            TC_LOG_WARN("entities.player.talents", "Player {} ({}): talent config {} (type {}, spec {}) did not pass the check at login (result {}), level {}, {} entries; it is reset.",
+                GetName(), GetGUID().ToString(), traitConfig.ID, AsUnderlyingType(traitConfig.Type), traitConfig.ChrSpecializationID,
+                AsUnderlyingType(validateResult), GetLevel(), traitConfig.Entries.size());
+
+            traitConfig.Entries.clear();
+            traitConfig.SubTrees.clear();
+            for (UF::TraitEntry const& grantedEntry : TraitMgr::GetGrantedTraitEntriesForConfig(traitConfig, this))
+                traitConfig.Entries.emplace_back(grantedEntry);
+
+            // rebuild subtrees
+            TraitMgr::ValidateConfig(traitConfig, this, false, true);
+        }
+
+        AddTraitConfig(traitConfig);
+    }
+
     // Remove orphaned trait entries from database
     for (auto&& [traitConfigID, _] : traitEntriesByConfig)
         m_traitConfigStates[traitConfigID] = PLAYERSPELL_REMOVED;
@@ -29878,6 +29940,20 @@ void Player::_LoadTraits(PreparedQueryResult configsResult, PreparedQueryResult 
         else
             SetActiveTalentGroup(0);
     }
+
+    // a saved talent config that is not made the active one at login looks like a talent reset to the player
+    int32 activeRanks = 0;
+    if (activeTraitConfig)
+        for (UF::TraitEntry const& entry : activeTraitConfig->Entries)
+            activeRanks += entry.Rank;
+
+    if (!activeRanks && std::ranges::any_of(loadedConfigs, [&](WorldPackets::Traits::TraitConfig const& loaded)
+        {
+            return loaded.Type == TraitConfigType::Combat && (!activeTraitConfig || loaded.ID != *activeTraitConfig->ID) && spentRanks(loaded) > 0;
+        }))
+        TC_LOG_WARN("entities.player.talents", "[talent_login] Player {} ({}): level {}, primary spec {}, talent group {}: the active talent config at login is {} ({}), "
+            "while another saved combat config has talents spent", GetName(), GetGUID().ToString(), GetLevel(), uint32(GetPrimarySpecialization()),
+            uint32(GetActiveTalentGroup()), activeTraitConfig ? int32(*activeTraitConfig->ID) : 0, activeTraitConfig ? "no talents spent" : "none found");
 
     if (activeTraitConfig)
     {
