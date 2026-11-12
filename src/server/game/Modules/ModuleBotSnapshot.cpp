@@ -18,6 +18,8 @@
 #include "LFG.h"
 #include "DB2Stores.h"
 #include "Item.h"
+#include "Map.h"
+#include "Transport.h"
 #include "Log.h"
 #include "Pet.h"
 #include "GridNotifiers.h"
@@ -1341,6 +1343,18 @@ bool NeedsFreshNearby(Player const& bot)
     return map && (map->IsDungeon() || map->IsRaid());
 }
 
+uint32 BotTransportEntry(WorldObject const& object)
+{
+    ObjectGuid const guid = object.GetTransGUID();
+    if (guid.IsEmpty())
+        return 0;
+    if (!guid.IsMOTransport())
+        return guid.GetEntry();
+    Map* map = object.FindMap();
+    Transport* transport = map ? map->GetTransport(guid) : nullptr;
+    return transport ? transport->GetEntry() : 0;
+}
+
 bool EncodeUnitRef(Unit const& unit, uint64& ref)
 {
     ObjectGuid const guid = unit.GetGUID();
@@ -1447,7 +1461,7 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
     if (!bot.GetTransGUID().IsEmpty())
     {
         movement |= 1u << 3;
-        entry.transport_guid = bot.GetTransGUID().GetEntry(); // the transport's entry: a ship or elevator is a game object, which a unit reference cannot name
+        entry.transport_guid = BotTransportEntry(bot); // the transport's entry: a ship or elevator is a game object, which a unit reference cannot name
     }
     entry.movement_flags = movement;
     if (Unit* target = bot.GetVictim())

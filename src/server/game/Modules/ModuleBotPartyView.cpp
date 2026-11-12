@@ -154,7 +154,7 @@ void FillOnlineMember(Player& member, PartyMember& out, bool threat)
         out.pet_max_health = ModuleBotSnapshotRules::ClampToUint32(pet->GetMaxHealth());
     }
     if (!member.GetTransGUID().IsEmpty())
-        out.transport_entry = member.GetTransGUID().GetEntry();
+        out.transport_entry = BotTransportEntry(member);
     if (threat)
         out.attacker_count = uint8(std::min<std::size_t>(member.getAttackers().size(), 255));
     FillDebuffs(member, out);

@@ -17,10 +17,16 @@
 
 class Player;
 class Unit;
+class WorldObject;
 
 // Packs a unit into a unit reference (forever_module::MakeUnitRef). Returns false for a unit that cannot be packed:
 // a counter above 32 bits, an entry above 24 bits, or a type other than player or creature.
 bool EncodeUnitRef(Unit const& unit, uint64& ref);
+
+// The entry of the transport the object stands on (0 for none). A ship or zeppelin has a transport guid with a counter only (HighGuid::Transport, no
+// entry field), so ObjectGuid::GetEntry() reads 0 for it: the entry is the one of the transport's game object, looked up on the object's map. An
+// elevator's guid is a game object guid and carries its entry. The snapshot's transport_guid and PartyMember::transport_entry use this.
+uint32 BotTransportEntry(WorldObject const& object);
 
 // Players the nearby list keeps before creatures. A bot fights creatures; a few players keep following possible. Without
 // this cap, a crowd of bots fills every slot with other bots and no creature is ever seen (the 1500-bot run).
