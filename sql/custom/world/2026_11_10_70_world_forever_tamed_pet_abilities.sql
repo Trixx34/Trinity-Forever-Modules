@@ -4,7 +4,7 @@
 -- adds family passives and the creature's own summon spells, and every hunter pet ability rank is a "learned" SkillLineAbility.
 -- Data: creature -> PetSpellDataId from VMaNGOS world (creature_template.pet_spell_list_id, newest patch row, world_full_14_june_2021),
 -- PetSpellDataId -> pet spells from Blizzard's Classic Era client table CreatureSpellData (1.15.9.70576). 316 beasts, 57 pet spells,
--- every one of them in our Spell data and taught by exactly one Beast Training rank (skill line 261). Read by Pet::GetWildTameSpells.
+-- every one of them in our Spell data and taught by exactly one Beast Training rank (skill line 261). Read by Pet::GetTameSpells.
 -- Beasts that had no CreatureSpellData in vanilla (Mangy Wolf 525 and many low level ones) come with no ability, like vanilla.
 -- New Forever beasts are not in this list. Safe to run again.
 CREATE TABLE IF NOT EXISTS `classic_pet_tame_spell` (
