@@ -1869,6 +1869,12 @@ Bot.Limit.MaxDbQueue = 5000
 #            (GroundEffect, layout 21), so a module can move the bot out of a harmful one. A grid search for every bot on every snapshot: leave it off unless a module
 #            asks for it (forever-bots: AvoidGroundEffects).
 #
+#    Bot.Snapshot.GroundEffects.GameObjects
+#        Default:     1
+#        Only read when Bot.Snapshot.GroundEffects is on. 1 = the list also holds the trap game objects within 30 yards that a spell summoned and that are still armed
+#            (Jeklik's bomb, Magmadar's Lava Bomb, Ragnaros' Lava Burst), as GroundEffect kind 3: spell_id is the trap's spell, radius the trap's radius. They leave no
+#            dynamic object, so without this a module cannot see them. 0 = dynamic objects and area triggers only.
+#
 #    Bot.Snapshot.Threat
 #        Default:     0
 #        1 = on a dungeon or raid map, each nearby creature in a bot's snapshot carries the threat table's top holder, how close the bot is to it, and whether that

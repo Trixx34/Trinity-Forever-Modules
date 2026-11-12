@@ -7,6 +7,7 @@
 #include "AreaTrigger.h"
 #include "Config.h"
 #include "DynamicObject.h"
+#include "GameObject.h"
 #include "ObjectAccessor.h"
 #include "Cell.h"
 #include "Corpse.h"
@@ -631,15 +632,44 @@ void FillProfessions(Player& bot, BotSnapshot& entry)
 // Layout 21: the harmful-looking things on the ground near the bot: dynamic objects (a spell's persistent area: Flamestrike, Blizzard, a poison cloud) and area
 // triggers, within kGroundEffectRangeYards. The one the bot stands in (or is nearest the edge of) comes first. Only with Bot.Snapshot.GroundEffects = 1, because it is
 // a grid search for every bot on every snapshot. hostile: the caster is hostile to the bot, so a party member's own Blizzard is not something to run from.
+// Also (Bot.Snapshot.GroundEffects.GameObjects, default on) the trap game objects a spell summoned (Jeklik's bomb, Magmadar's Lava Bomb): kind 3, spell_id the
+// trap's spell, radius the trap's own radius. They leave no dynamic object, so they were invisible here.
+// The radius of the area the spell of a trap game object hits: the largest of its effects, in yards (0 when it has none). Remembered per spell id.
+float TrapSpellRadius(uint32 spellId)
+{
+    thread_local ModuleBotSnapshotRules::SpellIdCache<float> cache;
+    SpellInfo const* info = CachedSpellInfo(spellId);
+    if (!info)
+        return 0.0f;
+    return cache.Get(spellId, info, [info]
+    {
+        float radius = 0.0f;
+        for (SpellEffectInfo const& effect : info->GetEffects())
+        {
+            if (!effect.IsEffect())
+                continue;
+            if (effect.HasRadius(SpellTargetIndex::TargetA))
+                radius = std::max(radius, effect.CalcRadius(nullptr, SpellTargetIndex::TargetA).Max);
+            if (effect.HasRadius(SpellTargetIndex::TargetB))
+                radius = std::max(radius, effect.CalcRadius(nullptr, SpellTargetIndex::TargetB).Max);
+        }
+        return radius;
+    });
+}
+
 void FillGroundEffects(Player& bot, BotSnapshot& entry)
 {
     static bool const enabled = sConfigMgr->GetBoolDefault("Bot.Snapshot.GroundEffects", false);
+    static bool const withGameObjects = sConfigMgr->GetBoolDefault("Bot.Snapshot.GroundEffects.GameObjects", true);
     if (!enabled || !bot.IsInWorld())
         return;
 
     std::list<WorldObject*> found;
     Trinity::AllWorldObjectsInRange check(&bot, forever_module::kGroundEffectRangeYards);
-    Trinity::WorldObjectListSearcher<Trinity::AllWorldObjectsInRange> searcher(&bot, found, check, GRID_MAP_TYPE_MASK_DYNAMICOBJECT | GRID_MAP_TYPE_MASK_AREATRIGGER);
+    uint32 mask = GRID_MAP_TYPE_MASK_DYNAMICOBJECT | GRID_MAP_TYPE_MASK_AREATRIGGER;
+    if (withGameObjects)
+        mask |= GRID_MAP_TYPE_MASK_GAMEOBJECT;
+    Trinity::WorldObjectListSearcher<Trinity::AllWorldObjectsInRange> searcher(&bot, found, check, mask);
     Cell::VisitGridObjects(&bot, searcher, forever_module::kGroundEffectRangeYards);
 
     struct Candidate
@@ -670,6 +700,16 @@ void FillGroundEffects(Player& bot, BotSnapshot& entry)
             c.Effect.radius = trigger->GetMaxSearchRadius();
             c.Effect.kind = 2;
             caster = trigger->GetCaster();
+        }
+        else if (GameObject* trap = object->ToGameObject())
+        {
+            GameObjectTemplate const* info = trap->GetGOInfo();
+            if (!info || !ModuleBotSnapshotRules::TrapReported(info->type == GAMEOBJECT_TYPE_TRAP, info->trap.spell, trap->isSpawned(), trap->getLootState() == GO_READY))
+                continue;
+            c.Effect.spell_id = info->trap.spell;
+            c.Effect.radius = ModuleBotSnapshotRules::TrapRadius(info->trap.radius, TrapSpellRadius(info->trap.spell));
+            c.Effect.kind = 3;
+            caster = trap->GetOwner();
         }
         else
             continue;

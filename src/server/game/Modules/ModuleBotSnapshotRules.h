@@ -52,6 +52,20 @@ inline std::size_t CapCount(std::size_t available, std::size_t capacity)
     return std::min(available, capacity);
 }
 
+// Ground effects of kind 3 (a trap game object, Bot.Snapshot.GroundEffects.GameObjects): is the object one to report? A trap type with a trap spell, spawned
+// (not waiting to respawn) and ready (not yet triggered or spent).
+inline bool TrapReported(bool isTrapType, uint32 trapSpell, bool spawned, bool ready)
+{
+    return isTrapType && trapSpell != 0 && spawned && ready;
+}
+
+// The radius of such an effect in yards: the template's radius field is a diameter in game-object terms (the core triggers a trap at radius / 2), so half of it; when
+// the field is 0, the largest radius of the trap spell's effects (0 when that has none either).
+inline float TrapRadius(uint32 templateRadius, float spellRadius)
+{
+    return templateRadius != 0 ? float(templateRadius) / 2.0f : spellRadius;
+}
+
 // Damage-hit ring (layout 22). `sequence` counts the hits recorded so far, `lifeStart` is the sequence the current life
 // started at, `next` is the slot the next hit goes into. The ring holds `capacity` hits, oldest overwritten first.
 inline uint8 DamageHitCount(uint32 sequence, uint32 lifeStart, std::size_t capacity)
