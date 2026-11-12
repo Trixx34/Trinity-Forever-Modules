@@ -977,6 +977,22 @@ public:
     }
 };
 
+// 12289 - Improved Hamstring, 12311 - Improved Shield Bash, 19228 - Improved Wing Clip, 19407 - Improved Concussive Shot (70532):
+// "Gives your <ability> a $m1% chance to <immobilize / Silence / stun> the target". Each client spell is a proc trigger with 100 as
+// spell proc chance, no class mask and the talent chance as the effect amount, so without a row it fired on every melee, ranged
+// and spell hit. The spell_proc rows bind each to its one ability; the chance is rolled from the amount here.
+class classic_spell_talent_ability_proc_chance : public AuraScript
+{
+    bool CheckProc(AuraEffect const* aurEff, ProcEventInfo& /*eventInfo*/)
+    {
+        return roll_chance(float(aurEff->GetAmount()));
+    }
+
+    void Register() override
+    {
+        DoCheckEffectProc += AuraCheckEffectProcFn(classic_spell_talent_ability_proc_chance::CheckProc, EFFECT_0, SPELL_AURA_PROC_TRIGGER_SPELL);
+    }
+};
 void AddSC_classic_talents_warrior_rogue_hunter()
 {
     // warrior
@@ -1005,6 +1021,7 @@ void AddSC_classic_talents_warrior_rogue_hunter()
     RegisterSpellScript(classic_spell_hun_lacerating_strikes);
     RegisterSpellAndAuraScriptPair(classic_spell_hun_kill_command, classic_spell_hun_kill_command_aura);
     RegisterSpellScript(classic_spell_hun_kill_command_pet);
+    RegisterSpellScript(classic_spell_talent_ability_proc_chance);
 
     // Focused Fire, Quietus
     new classic_unit_talent_damage_mods();
