@@ -2185,6 +2185,14 @@ Bot.Hunter.PetEntries = "3425,2069,3243,2071,2237"
 
 Bot.Pet.NoUpkeep = 1
 
+#    Pet.WildAbilities.Enabled
+#        Default:     1
+#        A freshly tamed hunter pet starts with Growl and the abilities its beast had in the wild (table classic_pet_tame_spell), each at
+#        the highest rank its level allows. A beast that is not in the table, or whose wild abilities are all above the pet's level, gets
+#        its family's combat abilities instead. 0 = family abilities only.
+
+Pet.WildAbilities.Enabled = 1
+
 #    Bot.Dump.Abilities
 #        Default:     0
 #        1 = the first bot created for each race and class also logs the spells a character of that kind has at levels 1, 5, 10 ... 60,

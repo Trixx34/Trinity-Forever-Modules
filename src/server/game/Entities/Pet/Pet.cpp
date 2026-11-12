@@ -2050,12 +2050,13 @@ void Pet::LearnClassicStartSpells()
     if (!cFamily)
         return;
 
-    auto learnHighestRank = [this](uint32 chainRoot)
+    // returns true when the pet knows a rank of the chain afterwards (already had one, or one was learned)
+    auto learnHighestRank = [this](uint32 chainRoot) -> bool
     {
         // only grant an ability the pet does not have at all; rank upgrades are trained with points
         for (uint32 spellId = chainRoot; spellId; spellId = sSpellMgr->GetNextSpellInChain(spellId))
             if (HasSpell(spellId))
-                return;
+                return true;
 
         uint32 learn = 0;
         uint32 learnLevel = 0;
@@ -2072,19 +2073,30 @@ void Pet::LearnClassicStartSpells()
             }
         }
 
-        if (learn)
-            learnSpell(learn);
+        if (!learn)
+            return false;
+
+        learnSpell(learn);
+        return true;
     };
 
     // Growl is the one ability every hunter pet starts with (chain base 2649)
     learnHighestRank(2649);
 
     // the beast's own wild abilities, when the table has them (each at the highest rank the pet's level allows)
-    if (std::vector<uint32> const* wild = GetWildTameSpells(GetEntry()))
+    // (Pet.WildAbilities.Enabled = 0 skips this). A beast whose wild abilities are all above the pet's level knows none of
+    // them yet and gets the family set below, like a beast that is not in the table.
+    if (sConfigMgr->GetBoolDefault("Pet.WildAbilities.Enabled", true))
     {
-        for (uint32 spellId : *wild)
-            learnHighestRank(sSpellMgr->GetFirstSpellInChain(spellId));
-        return;
+        if (std::vector<uint32> const* wild = GetWildTameSpells(GetEntry()))
+        {
+            bool knowsWild = false;
+            for (uint32 spellId : *wild)
+                if (learnHighestRank(sSpellMgr->GetFirstSpellInChain(spellId)))
+                    knowsWild = true;
+            if (knowsWild)
+                return;
+        }
     }
 
     std::unordered_set<uint32> visitedChains;
