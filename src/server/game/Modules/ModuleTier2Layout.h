@@ -657,6 +657,10 @@ enum class ActionType : std::uint32_t {
     kQuest = 10, // quest actions at an NPC within interaction range (M5). spell_id = (operation << 24) | quest id, with operation 1 =
                  // accept the quest from a giver, 2 = hand it in at an ender (the core picks the reward item), 3 = abandon it
                  // (no NPC needed). Accept and hand-in are refused in combat.
+                 // SDK 0.28: 4 completes it with its reward and no objectives, anywhere; 5 starts it from the quest-starting item the bot carries (the item
+                 // is used and spent as the game does) or, with no such item, from the game object whose entry is target_guid within interaction range:
+                 // for the quests that have no creature giver (the Onyxia attunement chain). kRefused with ActionResult::reason kNoGiver when neither is there.
+                 // A refused accept (1 or 5) carries an ActionReason in ActionResult::reason (level, class or race, prerequisite, log full, already done...).
     kReleaseSpirit = 14, // release the spirit of the dead bot (layout 11): the corpse becomes a ghost at the graveyard. No arguments. Refused
                          // when the bot is alive, already a ghost, being teleported, or in combat.
     kResurrect = 15,     // answer a pending resurrect offer (layout 11). target_guid = the resurrecter's player unit ref (BotSnapshot::resurrect_from);

@@ -1202,10 +1202,35 @@ uint32 PickQuestReward(Player& bot, Quest const& quest)
     return best;
 }
 
+// The checks of Player::CanTakeQuest one by one, for BotActionRules::QuestTakeRefusal (ActionResult::reason).
+BotActionRules::QuestTakeChecks QuestTakeChecksOf(Player& bot, Quest const& quest)
+{
+    uint32 const questId = quest.GetQuestId();
+    QuestStatus const status = bot.GetQuestStatus(questId);
+    BotActionRules::QuestTakeChecks checks;
+    checks.NotDisabled = !DisableMgr::IsDisabledFor(DISABLE_TYPE_QUEST, questId, &bot);
+    checks.NotRewarded = status != QUEST_STATUS_REWARDED;
+    checks.NotInLog = status == QUEST_STATUS_REWARDED || status == QUEST_STATUS_NONE;
+    checks.ExclusiveGroup = bot.SatisfyQuestExclusiveGroup(&quest, false);
+    checks.ClassOk = bot.SatisfyQuestClass(&quest, false);
+    checks.RaceOk = bot.SatisfyQuestRace(&quest, false);
+    checks.MinLevelOk = bot.SatisfyQuestMinLevel(&quest, false);
+    checks.MaxLevelOk = bot.SatisfyQuestMaxLevel(&quest, false);
+    checks.SkillOk = bot.SatisfyQuestSkill(&quest, false);
+    checks.ReputationOk = bot.SatisfyQuestReputation(&quest, false);
+    checks.DependentQuestsOk = bot.SatisfyQuestDependentQuests(&quest, false);
+    checks.TimedOk = bot.SatisfyQuestTimed(&quest, false);
+    checks.PeriodOk = bot.SatisfyQuestDay(&quest, false) && bot.SatisfyQuestWeek(&quest, false) && bot.SatisfyQuestMonth(&quest, false) &&
+        bot.SatisfyQuestSeasonal(&quest, false);
+    checks.ConditionsOk = bot.SatisfyQuestConditions(&quest, false);
+    checks.ExpansionOk = bot.SatisfyQuestExpansion(&quest, false);
+    return checks;
+}
+
 // kQuest: spell_id = (operation << 24) | quest id. 1 accepts the quest from a giver in range, 2 hands it in at an ender in range
 // (picking the reward), 3 abandons it, 4 completes it with its reward and no objectives, anywhere (what the GM command
-// `.quest reward` does; the planner sends it for class quests).
-BotActionStatus QuestAction(Player& bot, uint32 code, std::string& reason, uint16& reasonCode)
+// `.quest reward` does; the planner sends it for class quests), 5 starts it from an item the bot carries or a game object (target_guid = its entry).
+BotActionStatus QuestAction(Player& bot, uint32 code, uint64 targetRef, std::string& reason, uint16& reasonCode)
 {
     uint32 const operation = code >> 24;
     uint32 const questId = code & 0xFFFFFF;
@@ -1245,6 +1270,57 @@ BotActionStatus QuestAction(Player& bot, uint32 code, std::string& reason, uint1
         return BotActionStatus::kApplied;
     }
 
+    // Operation 5 (SDK 0.26): the quest starts from an item the bot carries (the item whose template starts this quest: it is used, the quest is added and the
+    // item is spent the way the game does it), or from a game object: target_guid is the object's entry, within interaction range. The same checks as an accept
+    // at an NPC. Needed for quests without a creature giver (the Onyxia attunement chain starts from an item or an object).
+    if (operation == 5)
+    {
+        if (bot.IsInCombat())
+        {
+            reason = "bot is in combat";
+            return BotActionStatus::kRefused;
+        }
+        Item* starter = nullptr;
+        bot.ForEachItem(ItemSearchLocation::Inventory, [&starter, questId](Item* item)
+        {
+            ItemTemplate const* proto = item->GetTemplate();
+            if (proto && proto->GetStartQuest() == questId)
+            {
+                starter = item;
+                return ItemSearchCallbackResult::Stop;
+            }
+            return ItemSearchCallbackResult::Continue;
+        });
+        Object* source = starter;
+        if (!source)
+        {
+            uint32 const objectEntry = uint32(targetRef);
+            GameObject* object = objectEntry ? bot.FindNearestGameObject(objectEntry, INTERACTION_DISTANCE, false) : nullptr;
+            if (!object || !object->hasQuest(questId))
+            {
+                reasonCode = uint16(forever_module::ActionReason::kNoGiver);
+                reason = objectEntry ? "the bot carries no item that starts the quest and no object " + std::to_string(objectEntry) + " that starts it is within interaction range"
+                                     : "the bot carries no item that starts the quest (target_guid names the object entry for an object start)";
+                return BotActionStatus::kRefused;
+            }
+            source = object;
+        }
+        if (!bot.CanTakeQuest(quest, false))
+        {
+            reasonCode = uint16(BotActionRules::QuestTakeRefusal(QuestTakeChecksOf(bot, *quest)));
+            reason = "bot cannot take the quest";
+            return BotActionStatus::kRefused;
+        }
+        if (!bot.CanAddQuest(quest, false))
+        {
+            reasonCode = uint16(BotActionRules::QuestAddRefusal(bot.SatisfyQuestLog(false)));
+            reason = "bot cannot add the quest (log or bags full)";
+            return BotActionStatus::kRefused;
+        }
+        bot.AddQuestAndCheckCompletion(quest, source);
+        return BotActionStatus::kApplied;
+    }
+
     if (operation != 1 && operation != 2)
     {
         reason = "unknown quest operation";
@@ -1269,23 +1345,7 @@ BotActionStatus QuestAction(Player& bot, uint32 code, std::string& reason, uint1
         if (!bot.CanTakeQuest(quest, false))
         {
             // The same checks in CanTakeQuest's order, so the module learns which one failed (ActionResult::reason).
-            BotActionRules::QuestTakeChecks checks;
-            checks.NotDisabled = !DisableMgr::IsDisabledFor(DISABLE_TYPE_QUEST, questId, &bot);
-            checks.NotRewarded = bot.GetQuestStatus(questId) != QUEST_STATUS_REWARDED;
-            checks.NotInLog = bot.GetQuestStatus(questId) == QUEST_STATUS_REWARDED || bot.GetQuestStatus(questId) == QUEST_STATUS_NONE;
-            checks.ExclusiveGroup = bot.SatisfyQuestExclusiveGroup(quest, false);
-            checks.ClassOk = bot.SatisfyQuestClass(quest, false);
-            checks.RaceOk = bot.SatisfyQuestRace(quest, false);
-            checks.MinLevelOk = bot.SatisfyQuestMinLevel(quest, false);
-            checks.MaxLevelOk = bot.SatisfyQuestMaxLevel(quest, false);
-            checks.SkillOk = bot.SatisfyQuestSkill(quest, false);
-            checks.ReputationOk = bot.SatisfyQuestReputation(quest, false);
-            checks.DependentQuestsOk = bot.SatisfyQuestDependentQuests(quest, false);
-            checks.TimedOk = bot.SatisfyQuestTimed(quest, false);
-            checks.PeriodOk = bot.SatisfyQuestDay(quest, false) && bot.SatisfyQuestWeek(quest, false) && bot.SatisfyQuestMonth(quest, false) &&
-                bot.SatisfyQuestSeasonal(quest, false);
-            checks.ConditionsOk = bot.SatisfyQuestConditions(quest, false);
-            checks.ExpansionOk = bot.SatisfyQuestExpansion(quest, false);
+            BotActionRules::QuestTakeChecks const checks = QuestTakeChecksOf(bot, *quest);
             reasonCode = uint16(BotActionRules::QuestTakeRefusal(checks));
             reason = "bot cannot take the quest";
             return BotActionStatus::kRefused;
@@ -3239,7 +3299,7 @@ static BotActionStatus ApplyBotActionImpl(Player& bot, BotAction const& action, 
             return ReclaimCorpseAction(bot, reason);
 
         case ActionType::kQuest:
-            return QuestAction(bot, action.spell_id, reason, reasonCode);
+            return QuestAction(bot, action.spell_id, action.target_guid, reason, reasonCode);
 
         case ActionType::kTeleport:
             return TeleportAction(bot, action, reason);

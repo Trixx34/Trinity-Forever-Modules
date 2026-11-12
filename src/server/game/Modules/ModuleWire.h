@@ -125,6 +125,7 @@ enum class NotifyKind : uint32
     GuildMemberLevel = 20, // protocol 21
     LfgQueue = 21,         // protocol 21
     GroupInviteDeclined = 22, // protocol 22
+    BossKilled = 23,          // protocol 27
 };
 
 // Body of an EventNotify. `value` is the player GUID for player events, the account id for AccountLogin,
@@ -235,6 +236,20 @@ struct GroupInviteDeclinedEvent
 };
 
 std::string EncodeEventNotifyGroupInviteDeclined(std::string_view hookName, GroupInviteDeclinedEvent const& event);
+
+// BossKilledEvent (events.proto field 23, protocol 27): a dungeon boss (CREATURE_FLAG_EXTRA_DUNGEON_BOSS) died to a player, or to a pet or charm of a player. Guids are raw counters;
+// group_leader_guid is the killer's group leader (0 for a killer with no group). dungeon_boss is always 1 for now (a field for later world boss kills).
+struct BossKilledEvent
+{
+    uint32 MapId = 0;
+    uint32 InstanceId = 0;
+    uint32 CreatureEntry = 0;
+    uint64 KillerGuid = 0;
+    uint64 GroupLeaderGuid = 0;
+    uint32 DungeonBoss = 1;
+};
+
+std::string EncodeEventNotifyBossKilled(std::string_view hookName, BossKilledEvent const& event);
 
 // Body of an EventRequest carrying a CommandRequestPayload.
 std::string EncodeEventRequestCommand(uint64 messageId, std::string_view hookName, std::string_view commandText,

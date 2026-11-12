@@ -55,6 +55,7 @@
 #include "LootMgr.h"
 #include "LootPackets.h"
 #include "ModuleDungeonTelegraph.h"
+#include "ModuleMgr.h"
 #include "MapUtils.h"
 #include "MiscPackets.h"
 #include "MotionMaster.h"
@@ -11906,6 +11907,21 @@ void Unit::SetMeleeAnimKitId(uint16 animKitId)
             if (Player* killed = victim->ToPlayer())
                 sScriptMgr->OnPlayerKilledByCreature(killerCre, killed);
         }
+
+        // Protocol 27: a dungeon boss died to a player (or a pet or charm of one): tell the modules (the bots module's dungeon run link). The boss flag is checked
+        // first, so a normal kill costs one flag test.
+        if (Creature* killedBoss = victim->ToCreature(); killedBoss && killedBoss->IsDungeonBoss())
+            if (Player* credited = attacker->GetCharmerOrOwnerPlayerOrPlayerItself(); credited && sModuleMgr->HasSubscriber("PlayerScript.OnBossKill"))
+            {
+                ModuleWire::BossKilledEvent event;
+                event.MapId = killedBoss->GetMapId();
+                event.InstanceId = killedBoss->GetInstanceId();
+                event.CreatureEntry = killedBoss->GetEntry();
+                event.KillerGuid = credited->GetGUID().GetCounter();
+                if (Group const* group = credited->GetGroup())
+                    event.GroupLeaderGuid = group->GetLeaderGUID().GetCounter();
+                sModuleMgr->DispatchBossKilled("PlayerScript.OnBossKill", event);
+            }
     }
 }
 

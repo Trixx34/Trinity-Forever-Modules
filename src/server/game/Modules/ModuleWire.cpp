@@ -353,6 +353,22 @@ std::string EncodeEventNotifyGroupInviteDeclined(std::string_view hookName, Grou
     return out;
 }
 
+std::string EncodeEventNotifyBossKilled(std::string_view hookName, BossKilledEvent const& event)
+{
+    std::string payload;
+    AppendVarintField(payload, 1, event.MapId);
+    AppendVarintField(payload, 2, event.InstanceId);
+    AppendVarintField(payload, 3, event.CreatureEntry);
+    AppendVarintField(payload, 4, event.KillerGuid);
+    AppendVarintField(payload, 5, event.GroupLeaderGuid);
+    AppendVarintField(payload, 6, event.DungeonBoss);
+
+    std::string out;
+    AppendBytesField(out, 1, hookName);
+    AppendBytesField(out, static_cast<uint32>(NotifyKind::BossKilled), payload);
+    return out;
+}
+
 std::string EncodeEventRequestCommand(uint64 messageId, std::string_view hookName, std::string_view commandText,
                                       uint64 issuerGuid)
 {

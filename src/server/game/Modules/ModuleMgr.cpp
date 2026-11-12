@@ -52,6 +52,7 @@ std::vector<std::string> const SupportedTier1Hooks = {
     "GuildScript.OnMemberLevel",
     "LfgScript.OnQueueUpdate",
     "GroupScript.OnInviteDeclined",
+    "PlayerScript.OnBossKill",
 };
 
 // How long a module gets to exit after Shutdown before it is terminated.
@@ -757,6 +758,29 @@ void ModuleMgr::DispatchGroupInviteDeclined(std::string_view hook, ModuleWire::G
     for (auto const& [id, session] : targets)
     {
         if (session->NotifyGroupInviteDeclined(hook, event))
+            continue;
+
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _modules.find(id);
+        if (it != _modules.end() && ++it->second.DroppedEvents == 1)
+            TC_LOG_WARN("modules", "'{}' is not keeping up with its events; notifications are being dropped (first: {}).",
+                        it->second.Name, hook);
+    }
+}
+
+void ModuleMgr::DispatchBossKilled(std::string_view hook, ModuleWire::BossKilledEvent const& event)
+{
+    std::vector<std::pair<ModuleId, std::shared_ptr<ModuleSession>>> targets;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (auto const& [id, d] : _modules)
+            if (d.Session && d.Session->Subscribes(hook))
+                targets.emplace_back(id, d.Session);
+    }
+
+    for (auto const& [id, session] : targets)
+    {
+        if (session->NotifyBossKilled(hook, event))
             continue;
 
         std::lock_guard<std::mutex> lock(_mutex);
