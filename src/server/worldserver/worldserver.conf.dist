@@ -1810,6 +1810,12 @@ Bot.Limit.MaxDbQueue = 5000
 #        Default:     0
 #        1 = a module may teleport the bots it controls to any map position (kTeleport). For scenarios and tests only.
 #
+#    Bot.Teleport.GhostNeedsInstance
+#        Default:     0
+#        1 = kTeleport refuses a ghost bound for a dungeon or raid map when the instance it belongs to (its group's, or its own lock) is not loaded any more,
+#            instead of creating a new instance for it. A finished run's ghosts sent to their corpses in one tick otherwise create one instance each on the
+#            world thread (suspected cause of the sim's 2026-11-09 18:05 world thread hang). The module's corpse run then ends as a failed run.
+#
 #    Bot.Actions.Grant
 #        Default:     0
 #        1 = a module may add items to the bags of the bots it controls (kGrant). For scenarios and tests only.

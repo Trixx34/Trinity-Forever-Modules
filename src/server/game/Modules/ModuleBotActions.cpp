@@ -1236,6 +1236,23 @@ BotActionStatus TeleportAction(Player& bot, BotAction const& action, std::string
         reason = "not a valid map position";
         return BotActionStatus::kRefused;
     }
+    // A ghost sent back to its corpse in a dungeon or raid must find the instance it died in. When that instance is gone (the run ended, the group
+    // disbanded), the arrival would create a new instance with its own map, grid load and lock for every ghost at once: the 2026-11-09 sim stall (20 ghosts
+    // of a finished Zul'Gurub run teleported to their corpses in the same tick, then the 60 s world thread watchdog). Off by default.
+    if (!bot.IsAlive())
+    {
+        static bool const needInstance = sConfigMgr->GetBoolDefault("Bot.Teleport.GhostNeedsInstance", false);
+        MapEntry const* destination = sMapStore.LookupEntry(mapId);
+        if (needInstance && destination && destination->IsDungeon())
+        {
+            uint32 const instanceId = sMapMgr->FindInstanceIdForPlayer(mapId, &bot);
+            if (!instanceId || !sMapMgr->FindMap(mapId, instanceId))
+            {
+                reason = "a ghost does not create a new instance: the one it died in is gone";
+                return BotActionStatus::kRefused;
+            }
+        }
+    }
     if (!bot.TeleportTo(mapId, action.dest_x, action.dest_y, action.dest_z, bot.GetOrientation()))
     {
         reason = "the teleport was refused (instance full, locked or not allowed)";
