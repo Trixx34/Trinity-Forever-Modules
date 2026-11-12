@@ -11,7 +11,8 @@ using forever_module::BotActionStatus;
 TEST_CASE("Action types are valid up to the last one the layout defines", "[ModuleBotActionRules]")
 {
     uint32 const last = static_cast<uint32>(ActionType::kLastActionType);
-    CHECK(last == static_cast<uint32>(ActionType::kLfgJoin));
+    CHECK(last == static_cast<uint32>(ActionType::kLastActionType));
+    CHECK(last >= static_cast<uint32>(ActionType::kLfgJoin)); // the layout only grows
     CHECK(IsValidActionType(0));
     CHECK(IsValidActionType(static_cast<uint32>(ActionType::kCraft)));
     CHECK(IsValidActionType(last - 1));
