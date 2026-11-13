@@ -317,15 +317,22 @@ void ProtocolBaseRule()
     std::string const path = SocketPath("base");
     std::atomic<int> accepted{0};
     std::atomic<int> rejected{0};
+    std::atomic<int> disconnected{0};
+    std::string lastDetail; // written by the session thread, read after it has stopped counting; diagnostic only
     auto settings = TestSettings(path);
     settings.ExpectedProtocolVersion = "27";
     settings.OldestProtocolVersion = "26";
-    ModuleSession session(settings, 8, [&](ModuleSession::Event e, std::string const&)
+    ModuleSession session(settings, 8, [&](ModuleSession::Event e, std::string const& detail)
     {
         if (e == ModuleSession::Event::Accepted)
             ++accepted;
         else if (e == ModuleSession::Event::Rejected)
             ++rejected;
+        else if (e == ModuleSession::Event::Disconnected)
+        {
+            lastDetail = detail;
+            ++disconnected;
+        }
     });
     std::string error;
     CHECK(session.Listen(error));
@@ -339,10 +346,20 @@ void ProtocolBaseRule()
         CHECK(RecvEnvelope(fd, in));
         CHECK(in.payload_case() == forever_module::Envelope::kHandshakeResponse);
         CHECK(in.handshake_response().accepted());
+        // Read the ModuleConfig frame that follows the response before closing: the session sends it before it counts the module as accepted,
+        // and a send to an already closed socket fails the handshake (Disconnected instead of Accepted), which made this test flaky on a slow host.
+        CHECK(RecvEnvelope(fd, in));
+        CHECK(in.payload_case() == forever_module::Envelope::kModuleConfig);
         ::close(fd);
     }
-    for (int i = 0; i < 200 && accepted == 0; ++i)
+    auto const waitStart = std::chrono::steady_clock::now();
+    for (int i = 0; i < 2000 && accepted == 0 && disconnected == 0; ++i)
         std::this_thread::sleep_for(5ms);
+    if (accepted != 1)
+        std::printf("DIAG base rule: accepted=%d rejected=%d disconnected=%d after %lld ms, last event detail \"%s\"\n", accepted.load(),
+                    rejected.load(), disconnected.load(),
+                    static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - waitStart).count()),
+                    lastDetail.c_str());
     CHECK(accepted == 1);
     session.Stop();
 
