@@ -69,6 +69,16 @@ the code is the reference and the difference is listed.
 - Not done: nothing accepts a battleground invitation for a queued bot; the duel challenge and guild invitation are not events, so a module learns of them
   only by asking (a guild accept answers "no pending guild invitation" when there is none).
 
+## Protocol 29 (SDK 0.30): the damage event, not compiled until Jenkins builds it
+
+- Event `PlayerScript.OnDamaged` (`PlayerDamagedEvent`, EventNotify field 24, an append, base 26): `Unit::DealDamage` calls `ModuleMgr::OnBotDamaged` beside `ModuleDungeonTelegraph::Damage`, after absorbs
+  and script changes, before the damage is applied (so the killing blow and the health before are known). Only for a victim whose session `IsBot()`, and only to the module that controls the bot and
+  subscribes. Sent: killing blows, and hits of at least `Modules.DamageEvent.MinPct` percent (20) of max health; `Modules.DamageEvent.All = 1` sends every hit; `Modules.DamageEvent.MaxPerSecond` (200)
+  caps a module (the rest are dropped, one log line at the first drop and every 1000th); `Modules.DamageEvent.Enabled = 0` switches it off. Fields: victim, attacker guid/entry/type, spell id (0 melee),
+  school mask, amount, overkill, killing blow, health after, max health, map and position. Absorb and resist are not carried (DealDamage sees damage after them).
+- Pure rules in `ModuleDamageEventRules.h` (tests `tests/game/ModuleDamageEventRules.cpp`, wire interop in `ModuleWireInterop.cpp`).
+- Separate from the Tier 2 damage log (`RecordBotDamage`, layout 22), which records every hit before mitigation without the killing-blow flag.
+
 ## Protocol 27 (SDK 0.28): todo-core2 additions, all uncompiled until Jenkins builds them
 
 - `kVendor` bit 2048 (`Bot.Vendor.SellGear`, default 1): sells bag gear the worn gear outclasses. Pure rule `ModuleBotGearSellRules.h` (tests in `tests/game/ModuleBotGearSellRules.cpp`), core function `SellOutclassedGear`.

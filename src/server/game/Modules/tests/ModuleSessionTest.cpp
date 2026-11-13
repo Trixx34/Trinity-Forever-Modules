@@ -309,6 +309,7 @@ void ProtocolBaseRule()
     CHECK(ProtocolAcceptable("26", "27", "26"));   // an older module of the same base: accepted
     CHECK(!ProtocolAcceptable("25", "27", "26"));  // a different base: refused
     CHECK(!ProtocolAcceptable("28", "27", "26"));  // a module newer than the core: refused
+    CHECK(ProtocolAcceptable("26", "29", "26") && ProtocolAcceptable("29", "29", "26") && !ProtocolAcceptable("30", "29", "26")); // protocol 29 core
     CHECK(!ProtocolAcceptable("26", "27", ""));    // no base: exact match only
     CHECK(ProtocolAcceptable("27", "27", ""));
     CHECK(!ProtocolAcceptable("x26", "27", "26") && !ProtocolAcceptable("", "27", "26"));

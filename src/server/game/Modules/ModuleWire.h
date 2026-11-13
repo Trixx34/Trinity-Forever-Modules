@@ -126,6 +126,7 @@ enum class NotifyKind : uint32
     LfgQueue = 21,         // protocol 21
     GroupInviteDeclined = 22, // protocol 22
     BossKilled = 23,          // protocol 27
+    PlayerDamaged = 24,       // protocol 29
 };
 
 // Body of an EventNotify. `value` is the player GUID for player events, the account id for AccountLogin,
@@ -250,6 +251,29 @@ struct BossKilledEvent
 };
 
 std::string EncodeEventNotifyBossKilled(std::string_view hookName, BossKilledEvent const& event);
+
+// PlayerDamagedEvent (events.proto field 24, protocol 29): damage a bot took, from Unit::DealDamage after absorbs and script changes. Guids are raw counters. Overkill is
+// the part beyond the health before the hit (0 unless KillingBlow); VictimHealthAfter is 0 for a killing blow. AttackerType: 0 none, 1 creature, 2 player, 3 other.
+struct PlayerDamagedEvent
+{
+    uint64 VictimGuid = 0;
+    uint64 AttackerGuid = 0;
+    uint32 AttackerEntry = 0;
+    uint32 SpellId = 0;
+    uint32 School = 0;
+    uint32 Amount = 0;
+    uint32 Overkill = 0;
+    bool KillingBlow = false;
+    uint32 VictimHealthAfter = 0;
+    uint32 VictimMaxHealth = 0;
+    uint32 MapId = 0;
+    float PosX = 0.0f;
+    float PosY = 0.0f;
+    float PosZ = 0.0f;
+    uint32 AttackerType = 0;
+};
+
+std::string EncodeEventNotifyPlayerDamaged(std::string_view hookName, PlayerDamagedEvent const& event);
 
 // Body of an EventRequest carrying a CommandRequestPayload.
 std::string EncodeEventRequestCommand(uint64 messageId, std::string_view hookName, std::string_view commandText,

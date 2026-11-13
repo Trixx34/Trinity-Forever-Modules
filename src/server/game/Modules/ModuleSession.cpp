@@ -214,6 +214,14 @@ bool ModuleSession::NotifyBossKilled(std::string_view hook, ModuleWire::BossKill
                                                                 ModuleWire::EncodeEventNotifyBossKilled(hook, event))));
 }
 
+bool ModuleSession::NotifyPlayerDamaged(std::string_view hook, ModuleWire::PlayerDamagedEvent const& event)
+{
+    if (!Subscribes(hook))
+        return false;
+    return Enqueue(ModuleWire::Frame(ModuleWire::EncodeEnvelope(ModuleWire::PayloadKind::EventNotify,
+                                                                ModuleWire::EncodeEventNotifyPlayerDamaged(hook, event))));
+}
+
 bool ModuleSession::NotifyChat(std::string_view hook, ModuleWire::ChatEvent const& event)
 {
     if (!Subscribes(hook))

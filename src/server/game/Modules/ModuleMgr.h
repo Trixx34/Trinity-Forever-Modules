@@ -16,6 +16,7 @@
 #include "ModuleBotOwnership.h"
 #include "ModuleBotPartyView.h"
 #include "ModuleBotSnapshot.h"
+#include "ModuleDamageEventRules.h"
 #include "ModuleSession.h"
 #include "ModuleTier2Layout.h"
 
@@ -39,13 +40,16 @@ using ModuleId = uint32;
 
 class ModuleTier2Region;
 struct ModuleActionSet;
+class Player;
+class SpellInfo;
+class Unit;
 
 // Wire protocol this core speaks (Tier 1 schema + Tier 2 layout). Must equal kProtocolVersion in
 // forever-module-sdk's include/forever_module/protocol_version.h (that is what the CI sync checks compare).
 // Layout 25 on: a module is served when its protocol is between kModuleProtocolBase and kModuleProtocolVersion (ProtocolAcceptable in
 // ModuleSession.h), i.e. a newer core of the same layout base accepts the older module; a different base is refused. The Tier 2 region
 // carries the layout base too, and the SDK reads it (Tier2Session::Attach). docs/122-layout-25-design.md in forever-ops has the rule.
-inline constexpr char const* kModuleProtocolVersion = "28"; // 28: kResurrect spell_id 2 (take the spirit healer) and kCastSpell dest_x >= 1 (cast that exact rank), layout 25 unchanged (SDK 0.29). 27: the boss-kill event (EventNotify field 23, hook PlayerScript.OnBossKill), kQuest operation 5 (start from an item or object), ActionResult::reason, kVendor bit 2048 (SDK 0.28). 26: Tier 2 layout 25 (party view and member pool, 8 ground effects, telegraphs, position probes kProbePoint, kStopCast, kTransport reserved, aggro radius, role hint, section table). 25: Tier 2 layout 24 (the bot's perception: nearby victim, threat, cast, type, flags; gcd, movement, transport, banker, target auras, result ring). 24: GuildAction invite op and player_guid (SDK protocol 24). 23: GuildAction create op and name. 22: group-invite-declined event, layout 23 (capital city, guild, item level, shared quest). 21: emote and LFG-join actions, party/guild speak, guild-level and LFG-queue events
+inline constexpr char const* kModuleProtocolVersion = "29"; // 29: the damage event (EventNotify field 24, hook PlayerScript.OnDamaged: a bot's killing blows and big hits with the real attacker and spell, rate limited), Tier 1 only, layout 25 unchanged (SDK 0.30). 28: kResurrect spell_id 2 (take the spirit healer) and kCastSpell dest_x >= 1 (cast that exact rank), layout 25 unchanged (SDK 0.29). 27: the boss-kill event (EventNotify field 23, hook PlayerScript.OnBossKill), kQuest operation 5 (start from an item or object), ActionResult::reason, kVendor bit 2048 (SDK 0.28). 26: Tier 2 layout 25 (party view and member pool, 8 ground effects, telegraphs, position probes kProbePoint, kStopCast, kTransport reserved, aggro radius, role hint, section table). 25: Tier 2 layout 24 (the bot's perception: nearby victim, threat, cast, type, flags; gcd, movement, transport, banker, target auras, result ring). 24: GuildAction invite op and player_guid (SDK protocol 24). 23: GuildAction create op and name. 22: group-invite-declined event, layout 23 (capital city, guild, item level, shared quest). 21: emote and LFG-join actions, party/guild speak, guild-level and LFG-queue events
 
 // The lowest protocol of the current layout base. Raise it to kModuleProtocolVersion on a BREAK only (a Tier 1 schema change an older module cannot
 // live with, or kTier2LayoutBase going up); an append (new fields at the end, new message fields, new enum values) leaves it alone.
@@ -79,6 +83,7 @@ struct ModuleDescriptor
     uint32 HandshakeAttempts = 0;    // consecutive handshake failures; reset when a handshake is accepted
     uint32 RestartAttempts = 0;      // lifetime count of restarts scheduled, for `module info`
     uint64 DroppedEvents = 0;        // notifications not delivered because the module's queue was full
+    ModuleDamageEventRules::Limiter DamageEvents; // protocol 29: the per-second cap on PlayerScript.OnDamaged; guarded by ModuleMgr::_mutex
     std::vector<std::chrono::steady_clock::time_point> RestartTimes; // post-handshake restarts in the rolling window
     std::chrono::steady_clock::time_point RestartAt{};             // when a scheduled restart is due; epoch if none
 
@@ -187,6 +192,10 @@ class TC_GAME_API ModuleMgr
         // Protocol 27: PlayerScript.OnBossKill (a dungeon boss died to a player). Same non-blocking rules as DispatchChat.
         void DispatchBossKilled(std::string_view hook, ModuleWire::BossKilledEvent const& event);
 
+        // Protocol 29: PlayerScript.OnDamaged. Called from Unit::DealDamage on the world thread for a bot victim (the caller has tested the session's IsBot flag; this tests
+        // the rest): applies the Modules.DamageEvent.* rules, then tells the module that controls the bot, and no other, if it subscribes. Never blocks.
+        void OnBotDamaged(Unit* attacker, Player* victim, SpellInfo const* spell, uint32 schoolMask, uint32 amount, uint32 healthBefore, bool killingBlow);
+
         // Offers a chat command (without its leading '.') to the modules subscribed to CommandScript,
         // in module id order. The first success wins. A reply with success=false and no text means
         // "not mine" and the next module is asked. The caller must not hold locks that session events need.
@@ -239,6 +248,7 @@ class TC_GAME_API ModuleMgr
             // Layout 25: party view slots of a region (Modules.Tier2.MaxPartyViews). 0 = max_bots / 2 + 1; the member pool follows. Written into the region header.
             uint32 Tier2MaxPartyViews = 0;
             bool AutoApprove = false;
+            ModuleDamageEventRules::Config DamageEvent; // Modules.DamageEvent.*
         };
 
         void ProcessModuleDirectory(std::string const& root, std::string const& name);

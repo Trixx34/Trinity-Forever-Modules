@@ -231,6 +231,46 @@ int main()
         }
     }
 
+    // core -> SDK: PlayerDamaged notify (protocol 29): every field the core sets reads back the same in the SDK's message.
+    {
+        ModuleWire::PlayerDamagedEvent hit;
+        hit.VictimGuid = 4242;
+        hit.AttackerGuid = 9001;
+        hit.AttackerEntry = 11502;
+        hit.SpellId = 20566;
+        hit.School = 4;
+        hit.Amount = 3100;
+        hit.Overkill = 250;
+        hit.KillingBlow = true;
+        hit.VictimHealthAfter = 0;
+        hit.VictimMaxHealth = 5200;
+        hit.MapId = 409;
+        hit.PosX = 1.5f;
+        hit.PosY = -2.5f;
+        hit.PosZ = 3.25f;
+        hit.AttackerType = 1;
+        std::string bytes = ModuleWire::EncodeEnvelope(ModuleWire::PayloadKind::EventNotify,
+                                                       ModuleWire::EncodeEventNotifyPlayerDamaged("PlayerScript.OnDamaged", hit));
+        forever_module::Envelope sdk;
+        CHECK(sdk.ParseFromString(bytes));
+        CHECK(sdk.event_notify().hook_name() == "PlayerScript.OnDamaged");
+        CHECK(sdk.event_notify().event_payload_case() == forever_module::EventNotify::kPlayerDamaged);
+        forever_module::PlayerDamagedEvent const& e = sdk.event_notify().player_damaged();
+        CHECK(e.victim_guid() == 4242);
+        CHECK(e.attacker_guid() == 9001);
+        CHECK(e.attacker_entry() == 11502);
+        CHECK(e.spell_id() == 20566);
+        CHECK(e.school() == 4);
+        CHECK(e.amount() == 3100);
+        CHECK(e.overkill() == 250);
+        CHECK(e.killing_blow());
+        CHECK(e.victim_health_after() == 0);
+        CHECK(e.victim_max_health() == 5200);
+        CHECK(e.map_id() == 409);
+        CHECK(e.x() == 1.5f && e.y() == -2.5f && e.z() == 3.25f);
+        CHECK(e.attacker_type() == 1);
+    }
+
     // core -> SDK: PlayerChat notify.
     {
         ModuleWire::ChatEvent chat;

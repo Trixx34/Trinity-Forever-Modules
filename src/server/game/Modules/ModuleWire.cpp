@@ -369,6 +369,31 @@ std::string EncodeEventNotifyBossKilled(std::string_view hookName, BossKilledEve
     return out;
 }
 
+std::string EncodeEventNotifyPlayerDamaged(std::string_view hookName, PlayerDamagedEvent const& event)
+{
+    std::string payload;
+    AppendVarintField(payload, 1, event.VictimGuid);
+    AppendVarintField(payload, 2, event.AttackerGuid);
+    AppendVarintField(payload, 3, event.AttackerEntry);
+    AppendVarintField(payload, 4, event.SpellId);
+    AppendVarintField(payload, 5, event.School);
+    AppendVarintField(payload, 6, event.Amount);
+    AppendVarintField(payload, 7, event.Overkill);
+    AppendVarintField(payload, 10, event.KillingBlow ? 1 : 0);
+    AppendVarintField(payload, 11, event.VictimHealthAfter);
+    AppendVarintField(payload, 12, event.VictimMaxHealth);
+    AppendVarintField(payload, 13, event.MapId);
+    AppendFloatField(payload, 14, event.PosX);
+    AppendFloatField(payload, 15, event.PosY);
+    AppendFloatField(payload, 16, event.PosZ);
+    AppendVarintField(payload, 17, event.AttackerType);
+
+    std::string out;
+    AppendBytesField(out, 1, hookName);
+    AppendBytesField(out, static_cast<uint32>(NotifyKind::PlayerDamaged), payload);
+    return out;
+}
+
 std::string EncodeEventRequestCommand(uint64 messageId, std::string_view hookName, std::string_view commandText,
                                       uint64 issuerGuid)
 {

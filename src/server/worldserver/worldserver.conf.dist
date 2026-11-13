@@ -1726,6 +1726,31 @@ Modules.RestartBackoffMs = 1000
 
 Modules.CommandRequestTimeoutMs = 200
 
+#    Modules.DamageEvent.Enabled
+#        Description: Protocol 29, hook PlayerScript.OnDamaged. 1 = a module that subscribes to the hook gets an event for a bot it controls when the bot takes a killing
+#                     blow or a hit of at least Modules.DamageEvent.MinPct percent of its maximum health, with the real attacker and spell. 0 = never sent.
+#        Default:     1
+
+Modules.DamageEvent.Enabled = 1
+
+#    Modules.DamageEvent.MinPct
+#        Description: A non-lethal hit is sent when it is at least this percent (1 to 100) of the victim's maximum health. Killing blows are always sent.
+#        Default:     20
+
+Modules.DamageEvent.MinPct = 20
+
+#    Modules.DamageEvent.All
+#        Description: 1 = send every hit a bot takes (debugging; the per-second cap below still applies). 0 = only killing blows and hits over MinPct.
+#        Default:     0
+
+Modules.DamageEvent.All = 0
+
+#    Modules.DamageEvent.MaxPerSecond
+#        Description: Most damage events a second for one module. The rest are dropped and counted (one log line at the first drop and at every 1000th).
+#        Default:     200
+
+Modules.DamageEvent.MaxPerSecond = 200
+
 #    Modules.Tier2.MaxBots
 #        Default:     1500
 #        Upper limit on bots in a module's Tier 2 region. A module's request is capped at this value.

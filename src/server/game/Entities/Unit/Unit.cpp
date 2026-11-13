@@ -1105,6 +1105,11 @@ bool Unit::HasBreakableByDamageCrowdControlAura(Unit const* excludeCasterChannel
     // Record applied damage after absorbs/resists and script adjustments.
     ModuleDungeonTelegraph::Damage(attacker, victim, spellProto, damageTaken, health);
 
+    // Protocol 29: the real source of a bot's big hits and deaths, for the modules (PlayerScript.OnDamaged). One type test and one flag test for a non-bot victim.
+    if (victim->GetTypeId() == TYPEID_PLAYER)
+        if (Player* damagedBot = victim->ToPlayer(); damagedBot->GetSession() && damagedBot->GetSession()->IsBot())
+            sModuleMgr->OnBotDamaged(attacker, damagedBot, spellProto, damageSchoolMask, damageTaken, health, killed);
+
     if (killed)
         Unit::Kill(attacker, victim, durabilityLoss, skipSettingDeathState);
     else

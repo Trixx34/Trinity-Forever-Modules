@@ -8,6 +8,11 @@
 #include <functional>
 #include <chrono>
 #include "Config.h"
+#include "Creature.h"
+#include "GameTime.h"
+#include "Player.h"
+#include "SpellInfo.h"
+#include "Unit.h"
 #include "Log.h"
 #include "ModuleActions.h"
 #include "ModuleBotActions.h"
@@ -53,6 +58,7 @@ std::vector<std::string> const SupportedTier1Hooks = {
     "LfgScript.OnQueueUpdate",
     "GroupScript.OnInviteDeclined",
     "PlayerScript.OnBossKill",
+    "PlayerScript.OnDamaged",
 };
 
 // How long a module gets to exit after Shutdown before it is terminated.
@@ -114,6 +120,10 @@ void ModuleMgr::LoadModules()
     _config.MaxRestartAttempts = static_cast<uint32>(sConfigMgr->GetIntDefault("Modules.MaxRestartAttempts", 5));
     _config.RestartBackoffMs = static_cast<uint64>(sConfigMgr->GetIntDefault("Modules.RestartBackoffMs", 1000));
     _config.CommandRequestTimeoutMs = static_cast<uint64>(sConfigMgr->GetIntDefault("Modules.CommandRequestTimeoutMs", 200));
+    _config.DamageEvent.Enabled = sConfigMgr->GetBoolDefault("Modules.DamageEvent.Enabled", true);
+    _config.DamageEvent.MinPct = static_cast<uint32>(std::clamp<int32>(sConfigMgr->GetIntDefault("Modules.DamageEvent.MinPct", 20), 1, 100));
+    _config.DamageEvent.All = sConfigMgr->GetBoolDefault("Modules.DamageEvent.All", false);
+    _config.DamageEvent.MaxPerSecond = static_cast<uint32>(std::clamp<int32>(sConfigMgr->GetIntDefault("Modules.DamageEvent.MaxPerSecond", 200), 0, 100000));
     _config.AutoApprove = sConfigMgr->GetBoolDefault("Modules.AutoApproveLocal", false);
     _config.Tier2MaxBots = static_cast<uint32>(sConfigMgr->GetIntDefault("Modules.Tier2.MaxBots", 1500));
     _config.Tier2MaxNearbyUnits = static_cast<uint32>(sConfigMgr->GetIntDefault("Modules.Tier2.MaxNearbyUnits", 16));
@@ -789,6 +799,82 @@ void ModuleMgr::DispatchBossKilled(std::string_view hook, ModuleWire::BossKilled
             TC_LOG_WARN("modules", "'{}' is not keeping up with its events; notifications are being dropped (first: {}).",
                         it->second.Name, hook);
     }
+}
+
+void ModuleMgr::OnBotDamaged(Unit* attacker, Player* victim, SpellInfo const* spell, uint32 schoolMask, uint32 amount, uint32 healthBefore, bool killingBlow)
+{
+    static constexpr std::string_view hook = "PlayerScript.OnDamaged";
+
+    // The cheap tests first: this runs for every hit a bot takes. _config is written by LoadModules before any bot is online.
+    if (!ModuleDamageEventRules::ShouldSend(_config.DamageEvent, amount, victim->GetMaxHealth(), killingBlow))
+        return;
+
+    std::shared_ptr<ModuleSession> session;
+    uint64 droppedToReport = 0;
+    ModuleId target = 0;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        uint32 owner = 0;
+        if (!_owners.Owner(victim->GetGUID().GetCounter(), owner))
+            return;
+        auto it = _modules.find(owner);
+        if (it == _modules.end() || !it->second.Session || !it->second.Session->Subscribes(hook))
+            return;
+        uint64 const nowMs = GameTime::GetGameTimeMS();
+        if (!it->second.DamageEvents.Allow(nowMs, _config.DamageEvent.MaxPerSecond))
+        {
+            // one line per window that dropped something, not one per drop
+            if (it->second.DamageEvents.Dropped == 1 || it->second.DamageEvents.Dropped % 1000 == 0)
+                droppedToReport = it->second.DamageEvents.Dropped;
+            if (!droppedToReport)
+                return;
+        }
+        else
+        {
+            session = it->second.Session;
+            target = owner;
+        }
+        if (droppedToReport)
+            TC_LOG_WARN("modules", "'{}': damage events over Modules.DamageEvent.MaxPerSecond ({}); {} dropped so far.",
+                        it->second.Name, _config.DamageEvent.MaxPerSecond, droppedToReport);
+    }
+    if (!session)
+        return;
+
+    ModuleWire::PlayerDamagedEvent event;
+    event.VictimGuid = victim->GetGUID().GetCounter();
+    if (attacker)
+    {
+        event.AttackerGuid = attacker->GetGUID().GetCounter();
+        if (attacker->IsPlayer())
+            event.AttackerType = 2;
+        else if (Creature const* creature = attacker->ToCreature())
+        {
+            event.AttackerType = 1;
+            event.AttackerEntry = creature->GetEntry();
+        }
+        else
+            event.AttackerType = 3;
+    }
+    event.SpellId = spell ? spell->Id : 0;
+    event.School = schoolMask;
+    event.Amount = amount;
+    event.Overkill = killingBlow ? ModuleDamageEventRules::Overkill(amount, healthBefore) : 0;
+    event.KillingBlow = killingBlow;
+    event.VictimHealthAfter = killingBlow ? 0 : ModuleDamageEventRules::HealthAfter(amount, healthBefore);
+    event.VictimMaxHealth = victim->GetMaxHealth();
+    event.MapId = victim->GetMapId();
+    event.PosX = victim->GetPositionX();
+    event.PosY = victim->GetPositionY();
+    event.PosZ = victim->GetPositionZ();
+
+    if (session->NotifyPlayerDamaged(hook, event))
+        return;
+
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto it = _modules.find(target);
+    if (it != _modules.end() && ++it->second.DroppedEvents == 1)
+        TC_LOG_WARN("modules", "'{}' is not keeping up with its events; notifications are being dropped (first: {}).", it->second.Name, hook);
 }
 
 void ModuleMgr::DispatchGuildMemberLevel(std::string_view hook, ModuleWire::GuildMemberLevelEvent const& event)
