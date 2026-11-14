@@ -15,6 +15,7 @@
 #include "ModuleBotSupplyRules.h"
 #include <cmath>
 #include <limits>
+#include "Bag.h"
 #include "BotMgr.h"
 #include "BotTalentSpec.h"
 #include "Cell.h"
@@ -949,6 +950,63 @@ uint32 SellOutclassedGear(Player& bot, uint32 profile)
         }
     }
     return sold;
+}
+
+// kVendor repair bit: the discount the bot repairs with. 0 is what the handler passed to DurabilityRepairAll before 2026-11-14 and is kept: with it
+// Item::CalculateDurabilityRepairCost gives every damaged piece its floor price of 1 copper. A real price (GetReputationPriceDiscount of the NPC) is an
+// economy decision of its own.
+constexpr float kBotRepairDiscount = 0.0f;
+
+// kVendor repair bit: repairs piece by piece, as much as the bot's money pays for (BotActionRules::PlanRepair: worn first, then the worst, then the cheapest),
+// where DurabilityRepairAll repaired nothing unless the bot could pay for everything. The same items as DurabilityRepairAll (equipped, backpack, the bags
+// themselves, the items in the bags; not the bank). Returns the result text, which is also logged as vendor_repair.
+std::string RepairWhatBotCanAfford(Player& bot)
+{
+    std::vector<uint16> positions;
+    std::vector<BotActionRules::RepairPiece> pieces;
+    auto const consider = [&](uint16 pos)
+    {
+        Item* item = bot.GetItemByPos(pos);
+        if (!item)
+            return;
+        uint64 const cost = item->CalculateDurabilityRepairCost(kBotRepairDiscount);
+        if (!cost)
+            return;
+        positions.push_back(pos);
+        pieces.push_back({ *item->m_itemData->Durability, *item->m_itemData->MaxDurability, cost, Player::IsEquipmentPos(pos) });
+    };
+    uint8 const inventoryEnd = INVENTORY_SLOT_ITEM_START + bot.GetInventorySlotCount();
+    for (uint8 slot = EQUIPMENT_SLOT_START; slot < inventoryEnd; ++slot)
+        consider(uint16((INVENTORY_SLOT_BAG_0 << 8) | slot));
+    for (uint8 bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+        for (uint8 slot = 0; slot < MAX_BAG_SIZE; ++slot)
+            consider(uint16((bag << 8) | slot));
+
+    if (pieces.empty())
+        return "nothing to repair";
+
+    BotActionRules::RepairPlan const plan = BotActionRules::PlanRepair(pieces, bot.GetMoney());
+    uint32 repaired = 0;
+    uint32 brokenRepaired = 0;
+    uint64 spent = 0;
+    for (size_t const i : plan.Repair)
+    {
+        uint64 const before = bot.GetMoney();
+        bot.DurabilityRepair(positions[i], true, kBotRepairDiscount); // takes the cost itself; does nothing when the money is short
+        Item const* item = bot.GetItemByPos(positions[i]);
+        if (!item || *item->m_itemData->Durability != *item->m_itemData->MaxDurability)
+            continue;
+        ++repaired;
+        if (pieces[i].Durability == 0)
+            ++brokenRepaired;
+        spent += before - std::min(before, bot.GetMoney());
+    }
+    std::string text = "repaired " + std::to_string(repaired) + " of " + std::to_string(pieces.size()) + " damaged pieces (" +
+        std::to_string(brokenRepaired) + " broken) for " + std::to_string(spent) + " copper";
+    if (repaired < pieces.size())
+        text += ", " + std::to_string(pieces.size() - repaired) + " left: money " + std::to_string(bot.GetMoney()) + " copper";
+    TC_LOG_INFO("server.worldserver", "BotMgr: vendor_repair bot={} {}", bot.GetName(), text);
+    return text;
 }
 
 int32 BotGearUpgradeScore(Player const& bot, ItemTemplate const& item)
@@ -3381,8 +3439,10 @@ static BotActionStatus ApplyBotActionImpl(Player& bot, BotAction const& action, 
                     SellGreyItems(bot, (services & kServiceSellJunkBit) != 0);
                 if ((services & kServiceSellGearBit) && npc->HasNpcFlag(UNIT_NPC_FLAG_VENDOR_MASK))
                     SellOutclassedGear(bot, ModuleBotGearSell::GearProfileOf(services));
+                // Piece by piece, as much as the money pays for. The text goes into `reason` (the action is still kApplied: the visit's other services
+                // ran) and into the vendor_repair log line; the module sees the result in durability_pct of the next snapshot.
                 if ((services & kServiceRepairBit) && npc->HasNpcFlag(UNIT_NPC_FLAG_REPAIR))
-                    bot.DurabilityRepairAll(true, 0.0f, false);
+                    reason = RepairWhatBotCanAfford(bot);
                 // Buying comes last, from the money the sale left and the repair did not take. A vendor without the goods buys nothing and
                 // is not an error: the module sees it in the counts of the next snapshot.
                 if (buying && npc->HasNpcFlag(UNIT_NPC_FLAG_VENDOR_MASK))
