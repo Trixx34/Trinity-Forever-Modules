@@ -2248,6 +2248,20 @@ Pet.WildAbilities.Enabled = 1
 
 Bot.Dump.Abilities = 0
 
+#    Bot.Looks.Random
+#        Default:     1
+#        1 = a new bot gets random looks (face, hair, skin and the other customization options of its race and sex, each picked at random and
+#            checked with the same appearance validation as a player's character creation). 0 = every bot keeps the default look.
+
+Bot.Looks.Random = 1
+
+#    Bot.Looks.Backfill
+#        Default:     1
+#        1 = a bot that has no customization choice stored at all (made before Bot.Looks.Random) gets random looks once when it logs in
+#            (log line "was given random looks"). A character with any stored choice is never changed. 0 = off.
+
+Bot.Looks.Backfill = 1
+
 #    Bot.Run.StopTime
 #        Default:     (empty: no stop time)
 #        Local time of day, HH:MM or HH:MM:SS. The first such time after startup ends the run: no bot is created after it,

@@ -52,6 +52,7 @@
 #include <set>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace
 {
@@ -477,6 +478,63 @@ uint32 GiveBags(Player& bot)
     return given;
 }
 
+// Random looks: a bot made with no customization choices has every face, hair, skin and feature option at its default, so all bots of a race
+// and sex look alike. For each option the race and sex have, one choice is picked at random and kept when the whole set still passes
+// WorldSession::ValidateAppearance (a choice can need another option's choice; up to 6 tries per option, else the option stays unset). The options
+// go in ascending id, as ValidateAppearance wants them sorted. Returns false (and an empty list) when the race and sex have no options.
+static bool RandomLooks(WorldSession& session, Races race, Classes playerClass, Gender gender, std::vector<UF::ChrCustomizationChoice>& looks)
+{
+    looks.clear();
+    std::vector<ChrCustomizationOptionEntry const*> const* options = sDB2Manager.GetCustomiztionOptions(race, gender);
+    if (!options || options->empty())
+        return false;
+
+    std::vector<ChrCustomizationOptionEntry const*> sorted(*options);
+    std::sort(sorted.begin(), sorted.end(), [](ChrCustomizationOptionEntry const* a, ChrCustomizationOptionEntry const* b) { return a->ID < b->ID; });
+    for (ChrCustomizationOptionEntry const* option : sorted)
+    {
+        std::vector<ChrCustomizationChoiceEntry const*> const* choices = sDB2Manager.GetCustomiztionChoices(option->ID);
+        if (!choices || choices->empty())
+            continue;
+        for (uint32 attempt = 0; attempt < 6; ++attempt)
+        {
+            ChrCustomizationChoiceEntry const* pick = (*choices)[urand(0, uint32(choices->size() - 1))];
+            UF::ChrCustomizationChoice choice;
+            choice.ChrCustomizationOptionID = option->ID;
+            choice.ChrCustomizationChoiceID = pick->ID;
+            looks.push_back(choice);
+            if (session.ValidateAppearance(race, playerClass, gender, MakeChrCustomizationChoiceRange(looks)))
+                break;
+            looks.pop_back();
+        }
+    }
+
+    if (looks.empty() || !session.ValidateAppearance(race, playerClass, gender, MakeChrCustomizationChoiceRange(looks)))
+    {
+        looks.clear();
+        return false;
+    }
+    return true;
+}
+
+// Bot.Looks.Backfill: a bot that was made before random looks (no choice stored for any option of its race and sex) gets random looks once at
+// login; the character saves them with its next save. A character that has any choice (a player's own, or a bot that already got looks) is left alone.
+static bool BackfillLooks(Player& bot)
+{
+    std::vector<ChrCustomizationOptionEntry const*> const* options = sDB2Manager.GetCustomiztionOptions(bot.GetRace(), bot.GetNativeGender());
+    if (!options || options->empty())
+        return false;
+    for (ChrCustomizationOptionEntry const* option : *options)
+        if (bot.GetCustomizationChoice(option->ID))
+            return false;
+
+    std::vector<UF::ChrCustomizationChoice> looks;
+    if (!RandomLooks(*bot.GetSession(), bot.GetRace(), bot.GetClass(), bot.GetNativeGender(), looks))
+        return false;
+    bot.SetCustomizations(Trinity::Containers::MakeIteratorPair(looks.begin(), looks.end()));
+    return true;
+}
+
 // One stack of starting ammunition for a newly created hunter (never repeated on login). Arrows for a bow or crossbow, bullets for a gun; nothing
 // when there is no ammo-using ranged weapon. Item entry is chosen at runtime from the world's ItemTemplate data, not hardcoded. The
 // amount is one maximum-size stack (default 200), not a full bag.
@@ -620,6 +678,14 @@ uint64 BotMgr::CreateBot(uint8 raceId, uint8 classId, uint8 level, std::string& 
     };
     std::unique_ptr<Player, decltype(deleter)> player(new Player(session.get()), deleter);
     player->GetMotionMaster()->Initialize();
+    static bool const randomLooks = sConfigMgr->GetBoolDefault("Bot.Looks.Random", true);
+    if (randomLooks)
+    {
+        std::vector<UF::ChrCustomizationChoice> looks;
+        if (RandomLooks(*session, Races(raceId), Classes(classId), Gender(createInfo.Sex), looks))
+            for (UF::ChrCustomizationChoice const& choice : looks)
+                createInfo.Customizations.push_back(choice);
+    }
     if (!player->Create(sObjectMgr->GetGenerator<HighGuid::Player>().Generate(), &createInfo))
         return fail(Trinity::StringFormat("Player::Create refused race {} class {}", raceId, classId));
 
@@ -1225,6 +1291,9 @@ void BotMgr::FinishLogin(BotInfo& bot)
             player->TeleportTo(bot.StartMap, bot.StartX, bot.StartY, bot.StartZ, player->GetOrientation());
         else if (!bot.Alt)
             SpreadBot(*player);
+        static bool const backfillLooks = sConfigMgr->GetBoolDefault("Bot.Looks.Backfill", true);
+        if (backfillLooks && !bot.Alt && BackfillLooks(*player))
+            TC_LOG_INFO("server.worldserver", "BotMgr: bot {} was given random looks.", bot.Name);
         OnBotLevelChanged(*player);
         BotTaxi::LearnAllNodes(*player);    // the faction's flight points, as a bot must know them to fly
         if (_mailCollect && !bot.Alt)
