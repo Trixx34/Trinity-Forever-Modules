@@ -435,6 +435,11 @@ public:
             // to point to see at target with same orientation
             float x, y, z;
             target->GetClosePoint(x, y, z, _player->GetCombatReach(), 1.0f);
+            // The close point's height comes from the terrain at that spot; where the target stands on a floor the terrain query does not see
+            // (inside a building or a cave, on a bridge, on a map without height data) it can be far below the target and the GM falls under
+            // the map. A close point more than 2 yards off the target's own height takes the target's height instead.
+            if (std::fabs(z - target->GetPositionZ()) > 2.0f)
+                z = target->GetPositionZ() + 0.5f;
 
             _player->TeleportTo(target->GetMapId(), x, y, z, _player->GetAbsoluteAngle(target), TELE_TO_GM_MODE, target->GetInstanceId());
             PhasingHandler::InheritPhaseShift(_player, target);
