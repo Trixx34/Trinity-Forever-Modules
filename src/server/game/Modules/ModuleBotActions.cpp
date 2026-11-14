@@ -760,6 +760,15 @@ int32 GearScore(GearScoreCtx const& ctx, ItemTemplate const& item)
     return ModuleBotSupplyRules::CombineGearScore(int32(item.GetBaseItemLevel()), stats);
 }
 
+// Bot.Gear.MaxItemLevelOverLevel (default 5, 0 = off): the leveling gear passes (the item pool pass and its bag upgrade pass of kAutoGear, and the
+// gain of a purchase) refuse an item above bot level + this, below level 60 (BotGearRules::ItemLevelOverCap). The bag-only pass (kAutoGear bit 2:
+// what a scenario grants, ScenarioGearFile / ScenarioGear<class>, or a player trades) is not capped. By item level only, never by item entry.
+bool ItemLevelOverCap(Player const& bot, ItemTemplate const& item)
+{
+    static uint32 const overLevel = uint32(std::max(0, sConfigMgr->GetIntDefault("Bot.Gear.MaxItemLevelOverLevel", 5)));
+    return BotGearRules::ItemLevelOverCap(bot.GetLevel(), item.GetBaseItemLevel(), overLevel);
+}
+
 // Whether the worn item stays against this candidate: the gear score rule plus the armour weight preference (BotGearRules::KeepWorn).
 bool KeepWornItem(Player const& bot, GearScoreCtx const& ctx, ItemTemplate const& worn, ItemTemplate const& candidate)
 {
@@ -833,8 +842,9 @@ GearResult GiveAndEquip(Player& bot, GearScoreCtx const& ctx, ItemTemplate const
 // Gear the bot was given or looted: an item in the bags that the bot can use and that has a higher item level than what is worn where it
 // would go is worn instead (the displaced item goes to the bags). The quality cap of the item pool does not apply: a rare that a player
 // trades to a bot is worn. The comparison is the gear score with the wanted stats the caller passes (the profile AutoGearAction picked by),
-// the same rule the main pass keeps a worn item by, so the two passes cannot undo each other.
-uint32 EquipBagUpgrades(Player& bot, GearScoreCtx const& ctx)
+// the same rule the main pass keeps a worn item by, so the two passes cannot undo each other. capItemLevel: the full auto gear pass (leveling) also
+// skips an item above the item level cap (ItemLevelOverCap); the bag-only pass passes false, so granted scenario gear and traded gear are worn.
+uint32 EquipBagUpgrades(Player& bot, GearScoreCtx const& ctx, bool capItemLevel)
 {
     std::vector<Item*> candidates;
     bot.ForEachItem(ItemSearchLocation::Inventory, [&candidates](Item* item)
@@ -856,6 +866,8 @@ uint32 EquipBagUpgrades(Player& bot, GearScoreCtx const& ctx)
     {
         ItemTemplate const* proto = item->GetTemplate();
         if (proto->GetBaseRequiredLevel() > int32(bot.GetLevel()) || bot.CanUseItem(proto) != EQUIP_ERR_OK || ArmorTooHeavy(bot, *proto))
+            continue;
+        if (capItemLevel && ItemLevelOverCap(bot, *proto))
             continue;
         uint16 destination = 0;
         if (bot.CanEquipItem(NULL_SLOT, destination, item, true) != EQUIP_ERR_OK)
@@ -946,7 +958,7 @@ int32 BotGearUpgradeScore(Player const& bot, ItemTemplate const& item)
     uint8 const first = EquipSlotFor(type);
     if (type == INVTYPE_BODY || first == NULL_SLOT)
         return 0;
-    if (item.GetBaseRequiredLevel() > int32(bot.GetLevel()) || bot.CanUseItem(&item) != EQUIP_ERR_OK || ArmorTooHeavy(bot, item))
+    if (item.GetBaseRequiredLevel() > int32(bot.GetLevel()) || bot.CanUseItem(&item) != EQUIP_ERR_OK || ArmorTooHeavy(bot, item) || ItemLevelOverCap(bot, item))
         return 0;
     // A two-hander would also take the off hand out of use: no judgement, no purchase.
     if (type == INVTYPE_2HWEAPON && bot.GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_OFFHAND))
@@ -997,7 +1009,7 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
     }
     if (bagOnly)
     {
-        EquipBagUpgrades(bot, MakeGearCtx(bot.GetClass(), ModuleBotSupplyRules::AutoGearProfileOf(flags)));
+        EquipBagUpgrades(bot, MakeGearCtx(bot.GetClass(), ModuleBotSupplyRules::AutoGearProfileOf(flags)), false);
         return BotActionStatus::kApplied;
     }
 
@@ -1016,12 +1028,18 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
     std::vector<std::pair<int32, ItemTemplate const*>> offHand;    // off-hand weapons (off hand only, and one-hand for dual wield)
 
     uint32 const candidates = uint32(GearCandidates().size());
-    uint32 levelTooHigh = 0, cannotUse = 0;
+    uint32 levelTooHigh = 0, itemLevelTooHigh = 0, cannotUse = 0;
     for (ItemTemplate const* item : GearCandidates())
     {
         if (item->GetBaseRequiredLevel() > int32(bot.GetLevel()))
         {
             ++levelTooHigh;
+            continue;
+        }
+        // required level 0 or far below the item level: the item level cap (Bot.Gear.MaxItemLevelOverLevel) keeps a level 1 bot out of item level 40-60 gear
+        if (ItemLevelOverCap(bot, *item))
+        {
+            ++itemLevelTooHigh;
             continue;
         }
         if (bot.CanUseItem(item) != EQUIP_ERR_OK || ArmorTooHeavy(bot, *item))
@@ -1146,7 +1164,7 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
     }
 
     // Gear the bot already carries (a trade, a loot) is worn when it beats what is worn.
-    equipped += EquipBagUpgrades(bot, ctx);
+    equipped += EquipBagUpgrades(bot, ctx, true);
 
     // What the bot wears now, from the loaded item template store, each against the quality cap.
     uint32 const maxQuality = uint32(std::max(1, sConfigMgr->GetIntDefault("Bot.AutoGear.MaxQuality", 2)));
@@ -1165,9 +1183,9 @@ BotActionStatus AutoGearAction(Player& bot, uint32 flags, std::string& reason)
     }
 
     TC_LOG_INFO("server.worldserver",
-        "BotMgr: autogear {} (class {}, level {}): {} item(s) equipped. summary bot={} class={} level={} considered={} level_too_high={} cannot_use={} picks={} equipped={} kept_better={} failed={} worn={} over_cap={}",
+        "BotMgr: autogear {} (class {}, level {}): {} item(s) equipped. summary bot={} class={} level={} considered={} level_too_high={} ilvl_too_high={} cannot_use={} picks={} equipped={} kept_better={} failed={} worn={} over_cap={}",
         bot.GetName(), uint32(bot.GetClass()), uint32(bot.GetLevel()), equipped, bot.GetName(), uint32(bot.GetClass()), uint32(bot.GetLevel()), candidates,
-        levelTooHigh, cannotUse, tried, equipped, keptBetter, failed, wornItems, overCap);
+        levelTooHigh, itemLevelTooHigh, cannotUse, tried, equipped, keptBetter, failed, wornItems, overCap);
     return BotActionStatus::kApplied;
 }
 

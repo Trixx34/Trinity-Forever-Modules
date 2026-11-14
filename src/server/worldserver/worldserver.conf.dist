@@ -2041,6 +2041,15 @@ Bot.Limit.MaxDbQueue = 5000
 #            does not use -3). The numbers are those of the Forever bots module (src/gear_score.cpp). Bots may swap worn gear at the next auto gear pass.
 #            0 = the class stat list as before (the sell rule adds attack power, spell power and hit for the role).
 #
+#    Bot.Gear.MaxItemLevelOverLevel
+#        Default:     5
+#        The highest item level the leveling gear passes give a bot below level 60: bot level + this (level 1 item level 6, level 20 25,
+#            level 40 45 with 5). It catches the items whose required level does not bound them (required level 0: many quest, class and
+#            world items of item level 40-60). Applies to the auto gear item pool, the bag upgrade step of a full auto gear pass and the gain
+#            of a purchase. Not applied from level 60 on, nor to the bag-only pass (Bot.Actions.EquipUpgrades), so gear a scenario grants
+#            (ScenarioGearFile, Bot.Actions.Grant) or a player trades is still worn. By item level only, never by item entry.
+#        0 = off (only the required level limits the item pool).
+#
 #    Bot.Bags.Item
 #        Default:     3914 (Journeyman's Backpack)
 #        The bag a bot gets in each empty bag slot when it is created, and when it logs in with empty slots (never an alt, a player's own
@@ -2163,6 +2172,7 @@ Bot.Actions.AutoGear = 1
 Bot.AutoGear.MaxQuality = 2
 Bot.Actions.EquipUpgrades = 1
 Bot.Gear.RoleWeights = 0
+Bot.Gear.MaxItemLevelOverLevel = 5
 
 Bot.Bags.Item = 3914
 Bot.Bags.Count = 4

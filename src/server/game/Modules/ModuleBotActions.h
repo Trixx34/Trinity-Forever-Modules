@@ -27,7 +27,7 @@ forever_module::BotActionStatus ApplyBotAction(Player& bot, forever_module::BotA
 
 // How much better `item` is for the bot than what it wears where the item goes, by the AutoGear score (item level first, then the stats the bot's class
 // uses; the class-only profile), for the auction buy (ModuleActions.cpp). 0 when it is no upgrade the bot would wear: not a weapon or armour, a level or a
-// class the bot cannot use it at, armour too heavy, or an item level that does not beat the worn piece (the rule EquipBagUpgrades keeps), so an item with a
+// class the bot cannot use it at, armour too heavy, an item level above the leveling cap (Bot.Gear.MaxItemLevelOverLevel), or an item level that does not beat the worn piece (the rule EquipBagUpgrades keeps), so an item with a
 // score above 0 is one a bot that owns it wears.
 int32 BotGearUpgradeScore(Player const& bot, ItemTemplate const& item);
 

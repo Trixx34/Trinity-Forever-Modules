@@ -182,3 +182,40 @@ TEST_CASE("KeepWorn compares gear scores, so a lower item level with the wanted 
     // equal scores keep the worn piece
     CHECK(BotGearRules::KeepWorn(205, 205, false, false));
 }
+
+TEST_CASE("The item level cap follows the bot level and is off at 60", "[BotGearRules]")
+{
+    // default 5: level + 5
+    CHECK(BotGearRules::MaxItemLevelFor(1, 5) == 6);
+    CHECK(BotGearRules::MaxItemLevelFor(20, 5) == 25);
+    CHECK(BotGearRules::MaxItemLevelFor(40, 5) == 45);
+    CHECK(BotGearRules::MaxItemLevelFor(59, 5) == 64);
+    // no cap at 60 and above, and none with the setting 0
+    CHECK(BotGearRules::MaxItemLevelFor(60, 5) == 0);
+    CHECK(BotGearRules::MaxItemLevelFor(70, 5) == 0);
+    CHECK(BotGearRules::MaxItemLevelFor(1, 0) == 0);
+}
+
+TEST_CASE("Items above the cap are refused below level 60, whatever their required level", "[BotGearRules]")
+{
+    // a level 1 bot: required level 0 items of item level 60, 55 and 42 (seen on the sim) are out, starter gear is in
+    CHECK(BotGearRules::ItemLevelOverCap(1, 60, 5));
+    CHECK(BotGearRules::ItemLevelOverCap(1, 55, 5));
+    CHECK(BotGearRules::ItemLevelOverCap(1, 42, 5));
+    CHECK(BotGearRules::ItemLevelOverCap(1, 7, 5));
+    CHECK_FALSE(BotGearRules::ItemLevelOverCap(1, 6, 5));
+    CHECK_FALSE(BotGearRules::ItemLevelOverCap(1, 1, 5));
+    // level 20 and 40: the cap itself is allowed, one above is not
+    CHECK_FALSE(BotGearRules::ItemLevelOverCap(20, 25, 5));
+    CHECK(BotGearRules::ItemLevelOverCap(20, 26, 5));
+    CHECK_FALSE(BotGearRules::ItemLevelOverCap(40, 45, 5));
+    CHECK(BotGearRules::ItemLevelOverCap(40, 46, 5));
+    // level 60: pre-raid and raid item levels pass
+    CHECK_FALSE(BotGearRules::ItemLevelOverCap(60, 66, 5));
+    CHECK_FALSE(BotGearRules::ItemLevelOverCap(60, 83, 5));
+    // setting 0 turns the cap off at every level
+    CHECK_FALSE(BotGearRules::ItemLevelOverCap(1, 60, 0));
+    // a wider setting moves the cap
+    CHECK_FALSE(BotGearRules::ItemLevelOverCap(1, 11, 10));
+    CHECK(BotGearRules::ItemLevelOverCap(1, 12, 10));
+}
