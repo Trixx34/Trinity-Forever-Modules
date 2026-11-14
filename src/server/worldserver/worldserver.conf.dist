@@ -1077,6 +1077,37 @@ Instance.IgnoreLevel = 0
 Instance.IgnoreAttunement = 0
 
 #
+#    Instance.MoltenCoreHoundsLinked
+#        Description: Molten Core Core Hounds as in 1.12: a hound that would die feigns death at 1 hp
+#                     and rises again at full health after 10 seconds unless every hound of the pack
+#                     dies within that time. Disabled: every hound simply dies when its health runs
+#                     out and stays dead, so a pack can be killed one by one.
+#        Default:     0 - (Disabled)
+#                     1 - (Enabled)
+
+Instance.MoltenCoreHoundsLinked = 0
+
+#
+#    Instance.MoltenCoreSkipRunes
+#        Description: The Molten Core bosses are all up from the start: the seven runes count as doused
+#                     (no Aqual Quintessence needed), Majordomo Executus stands in his hall, and
+#                     Ragnaros is in his lair ready to fight. A boss that is already killed in the
+#                     instance (raid lock) stays dead.
+#        Default:     0 - (Disabled, the 1.12 way: douse the runes, kill Majordomo, summon Ragnaros)
+#                     1 - (Enabled, optional shortcut for private servers)
+
+Instance.MoltenCoreSkipRunes = 0
+
+#
+#    Instance.MoltenCoreRagnarosReady
+#        Description: Ragnaros is up in his lair and can be attacked at once, without Majordomo's talk and
+#                     summon. Left out of the config, it follows Instance.MoltenCoreSkipRunes.
+#        Default:     0 - (Disabled, the 1.12 way: Majordomo summons Ragnaros)
+#                     1 - (Enabled, optional shortcut for private servers)
+
+Instance.MoltenCoreRagnarosReady = 0
+
+#
 #    Instance.IgnoreRaid
 #        Description: Ignore raid group requirement when entering instances.
 #        Default:     0 - (Disabled)
