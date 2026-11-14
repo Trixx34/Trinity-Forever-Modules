@@ -529,7 +529,7 @@ static bool BackfillLooks(Player& bot)
             return false;
 
     std::vector<UF::ChrCustomizationChoice> looks;
-    if (!RandomLooks(*bot.GetSession(), bot.GetRace(), bot.GetClass(), bot.GetNativeGender(), looks))
+    if (!RandomLooks(*bot.GetSession(), Races(bot.GetRace()), Classes(bot.GetClass()), bot.GetNativeGender(), looks))
         return false;
     bot.SetCustomizations(Trinity::Containers::MakeIteratorPair(looks.begin(), looks.end()));
     return true;
