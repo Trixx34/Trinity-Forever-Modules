@@ -1459,6 +1459,7 @@ void Spell::DoCreateItem(uint32 itemId, ItemContext context /*= ItemContext::NON
 
             // send info to the client
             player->SendNewItem(pItem, num_to_add, true, true);
+            sScriptMgr->OnBotItemReceived(player, pItem, num_to_add, ScriptMgr::BotItemSource::Crafted);
 
             if (pItem->GetQuality() > ITEM_QUALITY_EPIC || (pItem->GetQuality() == ITEM_QUALITY_EPIC && pItem->GetItemLevel(player) >= MinNewsItemLevel))
                 if (Guild* guild = player->GetGuild())

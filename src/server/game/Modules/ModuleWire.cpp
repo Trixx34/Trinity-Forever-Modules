@@ -247,6 +247,15 @@ std::string EncodeEventNotifyItemLooted(std::string_view hookName, ItemLootedEve
     AppendVarintField(payload, 7, event.SellPrice);
     if (!event.ItemName.empty())
         AppendBytesField(payload, 8, event.ItemName);
+    if (event.HasFacts)
+    {
+        AppendVarintField(payload, 9, event.RequiredLevel);
+        AppendVarintField(payload, 10, event.InventoryType);
+        AppendVarintField(payload, 11, event.Bound ? 1 : 0);
+        AppendVarintField(payload, 12, event.UpgradeScore);
+        AppendVarintField(payload, 13, event.Usable ? 1 : 0);
+        AppendVarintField(payload, 14, event.Source);
+    }
 
     std::string out;
     AppendBytesField(out, 1, hookName);

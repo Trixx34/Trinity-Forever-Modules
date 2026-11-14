@@ -144,6 +144,23 @@ struct ItemLootedEvent
     uint32 ItemClass = 0;
     uint32 SellPrice = 0;
     std::string ItemName;
+    // Item facts (fields 9 to 14, additive within protocol 29: an older module skips them). HasFacts = false leaves them all out.
+    bool HasFacts = false;
+    uint32 RequiredLevel = 0;  // Item::GetRequiredLevel, 0 when none
+    uint32 InventoryType = 0;  // the template's InventoryType (0 = not equippable)
+    bool Bound = false;        // Item::IsSoulBound
+    uint32 UpgradeScore = 0;   // BotGearUpgradeScore for this player, 0 = no upgrade it would wear now
+    bool Usable = false;       // Player::CanUseItem ignoring the required level: class, race and skill allow it
+    uint32 Source = 0;         // an ItemSource: how the item reached the bags
+};
+
+// PlayerItemLootedEvent.source. Only Loot is a loot window (and gives the quest-share loot credit, NoteModuleLoot).
+enum class ItemSource : uint32
+{
+    Loot = 0,
+    Crafted = 1,
+    QuestReward = 2,
+    Mail = 3,
 };
 
 std::string EncodeEventNotifyItemLooted(std::string_view hookName, ItemLootedEvent const& event);

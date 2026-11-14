@@ -1782,6 +1782,15 @@ Modules.DamageEvent.All = 0
 
 Modules.DamageEvent.MaxPerSecond = 200
 
+#    Modules.ItemReceivedEvent.Enabled
+#        Description: Hook PlayerScript.OnLootItem (no protocol change). 1 = a bot that receives an item without a loot window (a create-item spell such as a
+#                     craft, a quest reward, an item taken from auction mail) raises the same PlayerItemLootedEvent, with its source field set (1 crafted,
+#                     2 quest reward, 3 mail). 0 = only loot windows raise it, as before. Leave 0 for a module that does not read the source field: it would
+#                     take a crafted item for loot. Read at each event.
+#        Default:     0
+
+Modules.ItemReceivedEvent.Enabled = 0
+
 #    Modules.Tier2.MaxBots
 #        Default:     1500
 #        Upper limit on bots in a module's Tier 2 region. A module's request is capped at this value.

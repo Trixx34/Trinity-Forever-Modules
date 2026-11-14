@@ -21,6 +21,9 @@
 #include "ModuleMgr.h"
 #include "ModuleActions.h"
 #include "ModuleBotSnapshot.h"
+#include "ModuleBotActions.h"
+#include "Config.h"
+#include "WorldSession.h"
 #include "AreaTrigger.h"
 #include "AreaTriggerAI.h"
 #include "ChatCommand.h"
@@ -2232,21 +2235,55 @@ void ScriptMgr::OnPlayerLogin(Player* player, bool firstLogin)
     sModuleMgr->DispatchNotify("PlayerScript.OnLogin", ModuleWire::NotifyKind::PlayerLogin, player->GetGUID().GetCounter());
 }
 
-void ScriptMgr::OnPlayerItemLooted(Player* player, Item* item, uint32 lootedCount)
+// The PlayerItemLootedEvent for `count` of `item` that `player` just received, with the item facts (required level, inventory type, binding, the
+// AutoGear upgrade score for this player, whether its class may use it at all).
+static ModuleWire::ItemLootedEvent ItemEventOf(Player* player, Item* item, uint32 count, ModuleWire::ItemSource source)
 {
-    // lootedCount is what this loot action added; the item's stack may already hold other items of the same entry.
+    ItemTemplate const* proto = item->GetTemplate();
     ModuleWire::ItemLootedEvent event;
     event.PlayerGuid = player->GetGUID().GetCounter();
     event.ItemGuid = item->GetGUID().GetCounter();
     event.ItemEntry = item->GetEntry();
-    event.Count = lootedCount;
+    event.Count = count;
     event.Quality = item->GetQuality();
-    event.ItemClass = item->GetTemplate() ? item->GetTemplate()->GetClass() : 0;
-    event.SellPrice = item->GetTemplate() ? item->GetTemplate()->GetSellPrice() : 0;
-    char const* name = item->GetTemplate() ? item->GetTemplate()->GetDefaultLocaleName() : nullptr;
+    event.ItemClass = proto ? proto->GetClass() : 0;
+    event.SellPrice = proto ? proto->GetSellPrice() : 0;
+    char const* name = proto ? proto->GetDefaultLocaleName() : nullptr;
     event.ItemName = name ? name : "";
+    event.HasFacts = proto != nullptr;
+    if (proto)
+    {
+        event.RequiredLevel = uint32(std::max<int32>(0, item->GetRequiredLevel()));
+        event.InventoryType = uint32(proto->GetInventoryType());
+        event.Bound = item->IsSoulBound();
+        event.UpgradeScore = uint32(std::max<int32>(0, BotGearUpgradeScore(*player, *proto)));
+        event.Usable = player->CanUseItem(proto, true) == EQUIP_ERR_OK;
+    }
+    event.Source = uint32(source);
+    return event;
+}
+
+void ScriptMgr::OnPlayerItemLooted(Player* player, Item* item, uint32 lootedCount)
+{
+    // lootedCount is what this loot action added; the item's stack may already hold other items of the same entry.
+    ModuleWire::ItemLootedEvent const event = ItemEventOf(player, item, lootedCount, ModuleWire::ItemSource::Loot);
     NoteModuleLoot(event.PlayerGuid, event.ItemEntry, event.Count);
     sModuleMgr->DispatchItemLooted("PlayerScript.OnLootItem", event);
+}
+
+static_assert(uint32(ScriptMgr::BotItemSource::Crafted) == uint32(ModuleWire::ItemSource::Crafted) &&
+              uint32(ScriptMgr::BotItemSource::QuestReward) == uint32(ModuleWire::ItemSource::QuestReward) &&
+              uint32(ScriptMgr::BotItemSource::Mail) == uint32(ModuleWire::ItemSource::Mail),
+              "ScriptMgr::BotItemSource follows ModuleWire::ItemSource");
+
+void ScriptMgr::OnBotItemReceived(Player* player, Item* item, uint32 count, BotItemSource source)
+{
+    // Off by default: a module built before these events would take a crafted item for loot (vendor sales, auction listings).
+    if (!player || !item || !count || !player->GetSession() || !player->GetSession()->IsBot() ||
+        !sConfigMgr->GetBoolDefault("Modules.ItemReceivedEvent.Enabled", false))
+        return;
+    // No loot credit: the quest item share (NoteModuleLoot) is for loot windows only.
+    sModuleMgr->DispatchItemLooted("PlayerScript.OnLootItem", ItemEventOf(player, item, count, ModuleWire::ItemSource(uint32(source))));
 }
 
 void ScriptMgr::OnPlayerLogout(Player* player)
