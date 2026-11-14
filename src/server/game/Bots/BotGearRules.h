@@ -89,6 +89,28 @@ inline std::vector<uint32> ChooseForSlot(std::vector<SlotCandidate> candidates, 
     return chosen;
 }
 
+// From this bot level on the item level cap (ItemLevelOverCap) is off: raid bots wear pre-raid and raid gear of any item level.
+constexpr uint32 kItemLevelCapOffAtLevel = 60;
+
+// The highest item level the leveling gear passes give a bot of `level` (Bot.Gear.MaxItemLevelOverLevel = `overLevel`): level + overLevel,
+// so level 1 takes item level 6 or lower, level 20 25, level 40 45 with the default 5. 0 = no cap (overLevel 0, or level 60 and above).
+inline uint32 MaxItemLevelFor(uint32 level, uint32 overLevel)
+{
+    if (overLevel == 0 || level >= kItemLevelCapOffAtLevel)
+        return 0;
+    return level + overLevel;
+}
+
+// True for an item whose item level is above MaxItemLevelFor the bot. The required level check (required level above the bot's level) is
+// separate and comes first; this one catches the items the required level does not bound: required level 0 (many quest, class and world items
+// of item level 40-60) or a required level far below the item level. An item with a normal required level (about its item level minus 5) passes
+// whenever the required level check does. By item level only, never by item entry.
+inline bool ItemLevelOverCap(uint32 level, uint32 itemLevel, uint32 overLevel)
+{
+    uint32 const cap = MaxItemLevelFor(level, overLevel);
+    return cap != 0 && itemLevel > cap;
+}
+
 // True for armour in the body slots that is heavier than the class wears. Jewellery, cloaks and shields are not judged here.
 inline bool ArmorTooHeavy(uint8 classId, uint32 level, uint32 itemClass, uint32 subclass, uint32 inventoryType)
 {
