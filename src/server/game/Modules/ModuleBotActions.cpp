@@ -985,14 +985,14 @@ std::string RepairWhatBotCanAfford(Player& bot)
     if (pieces.empty())
         return "nothing to repair";
 
-    BotActionRules::RepairPlan const plan = BotActionRules::PlanRepair(pieces, bot.GetMoney());
+    BotActionRules::RepairPlan const plan = BotActionRules::PlanRepair(pieces, std::numeric_limits<uint64>::max()); // repairs are free for bots (owner decision 2026-11-14): no money limit
     uint32 repaired = 0;
     uint32 brokenRepaired = 0;
     uint64 spent = 0;
     for (size_t const i : plan.Repair)
     {
         uint64 const before = bot.GetMoney();
-        bot.DurabilityRepair(positions[i], true, kBotRepairDiscount); // takes the cost itself; does nothing when the money is short
+        bot.DurabilityRepair(positions[i], false, kBotRepairDiscount); // takeCost=false: free repair, the bot's money is not touched
         Item const* item = bot.GetItemByPos(positions[i]);
         if (!item || *item->m_itemData->Durability != *item->m_itemData->MaxDurability)
             continue;
