@@ -4,6 +4,7 @@
 
 #include "BotMgr.h"
 #include "BotMgrRules.h"
+#include "BotNames.h"
 #include "BotProfessions.h"
 #include "BotSpellRanks.h"
 #include "BotTalentSpec.h"
@@ -312,6 +313,73 @@ void LoadTalentProfiles(std::string const& path)
     TC_LOG_INFO("server.worldserver", "BotMgr: loaded {} talent profile(s) from {}", g_talentProfiles.size(), path);
 }
 
+// Bot.Names.*: the names file and the draw settings. Written once by LoadBotNames (BotMgr::LoadRegistry, at start, before any bot is
+// created or logged in) and only read afterwards, by CreateBot and FinishLogin on the world thread. Null = no names file (the
+// generated first name alone, as before).
+struct BotNamesData
+{
+    std::vector<BotNames::Row> Rows;
+    BotNames::Settings Settings;
+};
+std::unique_ptr<BotNamesData const> g_botNames;
+
+void LoadBotNames()
+{
+    std::string const path = sConfigMgr->GetStringDefault("Bot.Names.File", "");
+    if (path.empty())
+        return;
+
+    std::ifstream in(path);
+    if (!in)
+    {
+        TC_LOG_ERROR("server.worldserver", "BotMgr: cannot read the names file {} (Bot.Names.File); bots get a generated first name and no surname.", path);
+        return;
+    }
+
+    auto data = std::make_unique<BotNamesData>();
+    std::vector<BotNames::ParseError> errors;
+    data->Rows = BotNames::Parse(in, errors);
+    for (BotNames::ParseError const& error : errors)
+        TC_LOG_ERROR("server.worldserver", "BotMgr: names file line {}: {}, skipped", error.Line, error.Message);
+
+    std::vector<std::string> styleErrors;
+    data->Settings.Styles = BotNames::ParseStyleWeights(sConfigMgr->GetStringDefault("Bot.Names.StyleWeights", BotNames::DEF_STYLE_WEIGHTS), styleErrors);
+    for (std::string const& error : styleErrors)
+        TC_LOG_ERROR("server.worldserver", "BotMgr: Bot.Names.StyleWeights: {}", error);
+    data->Settings.PairChance = BotNames::ClampPairChance(sConfigMgr->GetFloatDefault("Bot.Names.PairChance", BotNames::DEF_PAIR_CHANCE));
+
+    if (data->Rows.empty())
+    {
+        TC_LOG_ERROR("server.worldserver", "BotMgr: the names file {} has no usable row; bots get a generated first name and no surname.", path);
+        return;
+    }
+
+    std::array<uint32, 3> counts{};
+    for (BotNames::Row const& row : data->Rows)
+        ++counts[uint32(row.RowKind)];
+    TC_LOG_INFO("server.worldserver", "BotMgr: loaded {} first name, {} surname and {} pair row(s) from {} ({} row(s) skipped).",
+        counts[uint32(BotNames::Kind::First)], counts[uint32(BotNames::Kind::Last)], counts[uint32(BotNames::Kind::Pair)], path, errors.size());
+    g_botNames = std::move(data);
+}
+
+uint32 BotNamesRandom(uint32 lo, uint32 hi)
+{
+    return urand(lo, hi);
+}
+
+// A first name a new bot may take (the player-name check of character creation, not reserved).
+bool IsUsableBotFirstName(std::string const& name)
+{
+    return ObjectMgr::CheckPlayerName(name, LOCALE_enUS, true) == CHAR_NAME_SUCCESS && !sObjectMgr->IsReservedName(name);
+}
+
+// The same statement character creation and rename use (CharacterHandler.cpp), for the transaction it is appended to.
+std::string SurnameUpdateSql(std::string surname, ObjectGuid::LowType guid)
+{
+    CharacterDatabase.EscapeString(surname);
+    return Trinity::StringFormat("UPDATE characters SET surname = '{}' WHERE guid = {}", surname, guid);
+}
+
 } // namespace
 
 void BotMgr::LoadRegistry()
@@ -332,6 +400,7 @@ void BotMgr::LoadRegistry()
         DumpTalents(talentFile);
     if (std::string const profileFile = sConfigMgr->GetStringDefault("Bot.Talents.Profiles", ""); !profileFile.empty())
         LoadTalentProfiles(profileFile);
+    LoadBotNames();
 
     _loginMaxPerTick = BotMgrRules::LoginMaxPerTick(sConfigMgr->GetIntDefault("Bot.Login.MaxPerTick", BotMgrRules::DEF_LOGIN_MAX_PER_TICK));
     _loginTimeoutMs = BotMgrRules::LoginTimeoutMs(sConfigMgr->GetIntDefault("Bot.Login.TimeoutMs", BotMgrRules::DEF_LOGIN_TIMEOUT_MS));
@@ -535,6 +604,41 @@ static bool BackfillLooks(Player& bot)
     return true;
 }
 
+// Bot.Names.Backfill: a bot with no surname (made before the names file) gets one at login: a surname row that fits it and is free with its
+// first name (up to MAX_DRAWS draws; none when no draw is free). It is written like a player's surname (the characters row and the character
+// cache). The player object has no surname of its own: the create block of the player reads it from the cache (UpdateFields.cpp), so the
+// bot is destroyed and created again for the players that already see it. Returns the surname given, empty when none.
+static std::string BackfillSurname(Player& bot)
+{
+    BotNamesData const* names = g_botNames.get();
+    if (!names || !sCharacterCache->GetCharacterSurnameByGuid(bot.GetGUID()).empty())
+        return std::string();
+
+    BotNames::BotKey const key{ uint8(bot.GetRace()), uint8(bot.GetClass()), uint8(bot.GetNativeGender()) };
+    std::string surname;
+    for (uint32 draw = 0; draw < BotNames::MAX_DRAWS && surname.empty(); ++draw)
+    {
+        std::string candidate = BotNames::DrawSurname(names->Rows, names->Settings, key, &BotNamesRandom);
+        if (candidate.empty())
+            return std::string();       // no row fits this bot: no draw will
+        if (!sCharacterCache->GetCharacterCacheByFullName(bot.GetName(), candidate))
+            surname = std::move(candidate);
+    }
+    if (surname.empty())
+        return std::string();
+
+    CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
+    trans->Append(SurnameUpdateSql(surname, bot.GetGUID().GetCounter()).c_str());
+    CharacterDatabase.CommitTransaction(trans);
+    sCharacterCache->UpdateCharacterSurname(bot.GetGUID(), surname);
+    if (bot.IsInWorld())
+    {
+        bot.DestroyForNearbyPlayers();
+        bot.UpdateObjectVisibility();
+    }
+    return surname;
+}
+
 // One stack of starting ammunition for a newly created hunter (never repeated on login). Arrows for a bow or crossbow, bullets for a gun; nothing
 // when there is no ammo-using ranged weapon. Item entry is chosen at runtime from the world's ItemTemplate data, not hardcoded. The
 // amount is one maximum-size stack (default 200), not a full bag.
@@ -663,10 +767,33 @@ uint64 BotMgr::CreateBot(uint8 raceId, uint8 classId, uint8 level, std::string& 
     createInfo.Class = classId;
     createInfo.Sex = uint8(urand(0, 1));
 
-    createInfo.Name = BotMgrRules::PickFirstValidName(200, [] { return GenerateBotName(); }, [](std::string const& name)
+    // Bot.Names.File: a first name and a surname from the names file (BotNames.h). The name + surname combination must be free (the same
+    // first name with another surname is allowed, as for players); a taken or invalid one is drawn again, up to MAX_DRAWS times, and then
+    // the surname is dropped: the generated first name alone, checked as before.
+    std::string surname;
+    if (BotNamesData const* names = g_botNames.get())
     {
-        return ObjectMgr::CheckPlayerName(name, LOCALE_enUS, true) == CHAR_NAME_SUCCESS && !sObjectMgr->IsReservedName(name) && !sCharacterCache->GetCharacterCacheByName(name);
-    });
+        BotNames::BotKey const key{ raceId, classId, createInfo.Sex };
+        for (uint32 draw = 0; draw < BotNames::MAX_DRAWS && createInfo.Name.empty(); ++draw)
+        {
+            BotNames::Choice choice = BotNames::Draw(names->Rows, names->Settings, key, &BotNamesRandom);
+            std::string first = choice.First.empty() ? GenerateBotName() : std::move(choice.First);
+            normalizePlayerName(first);
+            if (!IsUsableBotFirstName(first) || sCharacterCache->GetCharacterCacheByFullName(first, choice.Last))
+                continue;
+            createInfo.Name = std::move(first);
+            surname = std::move(choice.Last);
+        }
+        if (createInfo.Name.empty())
+            TC_LOG_INFO("server.worldserver", "BotMgr: no free name + surname in {} draws (race {}, class {}); the bot gets a generated name and no surname.",
+                BotNames::MAX_DRAWS, raceId, classId);
+    }
+
+    if (createInfo.Name.empty())
+        createInfo.Name = BotMgrRules::PickFirstValidName(200, [] { return GenerateBotName(); }, [](std::string const& name)
+        {
+            return IsUsableBotFirstName(name) && !sCharacterCache->GetCharacterCacheByName(name);
+        });
 
     if (createInfo.Name.empty())
         return fail("no free valid bot name found");
@@ -711,6 +838,9 @@ uint64 BotMgr::CreateBot(uint8 raceId, uint8 classId, uint8 level, std::string& 
     CharacterDatabaseTransaction characterTransaction = CharacterDatabase.BeginTransaction();
     LoginDatabaseTransaction loginTransaction = LoginDatabase.BeginTransaction();
     player->SaveToDB(loginTransaction, characterTransaction, true);
+    // the surname as character creation stores it: an update of the row SaveToDB inserts, in the same transaction
+    if (!surname.empty())
+        characterTransaction->Append(SurnameUpdateSql(surname, player->GetGUID().GetCounter()).c_str());
 
     LoginDatabasePreparedStatement* stmt = LoginDatabase.GetPreparedStatement(LOGIN_REP_REALM_CHARACTERS);
     stmt->setUInt32(0, 1);
@@ -726,6 +856,9 @@ uint64 BotMgr::CreateBot(uint8 raceId, uint8 classId, uint8 level, std::string& 
 
     sCharacterCache->AddCharacterCacheEntry(player->GetGUID(), accountId, player->GetName(), player->GetNativeGender(), player->GetRace(),
         player->GetClass(), player->GetLevel(), false);
+    // at once, like the name: the next bot's draw sees this name + surname as taken
+    if (!surname.empty())
+        sCharacterCache->UpdateCharacterSurname(player->GetGUID(), surname);
     sScriptMgr->OnPlayerCreate(player.get());
 
     BotInfo bot;
@@ -759,7 +892,8 @@ uint64 BotMgr::CreateBot(uint8 raceId, uint8 classId, uint8 level, std::string& 
     player.reset();
     session.reset();
 
-    TC_LOG_INFO("server.worldserver", "BotMgr: created bot {} (guid {}, race {}, class {}, level {}, {} spells known).", username, guid, raceId, classId, level, knownSpells);
+    TC_LOG_INFO("server.worldserver", "BotMgr: created bot {} '{}{}{}' (guid {}, race {}, class {}, level {}, {} spells known).", username, createInfo.Name,
+        surname.empty() ? "" : " ", surname, guid, raceId, classId, level, knownSpells);
     return guid;
 }
 
@@ -1294,6 +1428,10 @@ void BotMgr::FinishLogin(BotInfo& bot)
         static bool const backfillLooks = sConfigMgr->GetBoolDefault("Bot.Looks.Backfill", true);
         if (backfillLooks && !bot.Alt && BackfillLooks(*player))
             TC_LOG_INFO("server.worldserver", "BotMgr: bot {} was given random looks.", bot.Name);
+        static bool const backfillNames = sConfigMgr->GetBoolDefault("Bot.Names.Backfill", false);
+        if (backfillNames && !bot.Alt)
+            if (std::string const surname = BackfillSurname(*player); !surname.empty())
+                TC_LOG_INFO("server.worldserver", "BotMgr: bot {} was given the surname '{}'.", bot.Name, surname);
         OnBotLevelChanged(*player);
         BotTaxi::LearnAllNodes(*player);    // the faction's flight points, as a bot must know them to fly
         if (_mailCollect && !bot.Alt)

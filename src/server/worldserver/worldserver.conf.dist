@@ -2262,6 +2262,36 @@ Bot.Looks.Random = 1
 
 Bot.Looks.Backfill = 1
 
+#    Bot.Names.File
+#        Default:     "" - (no file: a new bot gets a generated first name and no surname, as before)
+#        The bot names file (rows first|last|pair, format in the bots module's doc/bot-names.md). A new bot gets a first name and a
+#        surname from it; the name + surname combination is unique (a taken one is drawn again, up to 200 times, then the bot gets a
+#        generated first name and no surname). Read once at start; rows that break a rule are skipped and logged
+#        ("BotMgr: names file line N: ..."). The file is deployed with the bots module:
+#        Example: Bot.Names.File = "/srv/forever/<env>/modules_runtime/forever-bots/data/bot_names.txt"
+
+Bot.Names.File = ""
+
+#    Bot.Names.StyleWeights
+#        Default:     "normal:60,funny:25,lore:15"
+#        How often each name style is drawn: <style>:<weight>, comma separated, styles normal, funny and lore. When no row of the
+#        drawn style fits the bot, the normal rows for every race (`*`) are used. Bad entries are logged and left out.
+
+Bot.Names.StyleWeights = "normal:60,funny:25,lore:15"
+
+#    Bot.Names.PairChance
+#        Default:     0.05
+#        The chance (0..1) that a bot takes a fixed name + surname (a pair row) of the drawn style, when one fits it.
+
+Bot.Names.PairChance = 0.05
+
+#    Bot.Names.Backfill
+#        Default:     0
+#        1 = a bot with no surname (made before Bot.Names.File was set) gets a surname from the file once when it logs in (log line
+#            "was given the surname"). Needs Bot.Names.File. A player's own character (alt) is never changed. 0 = off.
+
+Bot.Names.Backfill = 0
+
 #    Bot.Run.StopTime
 #        Default:     (empty: no stop time)
 #        Local time of day, HH:MM or HH:MM:SS. The first such time after startup ends the run: no bot is created after it,
