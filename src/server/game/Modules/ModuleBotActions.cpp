@@ -7,6 +7,7 @@
 #include "BotProfessions.h"
 #include "BotTaxi.h"
 #include "BotGearRules.h"
+#include "BotQuestRewardRules.h"
 #include "BotSpellRanks.h"
 #include "ModuleBotSnapshot.h"
 #include "ModuleBotSnapshotRules.h"
@@ -1197,13 +1198,84 @@ Creature* NearestQuestNpc(Player& bot, uint32 questId, bool ender)
     return best;
 }
 
-// The reward a bot picks from a quest's choices: the item it can use with the highest sell price, else the highest sell price. 0 when
-// the quest offers no choice.
+// A worn item that counts for the reward choice: nullptr for an empty slot or a broken item (0 durability: it gives nothing until repaired).
+Item const* WornForReward(Player const& bot, uint8 slot)
+{
+    Item const* worn = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+    return worn && !worn->IsBroken() ? worn : nullptr;
+}
+
+// One quest reward choice as BotQuestRewardRules sees it: whether the bot can wear it and how it compares with what it wears where the item would
+// go (the slot EquipBagUpgrades would put it in). The bot's own proficiency decides (armour type, weapon skill, shield: the item's skill must be
+// known, which Player::CanUseItem(ItemTemplate const*) does not check), plus the armour weight rule and the dual wield rule for the off hand.
+// The required level is not checked: a reward a level or two above the bot is worn by the bag pass once the bot gets there. No item level cap:
+// quest rewards fit the quest level by design. By the item's numbers, never by its id.
+BotQuestRewardRules::RewardOption QuestRewardOptionOf(Player const& bot, GearScoreCtx const& ctx, ItemTemplate const& item)
+{
+    BotQuestRewardRules::RewardOption option;
+    option.SellPrice = item.GetSellPrice();
+    if (item.GetClass() != ITEM_CLASS_WEAPON && item.GetClass() != ITEM_CLASS_ARMOR)
+        return option;
+    InventoryType const type = item.GetInventoryType();
+    uint8 const first = EquipSlotFor(type);
+    if (type == INVTYPE_BODY || first == NULL_SLOT)
+        return option;
+    if (bot.CanUseItem(&item, true) != EQUIP_ERR_OK || ArmorTooHeavy(bot, item))
+        return option;
+    if (uint32 const skill = item.GetSkill(); skill != 0 && bot.GetSkillValue(skill) == 0)
+        return option;
+
+    Item const* mainHand = bot.GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
+    bool const twoHandWorn = mainHand && mainHand->GetTemplate()->GetInventoryType() == INVTYPE_2HWEAPON;
+    // The off hand: an off-hand weapon needs dual wield, and nothing goes there next to a two-hander (Player::CanEquipItem refuses both).
+    if (first == EQUIPMENT_SLOT_OFFHAND &&
+        ((type == INVTYPE_WEAPONOFFHAND && !bot.CanDualWield() && !item.HasFlag(ITEM_FLAG3_ALWAYS_ALLOW_DUAL_WIELD)) || twoHandWorn))
+        return option;
+
+    option.Wearable = true;
+    option.Slot = first;
+    option.Score = GearScore(ctx, item);
+    option.Lighter = ArmorLighterThanMax(bot, item);
+
+    if (type == INVTYPE_2HWEAPON)
+    {
+        // A two-hander takes both hands: it is weighed against the main hand and the off hand together.
+        Item const* main = WornForReward(bot, EQUIPMENT_SLOT_MAINHAND);
+        Item const* off = WornForReward(bot, EQUIPMENT_SLOT_OFFHAND);
+        option.SlotFree = !main && !off;
+        option.WornScore = (main ? GearScore(ctx, *main->GetTemplate()) : 0) + (off ? GearScore(ctx, *off->GetTemplate()) : 0);
+        option.KeepWorn = BotGearRules::KeepWorn(option.WornScore, option.Score, false, false);
+        return option;
+    }
+
+    Item const* worn = WornForReward(bot, first);
+    if (type == INVTYPE_FINGER || type == INVTYPE_TRINKET)
+    {
+        // the weaker of the pair, a free one first
+        Item const* second = WornForReward(bot, uint8(first + 1));
+        if (worn && (!second || GearScore(ctx, *second->GetTemplate()) < GearScore(ctx, *worn->GetTemplate())))
+            worn = second;
+    }
+    else if (type == INVTYPE_WEAPON && worn && !twoHandWorn && bot.CanDualWield() && !WornForReward(bot, EQUIPMENT_SLOT_OFFHAND))
+        worn = nullptr; // a dual wielder with the main hand taken puts a one-hander in the free off hand
+    option.SlotFree = !worn;
+    if (worn)
+    {
+        option.WornScore = GearScore(ctx, *worn->GetTemplate());
+        option.KeepWorn = KeepWornItem(bot, ctx, *worn->GetTemplate(), item);
+    }
+    return option;
+}
+
+// The reward a bot picks from a quest's choices: the biggest gear upgrade for it (BotQuestRewardRules::PickReward: what it can wear against what it
+// wears in that slot, an empty or broken slot first), else the highest sell price. Gear comes from quests, drops, crafting and the auction (autogear is
+// off on prod), so the choice matters. Scored with the class default stat profile (0), the profile the module's bag-only pass wears by. 0 when the
+// quest offers no choice.
 uint32 PickQuestReward(Player& bot, Quest const& quest)
 {
-    uint32 best = 0;
-    bool bestUsable = false;
-    uint64 bestPrice = 0;
+    GearScoreCtx const ctx = MakeGearCtx(bot.GetClass(), uint32(GearProfile::StrStam));
+    std::vector<BotQuestRewardRules::RewardOption> options;
+    std::vector<ItemTemplate const*> items;
     for (uint32 i = 0; i < quest.GetRewChoiceItemsCount(); ++i)
     {
         if (!quest.RewardChoiceItemId[i] || quest.RewardChoiceItemType[i] != LootItemType::Item)
@@ -1211,16 +1283,44 @@ uint32 PickQuestReward(Player& bot, Quest const& quest)
         ItemTemplate const* item = sObjectMgr->GetItemTemplate(quest.RewardChoiceItemId[i]);
         if (!item)
             continue;
-        bool const usable = bot.CanUseItem(item) == EQUIP_ERR_OK;
-        uint64 const price = item->GetSellPrice();
-        if (!best || (usable && !bestUsable) || (usable == bestUsable && price > bestPrice))
-        {
-            best = item->GetId();
-            bestUsable = usable;
-            bestPrice = price;
-        }
+        options.push_back(QuestRewardOptionOf(bot, ctx, *item));
+        items.push_back(item);
     }
-    return best;
+    int32 const pick = BotQuestRewardRules::PickReward(options);
+    if (pick < 0)
+        return 0;
+    ItemTemplate const* chosen = items[pick];
+    BotQuestRewardRules::RewardOption const& option = options[pick];
+    TC_LOG_DEBUG("server.worldserver", "BotMgr: quest reward bot={} quest={} item={} choices={} wearable={} gain={} sell={}", bot.GetName(),
+        quest.GetQuestId(), chosen->GetId(), uint32(options.size()), option.Wearable ? 1 : 0, BotQuestRewardRules::UpgradeGain(option), option.SellPrice);
+    return chosen->GetId();
+}
+
+// True when the quest hands this bot weapons or armour: the chosen item (`choice`, 0 for none) or a fixed reward item.
+bool QuestRewardHasGear(Quest const& quest, uint32 choice)
+{
+    auto const gear = [](uint32 id)
+    {
+        ItemTemplate const* item = id ? sObjectMgr->GetItemTemplate(id) : nullptr;
+        return item && (item->GetClass() == ITEM_CLASS_WEAPON || item->GetClass() == ITEM_CLASS_ARMOR);
+    };
+    if (gear(choice))
+        return true;
+    for (uint32 i = 0; i < QUEST_REWARD_ITEM_COUNT; ++i)
+        if (gear(quest.RewardItemId[i]))
+            return true;
+    return false;
+}
+
+// After a quest reward with gear: the bag-only pass (kAutoGear bit 2, the same one the module sends on its own schedule, every five minutes) runs at
+// once, so an upgrade the bot just got is worn now. Its own gates apply (Bot.Actions.EquipUpgrades, combat, charm, alts); a refusal only means the
+// scheduled pass wears it later. Not capped by item level (the bag-only pass never is).
+void WearQuestRewardGear(Player& bot, Quest const& quest, uint32 choice)
+{
+    if (!QuestRewardHasGear(quest, choice))
+        return;
+    std::string ignored;
+    AutoGearAction(bot, ModuleBotSupplyRules::kAutoGearBagOnlyBit, ignored);
 }
 
 // The checks of Player::CanTakeQuest one by one, for BotActionRules::QuestTakeRefusal (ActionResult::reason).
@@ -1288,6 +1388,7 @@ BotActionStatus QuestAction(Player& bot, uint32 code, uint64 targetRef, std::str
             return BotActionStatus::kRefused;
         }
         bot.RewardQuest(quest, LootItemType::Item, reward, &bot);
+        WearQuestRewardGear(bot, *quest, reward);
         return BotActionStatus::kApplied;
     }
 
@@ -1394,6 +1495,7 @@ BotActionStatus QuestAction(Player& bot, uint32 code, uint64 targetRef, std::str
         return BotActionStatus::kRefused;
     }
     bot.RewardQuest(quest, LootItemType::Item, reward, npc);
+    WearQuestRewardGear(bot, *quest, reward);
     return BotActionStatus::kApplied;
 }
 
