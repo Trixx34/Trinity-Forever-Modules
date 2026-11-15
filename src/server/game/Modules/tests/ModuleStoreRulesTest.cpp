@@ -40,6 +40,24 @@ int main()
     CHECK(ModuleStore::PrefixPattern("") == "%");
     CHECK(ModuleStore::PrefixPattern("a_b%c\\") == "a\\_b\\%c\\\\%");
 
+    // Row limit: default, clamping, and the list byte budget.
+    CHECK(ModuleStore::MaxRowsPerModule() == ModuleStore::DefaultMaxRowsPerModule);
+    CHECK(ModuleStore::ClampMaxRows(1000) == 1000);
+    CHECK(ModuleStore::ClampMaxRows(0) == ModuleStore::MinRowsPerModule);
+    CHECK(ModuleStore::ClampMaxRows(-5) == ModuleStore::MinRowsPerModule);
+    CHECK(ModuleStore::ClampMaxRows(1000000) == ModuleStore::HardMaxRowsPerModule);
+    ModuleStore::SetMaxRowsPerModule(2500);
+    CHECK(ModuleStore::MaxRowsPerModule() == 2500);
+    ModuleStore::SetMaxRowsPerModule(1);
+    CHECK(ModuleStore::MaxRowsPerModule() == ModuleStore::MinRowsPerModule);
+    ModuleStore::SetMaxRowsPerModule(ModuleStore::DefaultMaxRowsPerModule);
+    CHECK(ModuleStore::ListHasRoom(0, ModuleStore::MaxKeyBytes));
+    CHECK(!ModuleStore::ListHasRoom(ModuleStore::MaxListBytes, 1));
+    CHECK(ModuleStore::ListHasRoom(0, 12) && ModuleStore::ListHasRoom(ModuleStore::MaxListBytes - 20, 12));
+    CHECK(!ModuleStore::ListHasRoom(ModuleStore::MaxListBytes - 19, 12));
+    // 20000 bot keys ("bot/" and a 10 digit guid) fit one frame.
+    CHECK(ModuleStore::HardMaxRowsPerModule * (14 + ModuleStore::ListEntryOverhead) < ModuleStore::MaxListBytes);
+
     // StoreSet (field 13): key=1, value=2. The message id is field 1.
     std::string setRequest = Tag(1, 0) + char(7) + Bytes(13, Bytes(1, "bot/42") + Bytes(2, "1"));
     ModuleWire::ActionRequestMsg set;

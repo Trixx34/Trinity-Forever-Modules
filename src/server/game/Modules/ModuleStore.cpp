@@ -1,5 +1,9 @@
 #include "ModuleStore.h"
 #include "DatabaseEnv.h"
+#include "Log.h"
+
+#include <mutex>
+#include <set>
 
 namespace ModuleStore
 {
@@ -12,6 +16,20 @@ std::string Escaped(std::string value)
 {
     WorldDatabase.EscapeString(value);
     return value;
+}
+
+// One warning per module and kind, so a full store does not flood the log on every write.
+void WarnOnce(char const* kind, std::string const& module, std::string const& text)
+{
+    static std::mutex mutex;
+    static std::set<std::string> warned;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!warned.insert(std::string(kind) + "/" + module).second)
+            return;
+    }
+    TC_LOG_WARN("modules", "Module store: module '{}' {}. Raise Modules.Store.MaxRowsPerModule (default {}, at most {}). This warning is logged once per module.",
+                module, text, DefaultMaxRowsPerModule, HardMaxRowsPerModule);
 }
 
 } // namespace
@@ -52,8 +70,12 @@ std::string Set(std::string const& module, std::string const& key, std::string c
     if (!found)
     {
         QueryResult count = WorldDatabase.PQuery("SELECT COUNT(*) FROM `module_store` WHERE `module` = '{}'", Escaped(module));
-        if (count && count->Fetch()[0].GetUInt64() >= MaxRowsPerModule)
-            return "module already holds " + std::to_string(MaxRowsPerModule) + " rows";
+        std::size_t const limit = MaxRowsPerModule();
+        if (count && count->Fetch()[0].GetUInt64() >= limit)
+        {
+            WarnOnce("full", module, "holds " + std::to_string(limit) + " rows, so new rows are refused and not saved");
+            return "module already holds " + std::to_string(limit) + " rows";
+        }
     }
 
     WorldDatabase.DirectPExecute("REPLACE INTO `module_store` (`module`, `key`, `value`) VALUES ('{}', '{}', '{}')",
@@ -86,15 +108,28 @@ std::string List(std::string const& module, std::string const& prefix, std::vect
     if (prefix.size() > MaxKeyBytes)
         return "prefix must be at most " + std::to_string(MaxKeyBytes) + " characters";
 
+    // One more than the limit, to tell "exactly full" from "cut off".
+    std::size_t const limit = MaxRowsPerModule();
     QueryResult result = WorldDatabase.PQuery(
         "SELECT `key` FROM `module_store` WHERE `module` = '{}' AND `key` LIKE '{}' ORDER BY `key` LIMIT {}",
-        Escaped(module), Escaped(PrefixPattern(prefix)), MaxListed);
+        Escaped(module), Escaped(PrefixPattern(prefix)), limit + 1);
     if (result)
     {
+        std::size_t usedBytes = 0;
+        bool cut = false;
         do
         {
-            keys.push_back(result->Fetch()[0].GetString());
+            std::string key = result->Fetch()[0].GetString();
+            if (keys.size() >= limit || !ListHasRoom(usedBytes, key.size()))
+            {
+                cut = true;
+                break;
+            }
+            usedBytes += key.size() + ListEntryOverhead;
+            keys.push_back(std::move(key));
         } while (result->NextRow());
+        if (cut)
+            WarnOnce("list", module, "has more matching rows than one list returns (" + std::to_string(keys.size()) + " returned), so the rest are not listed");
     }
     return "";
 }

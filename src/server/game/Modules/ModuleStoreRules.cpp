@@ -1,7 +1,38 @@
 #include "ModuleStoreRules.h"
 
+#include <atomic>
+
 namespace ModuleStore
 {
+
+namespace
+{
+std::atomic<std::size_t> g_maxRows{DefaultMaxRowsPerModule};
+}
+
+std::size_t ClampMaxRows(long long configured)
+{
+    if (configured < static_cast<long long>(MinRowsPerModule))
+        return MinRowsPerModule;
+    if (configured > static_cast<long long>(HardMaxRowsPerModule))
+        return HardMaxRowsPerModule;
+    return static_cast<std::size_t>(configured);
+}
+
+void SetMaxRowsPerModule(std::size_t limit)
+{
+    g_maxRows = ClampMaxRows(static_cast<long long>(limit));
+}
+
+std::size_t MaxRowsPerModule()
+{
+    return g_maxRows;
+}
+
+bool ListHasRoom(std::size_t usedBytes, std::size_t keyBytes)
+{
+    return usedBytes + keyBytes + ListEntryOverhead <= MaxListBytes;
+}
 
 bool ValidKey(std::string const& key, std::string& reason)
 {

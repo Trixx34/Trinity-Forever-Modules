@@ -16,8 +16,12 @@ Each module can keep small key/value rows in the world database, private to that
 |-------|-------|
 | Key | 1 to 128 printable ASCII characters, no spaces |
 | Value | at most 1024 bytes |
-| Rows per module | 1000 (replacing an existing key does not count) |
-| Keys per list | 1000, sorted |
+| Rows per module | `Modules.Store.MaxRowsPerModule`, default 5000, clamped to 100 .. 20000 (replacing an existing key does not count) |
+| Keys per list | the same limit, sorted, and at most about 900 KB of keys so the reply fits one wire frame |
+
+Over the limit a new row is refused and a list is cut off; neither is silent: the core logs one warning per module
+(logger `modules`) naming `Modules.Store.MaxRowsPerModule`. Lowering the limit below the rows already stored keeps them
+but refuses new rows. The old fixed limit was 1000, which left bot characters above 1000 unsaved.
 
 A refused request gets `success = false` and a `reason`, which the module can log.
 

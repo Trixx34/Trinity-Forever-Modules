@@ -18,6 +18,7 @@
 #include "ModuleBotActions.h"
 #include "ModuleBotSnapshot.h"
 #include "ModuleConfig.h"
+#include "ModuleStoreRules.h"
 #include "ModuleTier2.h"
 #include "BotMgr.h"
 #include "ModuleManifestInfo.h"
@@ -125,6 +126,7 @@ void ModuleMgr::LoadModules()
     _config.DamageEvent.All = sConfigMgr->GetBoolDefault("Modules.DamageEvent.All", false);
     _config.DamageEvent.MaxPerSecond = static_cast<uint32>(std::clamp<int32>(sConfigMgr->GetIntDefault("Modules.DamageEvent.MaxPerSecond", 200), 0, 100000));
     _config.AutoApprove = sConfigMgr->GetBoolDefault("Modules.AutoApproveLocal", false);
+    ModuleStore::SetMaxRowsPerModule(ModuleStore::ClampMaxRows(sConfigMgr->GetIntDefault("Modules.Store.MaxRowsPerModule", static_cast<int32>(ModuleStore::DefaultMaxRowsPerModule))));
     _config.Tier2MaxBots = static_cast<uint32>(sConfigMgr->GetIntDefault("Modules.Tier2.MaxBots", 1500));
     _config.Tier2MaxNearbyUnits = static_cast<uint32>(sConfigMgr->GetIntDefault("Modules.Tier2.MaxNearbyUnits", 16));
     _config.Tier2MaxActions = static_cast<uint32>(sConfigMgr->GetIntDefault("Modules.Tier2.MaxActions", 3000));
