@@ -335,5 +335,5 @@ INSERT INTO `graveyard_zone` (`ID`,`GhostZone`,`Comment`) VALUES
 -- .tele
 DELETE FROM `game_tele` WHERE `name` IN ('DrownedCity','DrownedCityEntrance');
 INSERT INTO `game_tele` (`id`,`position_x`,`position_y`,`position_z`,`orientation`,`map`,`name`) VALUES
-(2350,-13296.7,2232.3,-47.5,1.591,2970,'DrownedCity'),
-(2351,-12350.0,854.0,-76.0,5.59,0,'DrownedCityEntrance');
+(2400,-13296.7,2232.3,-47.5,1.591,2970,'DrownedCity'),
+(2401,-12350.0,854.0,-76.0,5.59,0,'DrownedCityEntrance');

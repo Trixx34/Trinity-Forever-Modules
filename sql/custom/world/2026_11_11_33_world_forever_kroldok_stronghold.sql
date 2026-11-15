@@ -205,5 +205,5 @@ INSERT INTO `graveyard_zone` (`ID`,`GhostZone`,`Comment`) VALUES
 
 DELETE FROM `game_tele` WHERE `name` IN ('KroldokStronghold','KroldokStrongholdEntrance');
 INSERT INTO `game_tele` (`id`,`position_x`,`position_y`,`position_z`,`orientation`,`map`,`name`) VALUES
-(2352,-7659.97,-3713.1,157.51,0.315,3039,'KroldokStronghold'),
-(2353,-7659.97,-3713.1,157.51,3.457,0,'KroldokStrongholdEntrance');
+(2402,-7659.97,-3713.1,157.51,0.315,3039,'KroldokStronghold'),
+(2403,-7659.97,-3713.1,157.51,3.457,0,'KroldokStrongholdEntrance');
