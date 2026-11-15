@@ -10,7 +10,9 @@
 #include "Define.h"
 #include "ModuleTier2Layout.h"
 
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace BotActionRules
 {
@@ -289,6 +291,63 @@ inline forever_module::ActionReason QuestTakeRefusal(QuestTakeChecks const& c)
 inline forever_module::ActionReason QuestAddRefusal(bool logHasRoom)
 {
     return logHasRoom ? forever_module::ActionReason::kBagsFull : forever_module::ActionReason::kLogFull;
+}
+
+// kVendor repair bit: a damaged item the bot carries, as the handler sees it (the list of Player::DurabilityRepairAll: equipped, backpack, the bags themselves,
+// the items in the bags). Cost is Item::CalculateDurabilityRepairCost with the discount the handler passes (never 0 for a damaged item).
+struct RepairPiece
+{
+    uint32 Durability = 0;
+    uint32 MaxDurability = 0;
+    uint64 Cost = 0;
+    bool Equipped = false;
+};
+
+// The order a bot repairs in when it may not afford everything: what it wears first (a broken worn piece costs stats, one in the bags does not), then the
+// worst piece (lowest durability fraction, a broken one first: the module judges a visit by its lowest piece), then the cheapest. Before 2026-11-14 the handler
+// called DurabilityRepairAll, which repairs nothing at all when the whole bill is more than the bot's money.
+inline bool RepairsBefore(RepairPiece const& a, RepairPiece const& b)
+{
+    if (a.Equipped != b.Equipped)
+        return a.Equipped;
+    // a.Durability / a.MaxDurability < b.Durability / b.MaxDurability without division
+    uint64 const left = uint64(a.Durability) * b.MaxDurability;
+    uint64 const right = uint64(b.Durability) * a.MaxDurability;
+    if (left != right)
+        return left < right;
+    return a.Cost < b.Cost;
+}
+
+struct RepairPlan
+{
+    std::vector<size_t> Repair; // indexes into the pieces, in the order to repair them
+    uint64 Spent = 0;           // the sum of their costs, never more than the money
+    uint32 Skipped = 0;         // damaged pieces the money did not cover
+};
+
+// Repair as much as the money pays for, in RepairsBefore order. A piece the bot cannot afford is skipped and the next one still tried (it may be cheaper),
+// so a poor bot fixes what it can instead of nothing. Pieces with no cost are not damaged and are left out.
+inline RepairPlan PlanRepair(std::vector<RepairPiece> const& pieces, uint64 money)
+{
+    std::vector<size_t> order;
+    order.reserve(pieces.size());
+    for (size_t i = 0; i < pieces.size(); ++i)
+        if (pieces[i].Cost && pieces[i].MaxDurability)
+            order.push_back(i);
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return RepairsBefore(pieces[a], pieces[b]); });
+
+    RepairPlan plan;
+    for (size_t const i : order)
+    {
+        if (pieces[i].Cost <= money - plan.Spent)
+        {
+            plan.Spent += pieces[i].Cost;
+            plan.Repair.push_back(i);
+        }
+        else
+            ++plan.Skipped;
+    }
+    return plan;
 }
 } // namespace BotActionRules
 

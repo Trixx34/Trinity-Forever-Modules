@@ -3,6 +3,7 @@
 #include "tc_catch2.h"
 
 #include <string>
+#include <vector>
 
 using namespace BotActionRules;
 using forever_module::ActionType;
@@ -370,4 +371,48 @@ TEST_CASE("ResolveCastRank: dest_x >= 1 casts exactly the rank asked for, else t
     CHECK(ResolveCastRank(1.0f, 2050, true, 2054) == 2050u);    // exact and known: that rank
     CHECK(ResolveCastRank(7.0f, 2050, true, 0u) == 2050u);
     CHECK(ResolveCastRank(1.0f, 2050, false, 2054) == 0u);      // exact and not known: 0, never the highest rank
+}
+
+TEST_CASE("PlanRepair: a bot that cannot pay the whole bill repairs what it can, worn and worst first", "[ModuleBotActionRules]")
+{
+    // 2026-11-14: kVendor called DurabilityRepairAll, which repaired nothing when the bill was more than the bot's money.
+    std::vector<RepairPiece> const pieces = {
+        { 40, 100, 30, true },   // 0: worn, 40 %
+        { 0, 50, 50, true },     // 1: worn, broken
+        { 0, 80, 5, false },     // 2: in the bags, broken
+        { 90, 100, 10, true },   // 3: worn, 90 %
+        { 100, 100, 0, true },   // 4: not damaged (no cost): never listed
+    };
+
+    SECTION("enough money: everything damaged, worn first, worst first")
+    {
+        RepairPlan const plan = PlanRepair(pieces, 1000);
+        CHECK(plan.Repair == std::vector<size_t>{ 1, 0, 3, 2 });
+        CHECK(plan.Spent == 95u);
+        CHECK(plan.Skipped == 0u);
+    }
+    SECTION("short of money: the broken worn piece first, an unaffordable one skipped, a cheaper one after it still repaired")
+    {
+        RepairPlan const plan = PlanRepair(pieces, 65);
+        CHECK(plan.Repair == std::vector<size_t>{ 1, 3, 2 }); // 50, then 30 is too much (15 left), 10, then 5
+        CHECK(plan.Spent == 65u);
+        CHECK(plan.Skipped == 1u);
+    }
+    SECTION("no money: nothing, every damaged piece skipped")
+    {
+        RepairPlan const plan = PlanRepair(pieces, 0);
+        CHECK(plan.Repair.empty());
+        CHECK(plan.Spent == 0u);
+        CHECK(plan.Skipped == 4u);
+    }
+}
+
+TEST_CASE("RepairsBefore: durability compared as a fraction, a tie goes to the cheaper piece", "[ModuleBotActionRules]")
+{
+    CHECK(RepairsBefore({ 10, 100, 50, true }, { 30, 60, 1, true }));      // 10 % before 50 %, whatever the price
+    CHECK_FALSE(RepairsBefore({ 30, 60, 1, true }, { 10, 100, 50, true }));
+    CHECK(RepairsBefore({ 25, 50, 5, true }, { 50, 100, 9, true }));       // both 50 %: the cheaper one
+    CHECK_FALSE(RepairsBefore({ 50, 100, 9, true }, { 25, 50, 5, true }));
+    CHECK(RepairsBefore({ 99, 100, 9, true }, { 0, 100, 1, false }));      // worn before the bags, even a broken bag item
+    CHECK_FALSE(RepairsBefore({ 5, 10, 3, true }, { 5, 10, 3, true }));    // equal: not before (strict weak order)
 }
