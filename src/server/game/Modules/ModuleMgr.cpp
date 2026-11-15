@@ -17,6 +17,7 @@
 #include "ModuleActions.h"
 #include "ModuleBotActions.h"
 #include "ModuleBotSnapshot.h"
+#include "ModuleBotSnapshotRules.h"
 #include "ModuleConfig.h"
 #include "ModuleStoreRules.h"
 #include "ModuleTier2.h"
@@ -1194,6 +1195,11 @@ void ModuleMgr::OnWorldTick(uint64 tick)
             }
 
             std::vector<ModuleSnapshotBot> bots;
+            // Idle bots (nothing going on: see CanReuseSnapshotBot) are rebuilt in full one snapshot in this many, and publish their last entry with the
+            // fast-moving fields refreshed on the rest. 1 (the default) rebuilds every bot on every snapshot, as before. Combat, group and instance bots
+            // are always rebuilt every snapshot.
+            static uint32 const idleEvery = static_cast<uint32>(std::clamp<int32>(sConfigMgr->GetIntDefault("Bot.Snapshot.IdleEveryTicks", 1), 1, 16));
+            uint64 const snapshotOrdinal = tick / std::max<uint32>(1, region->GetBounds().TickInterval);
             static bool const everyTickInCombat = sConfigMgr->GetBoolDefault("Bot.Snapshot.EveryTickInCombat", false);
             // Auto: one refresh tick per 400 bots, so a bot's nearby list is at most that many ticks old.
             uint32 const refreshEvery = _config.Tier2NearbyRefreshTicks != 0
@@ -1204,6 +1210,7 @@ void ModuleMgr::OnWorldTick(uint64 tick)
             for (uint64 guid : owned)
                 if (Player* bot = sBotMgr->GetOnlinePlayer(guid))
                     online.push_back(bot);
+            bots.reserve(online.size()); // one growth step instead of a copy of every (large) entry at each doubling
 
             // Layout 25: one party view per group of these bots, built once per group, before the bots so each entry can point at its view.
             ModuleSnapshotParties parties;
@@ -1217,8 +1224,24 @@ void ModuleMgr::OnWorldTick(uint64 tick)
                 // Staggered by guid: each bot refreshes on one tick in refreshEvery, so the cost is spread over the ticks.
                 // Layout 24: a bot in combat, or inside an instance, refreshes every tick (Bot.Snapshot.EveryTickInCombat); only idle open-world bots keep the stagger.
                 bool const refresh = refreshEvery <= 1 || (tick + guid) % refreshEvery == 0 || (everyTickInCombat && NeedsFreshNearby(*bot));
-                ModuleSnapshotBot entry = BuildSnapshotBot(*bot, region->GetBounds().MaxNearbyUnits, refresh,
-                                                            _nearbyCache[guid], _snapshotWatch[guid], _nearbyScratch);
+                ModuleSnapshotBot entry;
+                bool reused = false;
+                if (idleEvery > 1 && !ModuleBotSnapshotRules::IdleRebuildDue(snapshotOrdinal, guid, idleEvery))
+                {
+                    auto last = _idleSnapshots.find(guid);
+                    if (last != _idleSnapshots.end() && CanReuseSnapshotBot(*bot, last->second))
+                    {
+                        entry = ReuseSnapshotBot(*bot, last->second, region->GetBounds().MaxNearbyUnits, _nearbyCache[guid]);
+                        reused = true;
+                    }
+                }
+                if (!reused)
+                {
+                    entry = BuildSnapshotBot(*bot, region->GetBounds().MaxNearbyUnits, refresh,
+                                             _nearbyCache[guid], _snapshotWatch[guid], _nearbyScratch);
+                    if (idleEvery > 1)
+                        _idleSnapshots[guid] = entry.Bot;
+                }
                 if (auto result = _actionResults.find(guid); result != _actionResults.end())
                 {
                     entry.Bot.last_action_type = result->second.Type;
@@ -1232,7 +1255,7 @@ void ModuleMgr::OnWorldTick(uint64 tick)
                     entry.Bot.party_view_index = slot->second.first;
                     entry.Bot.party_member_index = slot->second.second;
                 }
-                bots.push_back(entry);
+                bots.push_back(std::move(entry));
             }
             region->PublishSnapshot(tick, bots, parties);
         }
@@ -1248,6 +1271,8 @@ void ModuleMgr::OnWorldTick(uint64 tick)
         it = ownedByAnyModule.contains(it->first) ? std::next(it) : _nearbyCache.erase(it);
     for (auto it = _snapshotWatch.begin(); it != _snapshotWatch.end();)
         it = ownedByAnyModule.contains(it->first) ? std::next(it) : _snapshotWatch.erase(it);
+    for (auto it = _idleSnapshots.begin(); it != _idleSnapshots.end();)
+        it = ownedByAnyModule.contains(it->first) ? std::next(it) : _idleSnapshots.erase(it);
 
     RunPendingControls();
     RunPendingActions();

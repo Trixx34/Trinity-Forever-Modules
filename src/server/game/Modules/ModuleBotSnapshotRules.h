@@ -12,7 +12,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <limits>
-#include <unordered_map>
 #include <vector>
 
 namespace ModuleBotSnapshotRules
@@ -213,31 +212,77 @@ inline uint32 BuildAuraMask(AuraTraits const& t)
 // A lazily filled cache of a pure per-spell value, keyed by spell id. `tag` identifies the static data the value was worked
 // out from (the SpellInfo pointer): an entry whose tag differs is worked out again and replaced, so a reloaded spell store
 // can never serve a stale value. Not thread-safe: use one per thread (the snapshot builder keeps a thread_local one).
-template <typename Value>
+//
+// Direct-mapped: a fixed table of Slots entries indexed by the low bits of the spell id (Slots is a power of two). A hit is one
+// array read and two compares, with no hashing and no allocation; two spell ids that share a slot just evict each other and are
+// worked out again, so a collision costs what a miss cost before and the table can never grow. The profile of the world thread
+// showed the former unordered_map lookups at about 4% (one per known spell of every bot per snapshot, plus one per aura).
+template <typename Value, std::size_t Slots = 8192>
 class SpellIdCache
 {
+    static_assert(Slots != 0 && (Slots & (Slots - 1)) == 0, "Slots must be a power of two");
+
 public:
     template <typename Compute>
     Value Get(uint32 id, void const* tag, Compute&& compute)
     {
-        auto found = _entries.find(id);
-        if (found != _entries.end() && found->second.Tag == tag)
-            return found->second.Result;
+        if (id == 0)
+            return compute(); // 0 marks an empty slot, and is no spell
+        Entry& slot = _entries[id & (Slots - 1)];
+        if (slot.Id == id && slot.Tag == tag)
+            return slot.Result;
         Value const result = compute();
-        _entries[id] = Entry{ tag, result };
+        if (slot.Id == 0)
+            ++_used;
+        slot = Entry{ id, tag, result };
         return result;
     }
 
-    std::size_t Size() const { return _entries.size(); }
+    // How many slots hold a value (at most Slots).
+    std::size_t Size() const { return _used; }
 
 private:
     struct Entry
     {
-        void const* Tag;
-        Value Result;
+        uint32 Id = 0;
+        void const* Tag = nullptr;
+        Value Result{};
     };
-    std::unordered_map<uint32, Entry> _entries;
+    std::vector<Entry> _entries = std::vector<Entry>(Slots);
+    std::size_t _used = 0;
 };
+
+// ---------------------------------------------------------------------------------------------------------------
+// Idle bot stagger (Bot.Snapshot.IdleEveryTicks). A bot with nothing going on is fully rebuilt one snapshot in `every`; on the others
+// its last entry is published again with only the cheap, fast-moving fields refreshed (position, health, power, moving). The facts
+// below decide whether that is safe for a bot right now: anything that makes a module want fresh data forces a full rebuild.
+// ---------------------------------------------------------------------------------------------------------------
+
+struct IdleFacts
+{
+    bool Alive = true;
+    bool InCombat = false;
+    bool HasVictim = false;
+    bool InGroup = false;           // in a group, or holding an invite to one
+    bool OnInstanceMap = false;     // a dungeon or a raid
+    bool Casting = false;
+    bool InFlight = false;
+    bool SameMapAndLevel = true;    // the map and level are those of the entry being reused
+    bool PreviousWasIdle = true;    // the entry being reused showed no combat, cast, cooldown on the global, group, death or flight
+};
+
+// Whether this snapshot (counted from 0, one per Modules.Tier2 tick that is due) is the one on which a bot with the given guid is rebuilt in full.
+inline bool IdleRebuildDue(uint64 snapshotOrdinal, uint64 guid, uint32 every)
+{
+    return every <= 1 || (snapshotOrdinal + guid) % every == 0;
+}
+
+// Whether the last entry of a bot may be published again (with its cheap fields refreshed) instead of rebuilding it.
+inline bool CanReuseSnapshot(IdleFacts const& f)
+{
+    return f.Alive && !f.InCombat && !f.HasVictim && !f.InGroup && !f.OnInstanceMap && !f.Casting && !f.InFlight &&
+           f.SameMapAndLevel && f.PreviousWasIdle;
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Layout 25: the party view, enemy telegraphs and position probes (ModuleBotPartyView.cpp, ModuleBotSnapshot.cpp, ModuleBotActions.cpp).

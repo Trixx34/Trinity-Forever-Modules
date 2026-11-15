@@ -86,4 +86,13 @@ ModuleSnapshotBot BuildSnapshotBot(Player& bot, uint32 maxNearby, bool refreshNe
                                    std::vector<forever_module::NearbyUnit>& cachedNearby, BotSnapshotWatch& watch,
                                    NearbySnapshotScratch& scratch);
 
+// Bot.Snapshot.IdleEveryTicks: whether the last entry of a bot (`last`) may be published again instead of rebuilding the bot in full. Only for a bot with
+// nothing going on (alive, out of combat, no target, no group or invite, not on a dungeon or raid map, not casting, not in flight) whose last entry
+// showed the same. See ModuleBotSnapshotRules::CanReuseSnapshot.
+bool CanReuseSnapshotBot(Player& bot, forever_module::BotSnapshot const& last);
+
+// Refreshes the fields of `entry` (the bot's last full entry) that move on their own (position, health, power, level, map, moving) and publishes it
+// with the nearby list of the last refresh. Everything else (cooldowns, quests, auras, supplies, vendors, durability, item level) is as of the last full build.
+ModuleSnapshotBot ReuseSnapshotBot(Player& bot, forever_module::BotSnapshot& entry, uint32 maxNearby, std::vector<forever_module::NearbyUnit> const& cachedNearby);
+
 #endif // TRINITYCORE_MODULE_BOT_SNAPSHOT_H

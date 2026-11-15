@@ -273,6 +273,7 @@ class TC_GAME_API ModuleMgr
         // Per bot, the state a snapshot needs from the previous tick (layout 13's last_target_lost_reason). Pruned with
         // the nearby cache above.
         std::unordered_map<uint64, BotSnapshotWatch> _snapshotWatch;
+        std::unordered_map<uint64, forever_module::BotSnapshot> _idleSnapshots; // last full entry of each bot, kept only with Bot.Snapshot.IdleEveryTicks > 1
         // Layout 25: per group, the party view built last and what it needs from the previous tick (world thread only). Pruned by BuildPartyViews.
         PartyViewWatchMap _partyViewWatch;
         void RecordActionResult(uint64 botGuid, forever_module::BotAction const& action, forever_module::BotActionStatus status, uint16 reasonCode = 0);

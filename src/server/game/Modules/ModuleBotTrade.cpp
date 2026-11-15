@@ -77,6 +77,10 @@ bool AmbientAllowed(uint64 botGuid, uint32 nowMs)
     if (recent.size() >= perMinute)
         return false;
     recent.push_back(nowMs);
+    // lastByBot is keyed by every bot that ever spoke: drop the entries whose interval has passed once it grows, so it stays near the online bots.
+    if (lastByBot.size() > 2048)
+        for (auto it = lastByBot.begin(); it != lastByBot.end();)
+            it = nowMs - it->second >= intervalMs ? lastByBot.erase(it) : std::next(it);
     lastByBot[botGuid] = nowMs;
     return true;
 }
