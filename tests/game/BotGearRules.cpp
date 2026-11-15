@@ -219,3 +219,21 @@ TEST_CASE("Items above the cap are refused below level 60, whatever their requir
     CHECK_FALSE(BotGearRules::ItemLevelOverCap(1, 11, 10));
     CHECK(BotGearRules::ItemLevelOverCap(1, 12, 10));
 }
+
+TEST_CASE("A missing weapon, armour or shield skill makes an item unusable", "[BotGearRules]")
+{
+    // item skill 0 = no skill needed; skill value 0 = the character never learned it
+    CHECK_FALSE(BotGearRules::ProficiencyMissing(0, 0));
+    CHECK_FALSE(BotGearRules::ProficiencyMissing(0, 300));
+    CHECK(BotGearRules::ProficiencyMissing(SKILL_CLOTH, 0));
+    CHECK_FALSE(BotGearRules::ProficiencyMissing(SKILL_PLATE_MAIL, 1));
+}
+
+TEST_CASE("An off-hand weapon needs dual wield, a shield does not", "[BotGearRules]")
+{
+    CHECK(BotGearRules::OffHandWeaponNeedsDualWield(INVTYPE_WEAPONOFFHAND, false, false));
+    CHECK_FALSE(BotGearRules::OffHandWeaponNeedsDualWield(INVTYPE_WEAPONOFFHAND, true, false));
+    CHECK_FALSE(BotGearRules::OffHandWeaponNeedsDualWield(INVTYPE_WEAPONOFFHAND, false, true));
+    CHECK_FALSE(BotGearRules::OffHandWeaponNeedsDualWield(INVTYPE_SHIELD, false, false));
+    CHECK_FALSE(BotGearRules::OffHandWeaponNeedsDualWield(INVTYPE_WEAPON, false, false));
+}

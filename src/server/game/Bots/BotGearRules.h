@@ -124,6 +124,20 @@ inline bool ArmorTooHeavy(uint8 classId, uint32 level, uint32 itemClass, uint32 
         default: return false;
     }
 }
+
+// True when the item needs a weapon, armour or shield skill (ItemTemplate::GetSkill, non-zero) that the character does not have (skill value 0).
+// Player::CanUseItem(ItemTemplate const*) does not check this; Player::CanUseItem(Item*), which CanEquipItem calls, does (EQUIP_ERR_PROFICIENCY_NEEDED).
+inline bool ProficiencyMissing(uint32 itemSkill, uint32 skillValue)
+{
+    return itemSkill != 0 && skillValue == 0;
+}
+
+// True for an off-hand weapon (not a shield, not a held-in-off-hand item) that the character cannot dual wield: CanEquipItem refuses it
+// (EQUIP_ERR_2HSKILLNOTFOUND) unless the item allows dual wield on its own (ITEM_FLAG3_ALWAYS_ALLOW_DUAL_WIELD).
+inline bool OffHandWeaponNeedsDualWield(uint32 inventoryType, bool canDualWield, bool alwaysAllowDualWield)
+{
+    return inventoryType == INVTYPE_WEAPONOFFHAND && !canDualWield && !alwaysAllowDualWield;
+}
 }
 
 #endif
