@@ -1,5 +1,6 @@
 #include "ModuleBotActions.h"
 #include "ModuleBotActionRules.h"
+#include "ModuleBotRouteCache.h"
 #include "ModuleBotGearSellRules.h"
 #include "ModuleBotGearWeights.h"
 #include "ModuleGroupRules.h"
@@ -64,6 +65,7 @@
 #include "WorldSession.h"
 
 #include <algorithm>
+#include <unordered_map>
 #include <list>
 #include <cctype>
 #include <limits>
@@ -2553,6 +2555,33 @@ bool HasFullRouteTo(Player& bot, float x, float y, float z)
     return !((type & (PATHFIND_NOPATH | PATHFIND_INCOMPLETE)) != 0);
 }
 
+// kMoveTo asks HasFullRouteTo and then MovePoint, which searches the same path again. A module resends a destination every tick while a bot walks, so the
+// answer is remembered per bot for Bot.Perf.MoveToRouteTtlMs (default 3000, 0 = ask every time) while the destination (2 yard cell) and the bot's start cell
+// (16 yards) are the same. Not used while the bot swims, flies or falls (PathGenerator does not use the mesh then).
+bool HasFullRouteToCached(Player& bot, float x, float y, float z)
+{
+    static uint32 const ttlMs = uint32(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Perf.MoveToRouteTtlMs", 3000)));
+    constexpr float kStartCellYards = 16.0f;
+    static std::unordered_map<uint64, ModuleBotRouteCache::MoveAnswer> answers;
+    if (!ttlMs || bot.IsInWater() || bot.IsFlying() || bot.IsFalling())
+        return HasFullRouteTo(bot, x, y, z);
+    uint32 const now = GameTime::GetGameTimeMS();
+    uint64 const id = bot.GetGUID().GetCounter();
+    auto found = answers.find(id);
+    if (found != answers.end() &&
+        ModuleBotRouteCache::MoveAnswerHolds(found->second, now, ttlMs, x, y, z, bot.GetPositionX(), bot.GetPositionY(), kStartCellYards))
+        return found->second.Reachable;
+    bool const reachable = HasFullRouteTo(bot, x, y, z);
+    if (found == answers.end())
+    {
+        if (answers.size() >= 20000)
+            answers.clear();   // bounded: a bot that logged out leaves one small entry until then
+        found = answers.emplace(id, ModuleBotRouteCache::MoveAnswer{}).first;
+    }
+    found->second = ModuleBotRouteCache::MakeMoveAnswer(now, reachable, x, y, z, bot.GetPositionX(), bot.GetPositionY(), kStartCellYards);
+    return reachable;
+}
+
 // Use a game object (layout 19, ActionType::kUseObject): a door, a lever, an altar, a chest, as a click would. spell_id is the object's entry; the nearest of that
 // entry within 30 yards is the one, and the bot must be within kUseObjectYards of it. target_guid, when not 0, is an item entry: the bot gets one if it has none
 // and uses it on the object (the item's own spell is cast at the object), which is how a door that only a key or a charge opens is opened. A scenario tool: off
@@ -3370,7 +3399,7 @@ static BotActionStatus ApplyBotActionImpl(Player& bot, BotAction const& action, 
                 reason = "not a valid map position";
                 return BotActionStatus::kRefused;
             }
-            bool const reachable = HasFullRouteTo(bot, action.dest_x, action.dest_y, action.dest_z);
+            bool const reachable = HasFullRouteToCached(bot, action.dest_x, action.dest_y, action.dest_z);
             bot.GetMotionMaster()->Clear();
             bot.GetMotionMaster()->MovePoint(0, action.dest_x, action.dest_y, action.dest_z);
             if (!reachable)

@@ -1,4 +1,5 @@
 #include "ModuleBotSnapshot.h"
+#include "ModuleBotRouteCache.h"
 #include "ModuleBotSnapshotRules.h"
 #include "ModuleBotSupplies.h"
 #include "BotMgr.h"
@@ -241,7 +242,12 @@ std::unordered_map<uint32, std::vector<VendorSpot>> const& VendorsByMap()
 constexpr float kVendorLookupMoveYards = 100.0f;
 
 // How often the bag counts of the supply facts are redone (milliseconds): counting walks the bags of every bot.
-constexpr uint32 kSupplyCountEveryMs = 2000;
+// Bot.Perf.SupplyCountEveryMs (default 5000, was a fixed 2000).
+uint32 SupplyCountEveryMs()
+{
+    static uint32 const value = uint32(std::max<int32>(250, sConfigMgr->GetIntDefault("Bot.Perf.SupplyCountEveryMs", 5000)));
+    return value;
+}
 
 struct VendorLookup
 {
@@ -280,7 +286,7 @@ struct VendorLookup
     uint64 ReagentMadeAtMs = 0;
     uint32 ReagentCarried = 0;
     uint64 SupplyMadeAtMs = 0;       // when the vendors were chosen: a choice that found nothing is made again after kSupplyRetryMs
-    // What the bot carries, counted at most every kSupplyCountEveryMs: counting walks the bags.
+    // What the bot carries, counted at most every SupplyCountEveryMs(): counting walks the bags.
     uint64 CountedAtMs = 0;
     uint32 AmmoEntry = 0;
     uint32 AmmoCount = 0;
@@ -319,10 +325,42 @@ std::unordered_map<uint64, BotProbeLog> g_botProbeLogs;
 
 // Layout 16: the vendors a bot is sent to must be ones it can walk to. The nearest in a straight line is often across a river, a cliff or a
 // city wall. The few nearest candidates of each kind are checked against the navmesh, nearest first, and the first with a route is used. A path
-// calculation is not cheap, so only kSupplyPathChecksPerTick of them are made in one world update; when they run out the choice waits for the
+// calculation is not cheap, so only SupplyPathChecksPerUpdate() of them are made in one world update; when they run out the choice waits for the
 // next update (the bot is shown no vendor meanwhile, and so is not sent anywhere).
 constexpr uint32 kSupplyCandidates = 4;
-constexpr uint32 kSupplyPathChecksPerTick = 24;
+// Bot.Perf.SupplyPathChecksPerUpdate (default 6, was a fixed 24): the real searches one world update may spend here. Answers served by the route cache or by the
+// far-distance gate are free and do not count.
+uint32 SupplyPathChecksPerUpdate()
+{
+    static uint32 const value = uint32(std::max<int32>(1, sConfigMgr->GetIntDefault("Bot.Perf.SupplyPathChecksPerUpdate", 6)));
+    return value;
+}
+// Bot.Perf.RouteCache.CellYards (default 40): the start cell of a cached answer. Bot.Perf.RouteCache.OpenTtlSec (default 600) and ClosedTtlSec (default 1800): how
+// long an answer is kept, 0 = that kind is not cached. Bot.Perf.RouteCache.MaxEntries (default 50000).
+ModuleBotRouteCache::Cache& SharedRouteCache()
+{
+    static ModuleBotRouteCache::Cache cache = []
+    {
+        ModuleBotRouteCache::Cache made;
+        made.Configure(uint32(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Perf.RouteCache.OpenTtlSec", 600))) * 1000u,
+                       uint32(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Perf.RouteCache.ClosedTtlSec", 1800))) * 1000u,
+                       size_t(std::max<int32>(1, sConfigMgr->GetIntDefault("Bot.Perf.RouteCache.MaxEntries", 50000))));
+        return made;
+    }();
+    return cache;
+}
+float RouteCacheCellYards()
+{
+    static float const value = float(std::max<int32>(2, sConfigMgr->GetIntDefault("Bot.Perf.RouteCache.CellYards", 40)));
+    return value;
+}
+// Bot.Perf.RouteTrustFarYards (default 400, 0 = off): a vendor further than this in a straight line counts as reachable without a search. RouteLooksOpen already
+// answers "open" for an INCOMPLETE path beyond 250 yards, so only a NOPATH (start or goal off the mesh) is lost, and the walk itself finds that out.
+float RouteTrustFarYards()
+{
+    static float const value = float(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Perf.RouteTrustFarYards", 400)));
+    return value;
+}
 constexpr uint64 kSupplyRetryMs = 300000; // a choice that found no reachable vendor of a kind is made again after this long
 
 struct PathBudget
@@ -337,7 +375,7 @@ struct PathBudget
             Tick = now;
             Used = 0;
         }
-        if (Used >= kSupplyPathChecksPerTick)
+        if (Used >= SupplyPathChecksPerUpdate())
             return false;
         ++Used;
         return true;
@@ -378,9 +416,26 @@ Route PickReachable(Player& bot, std::vector<Candidate> const& list, std::unorde
         auto known = checked.find(spot.SpawnId);
         if (known == checked.end())
         {
-            if (!g_pathBudget.Take())
-                return Route::Later;
-            known = checked.emplace(spot.SpawnId, ModuleBotSupplies::RouteLooksOpen(bot, spot.X, spot.Y, spot.Z)).first;
+            bool open = false;
+            float const dx = spot.X - bot.GetPositionX();
+            float const dy = spot.Y - bot.GetPositionY();
+            float const trustFar = RouteTrustFarYards();
+            // Not cached while swimming, flying or falling: PathGenerator answers "no navmesh" for those, which says nothing about the walk.
+            bool const cacheable = !bot.IsInWater() && !bot.IsFlying() && !bot.IsFalling();
+            ModuleBotRouteCache::Key const key =
+                ModuleBotRouteCache::MakeKey(bot.GetMapId(), spot.SpawnId, bot.GetPositionX(), bot.GetPositionY(), RouteCacheCellYards());
+            uint32 const nowMs = GameTime::GetGameTimeMS();
+            if (trustFar > 0.0f && dx * dx + dy * dy > trustFar * trustFar)
+                open = true;
+            else if (!(cacheable && SharedRouteCache().Find(key, nowMs, open)))
+            {
+                if (!g_pathBudget.Take())
+                    return Route::Later;
+                open = ModuleBotSupplies::RouteLooksOpen(bot, spot.X, spot.Y, spot.Z);
+                if (cacheable)
+                    SharedRouteCache().Store(key, nowMs, open);
+            }
+            known = checked.emplace(spot.SpawnId, open).first;
         }
         if (known->second)
         {
@@ -509,7 +564,7 @@ void FillSupplies(Player& bot, BotSnapshot& entry, VendorLookup& last)
         (nothingFound && now - uint32(last.SupplyMadeAtMs) >= kSupplyRetryMs))
         ChooseSupplyVendors(bot, last, ammoSubclass, mana);
 
-    if (last.CountedAtMs == 0 || now - last.CountedAtMs >= kSupplyCountEveryMs)
+    if (last.CountedAtMs == 0 || now - last.CountedAtMs >= SupplyCountEveryMs())
     {
         last.CountedAtMs = now ? now : 1;
         last.AmmoEntry = ModuleBotSupplies::AmmoEntryFor(bot);

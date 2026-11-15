@@ -1914,6 +1914,35 @@ Bot.Limit.MaxDbQueue = 5000
 #            food or drink the bot may use at its level, bought until the bot carries the count the module asked for or its money or bags run
 #            out. The snapshot always tells the module what the bot carries and where the nearest vendor that sells it is.
 #
+#    Bot.Perf.SupplyPathChecksPerUpdate
+#        Default:     6
+#        The most navmesh route searches the vendor choice (supplies, flight master, reagents) may make in one world update. Answers from the route cache do not count.
+#
+#    Bot.Perf.RouteCache.OpenTtlSec
+#        Default:     600
+#    Bot.Perf.RouteCache.ClosedTtlSec
+#        Default:     1800
+#        How long a route answer (map, vendor spawn, start cell) is kept for every bot. 0 = that kind of answer is not cached.
+#
+#    Bot.Perf.RouteCache.CellYards
+#        Default:     40
+#        Size of the start cell of a cached route answer.
+#
+#    Bot.Perf.RouteCache.MaxEntries
+#        Default:     50000
+#
+#    Bot.Perf.RouteTrustFarYards
+#        Default:     400
+#        A vendor further away than this in a straight line counts as reachable without a search. 0 = always search.
+#
+#    Bot.Perf.SupplyCountEveryMs
+#        Default:     5000
+#        How often the bag counts of the supply facts are redone per bot (was a fixed 2000).
+#
+#    Bot.Perf.MoveToRouteTtlMs
+#        Default:     3000
+#        kMoveTo remembers its route answer per bot for this long while the destination and the start cell stay the same. 0 = ask every time.
+#
 #    Bot.Vendor.SellGear
 #        Default:     1
 #        1 = a module may add bit 2048 to a kVendor action: the bot sells the gear in its bags that what it wears outclasses (green or lower, usable, not a quest or
