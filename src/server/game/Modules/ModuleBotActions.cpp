@@ -1009,6 +1009,18 @@ std::string RepairWhatBotCanAfford(Player& bot)
     return text;
 }
 
+// Whether the bot can wear the template at all, by the checks Player::CanEquipItem makes that do not need an Item object: CanUseItem (class, race,
+// faction, required skill and rank, required spell, level, reputation, holiday), the item's own weapon, armour or shield skill (CanUseItem for a
+// template skips it; the Item overload that CanEquipItem calls does not), and dual wield for an off-hand weapon. By the item's numbers, never its id.
+static bool BotCanWearTemplate(Player const& bot, ItemTemplate const& item)
+{
+    if (bot.CanUseItem(&item) != EQUIP_ERR_OK)
+        return false;
+    if (uint32 const skill = item.GetSkill(); BotGearRules::ProficiencyMissing(skill, skill ? bot.GetSkillValue(skill) : 0))
+        return false;
+    return !BotGearRules::OffHandWeaponNeedsDualWield(item.GetInventoryType(), bot.CanDualWield(), item.HasFlag(ITEM_FLAG3_ALWAYS_ALLOW_DUAL_WIELD));
+}
+
 int32 BotGearUpgradeScore(Player const& bot, ItemTemplate const& item)
 {
     if (item.GetClass() != ITEM_CLASS_WEAPON && item.GetClass() != ITEM_CLASS_ARMOR)
@@ -1017,7 +1029,7 @@ int32 BotGearUpgradeScore(Player const& bot, ItemTemplate const& item)
     uint8 const first = EquipSlotFor(type);
     if (type == INVTYPE_BODY || first == NULL_SLOT)
         return 0;
-    if (item.GetBaseRequiredLevel() > int32(bot.GetLevel()) || bot.CanUseItem(&item) != EQUIP_ERR_OK || ArmorTooHeavy(bot, item) || ItemLevelOverCap(bot, item))
+    if (item.GetBaseRequiredLevel() > int32(bot.GetLevel()) || !BotCanWearTemplate(bot, item) || ArmorTooHeavy(bot, item) || ItemLevelOverCap(bot, item))
         return 0;
     // A two-hander would also take the off hand out of use: no judgement, no purchase.
     if (type == INVTYPE_2HWEAPON && bot.GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_OFFHAND))
