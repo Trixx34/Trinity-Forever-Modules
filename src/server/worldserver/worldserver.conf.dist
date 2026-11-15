@@ -1782,6 +1782,16 @@ Modules.DamageEvent.All = 0
 
 Modules.DamageEvent.MaxPerSecond = 200
 
+#    Modules.Store.MaxRowsPerModule
+#        Default:     5000
+#        Most module_store rows one module may keep, and the most keys one StoreList returns. forever-bots keeps one row per
+#        controlled bot character, so this must be at least the number of bot characters (the sim has about 2200). Characters
+#        above the limit are not saved and are not reclaimed after a restart. Values are clamped to 100 .. 20000
+#        (20000 rows is about 20 MiB in the world database at most, and a list of 20000 bot keys is about 440 KB, inside
+#        one 1 MiB wire frame). A full store logs one warning per module.
+
+Modules.Store.MaxRowsPerModule = 5000
+
 #    Modules.Tier2.MaxBots
 #        Default:     1500
 #        Upper limit on bots in a module's Tier 2 region. A module's request is capped at this value.
