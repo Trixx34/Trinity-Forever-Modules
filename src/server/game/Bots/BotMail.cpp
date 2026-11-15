@@ -19,6 +19,7 @@
 #include "Log.h"
 #include "Mail.h"
 #include "Player.h"
+#include "ScriptMgr.h"
 
 uint32 WorldSession::CollectMailAsBot()
 {
@@ -61,6 +62,8 @@ uint32 WorldSession::CollectMailAsBot()
             m->removedItems.push_back(info.item_guid);
             player->RemoveMItem(info.item_guid);
             item->SetState(ITEM_UNCHANGED);
+            // The module hears of it (an expired listing comes back to its auction book) before the move: a stack may merge into another and be deleted.
+            sScriptMgr->OnBotItemReceived(player, item, item->GetCount(), ScriptMgr::BotItemSource::Mail);
             player->MoveItemToInventory(destination, item, true);
             ++items;
             changed = true;

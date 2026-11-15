@@ -483,6 +483,38 @@ int main()
         CHECK(sdk.item_class() == 7);
         CHECK(sdk.sell_price() == 20);
         CHECK(sdk.item_name() == "Tattered Cloth");
+        CHECK(!sdk.has_required_level() && !sdk.has_upgrade_score() && !sdk.has_source()); // no facts: the fields are left out
+    }
+
+    // Core -> SDK: PlayerItemLooted with the item facts (fields 9 to 14).
+    {
+        ModuleWire::ItemLootedEvent loot;
+        loot.PlayerGuid = 42;
+        loot.ItemGuid = 5002;
+        loot.ItemEntry = 15210;
+        loot.Count = 1;
+        loot.Quality = 2;
+        loot.ItemClass = 2;
+        loot.SellPrice = 900;
+        loot.HasFacts = true;
+        loot.RequiredLevel = 23;
+        loot.InventoryType = 13;
+        loot.Bound = true;
+        loot.UpgradeScore = 7;
+        loot.Usable = true;
+        loot.Source = uint32(ModuleWire::ItemSource::Mail);
+        std::string body = ModuleWire::EncodeEventNotifyItemLooted("PlayerScript.OnLootItem", loot);
+
+        forever_module::EventNotify notify;
+        CHECK(notify.ParseFromString(body));
+        forever_module::PlayerItemLootedEvent const& sdk = notify.player_item_looted();
+        CHECK(sdk.item_guid() == 5002);
+        CHECK(sdk.has_required_level() && sdk.required_level() == 23);
+        CHECK(sdk.inventory_type() == 13);
+        CHECK(sdk.bound());
+        CHECK(sdk.has_upgrade_score() && sdk.upgrade_score() == 7);
+        CHECK(sdk.usable());
+        CHECK(sdk.has_source() && sdk.source() == 3);
     }
 
     // SDK -> core: ControlRequest (spawn) and ReleaseControl.

@@ -15995,6 +15995,7 @@ void Player::RewardQuest(Quest const* quest, LootItemType rewardType, uint32 rew
                 {
                     Item* item = StoreNewItem(dest, itemId, true, GenerateItemRandomBonusListId(itemId), {}, ItemContext::Quest_Reward);
                     SendNewItem(item, quest->RewardItemCount[i], true, false);
+                    sScriptMgr->OnBotItemReceived(this, item, quest->RewardItemCount[i], ScriptMgr::BotItemSource::QuestReward);
                 }
                 else if (quest->IsDFQuest())
                     SendItemRetrievalMail(itemId, quest->RewardItemCount[i], ItemContext::Quest_Reward);
@@ -16042,6 +16043,7 @@ void Player::RewardQuest(Quest const* quest, LootItemType rewardType, uint32 rew
                             {
                                 Item* item = StoreNewItem(dest, rewardId, true, GenerateItemRandomBonusListId(rewardId), {}, ItemContext::Quest_Reward);
                                 SendNewItem(item, quest->RewardChoiceItemCount[i], true, false);
+                                sScriptMgr->OnBotItemReceived(this, item, quest->RewardChoiceItemCount[i], ScriptMgr::BotItemSource::QuestReward);
                             }
                         }
 

@@ -1307,6 +1307,10 @@ class TC_GAME_API ScriptMgr
         void OnPlayerSpellCast(Player* player, Spell* spell, bool skipCheck);
         void OnPlayerLogin(Player* player, bool firstLogin);
         void OnPlayerItemLooted(Player* player, Item* item, uint32 lootedCount);
+        // An item a bot received without a loot window (a craft, a quest reward, auction mail): the same PlayerScript.OnLootItem event to the modules,
+        // with its source set, when Modules.ItemReceivedEvent.Enabled is 1. The values match ModuleWire::ItemSource.
+        enum class BotItemSource : uint32 { Crafted = 1, QuestReward = 2, Mail = 3 };
+        void OnBotItemReceived(Player* player, Item* item, uint32 count, BotItemSource source);
         void OnPlayerLogout(Player* player);
         void OnPlayerCreate(Player* player);
         void OnPlayerDelete(ObjectGuid guid, uint32 accountId);
