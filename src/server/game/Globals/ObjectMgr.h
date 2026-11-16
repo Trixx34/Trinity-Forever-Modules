@@ -1312,6 +1312,7 @@ class TC_GAME_API ObjectMgr
         void LoadInstanceSpawnGroups();
         void LoadItemTemplates();
         void LoadItemTemplateAddon();
+        void LoadClassicItemDurability();
         void LoadItemScriptNames();
         void LoadQuestTemplateLocale();
         void LoadQuestObjectivesLocale();

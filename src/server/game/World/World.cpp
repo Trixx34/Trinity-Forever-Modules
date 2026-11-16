@@ -1564,6 +1564,9 @@ bool World::SetInitialWorldSettings()
     TC_LOG_INFO("server.loading", "Loading Item set names...");                // must be after LoadItemPrototypes
     sObjectMgr->LoadItemTemplateAddon();
 
+    TC_LOG_INFO("server.loading", "Loading Classic item durability...");      // must be after LoadItemTemplates
+    sObjectMgr->LoadClassicItemDurability();
+
     TC_LOG_INFO("misc", "Loading Item Scripts...");                 // must be after LoadItemPrototypes
     sObjectMgr->LoadItemScriptNames();
 

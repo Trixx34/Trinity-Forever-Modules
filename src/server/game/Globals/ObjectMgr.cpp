@@ -3679,6 +3679,34 @@ void ObjectMgr::LoadItemTemplateAddon()
     TC_LOG_INFO("server.loading", ">> Loaded {} item addon templates in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
 }
 
+// Classic 1.60: vanilla maximum durability (table classic_item_durability, VMaNGOS item_template.max_durability). The client has
+// no durability data, so LoadItemTemplates works one out with the retail formula; a listed item takes its vanilla value instead.
+void ObjectMgr::LoadClassicItemDurability()
+{
+    uint32 oldMSTime = getMSTime();
+    uint32 count = 0;
+
+    QueryResult result = WorldDatabase.Query("SELECT entry, max_durability FROM classic_item_durability");
+    if (!result)
+    {
+        TC_LOG_INFO("server.loading", ">> Loaded 0 classic item durabilities. DB table `classic_item_durability` is empty.");
+        return;
+    }
+
+    do
+    {
+        Field* fields = result->Fetch();
+        ItemTemplate* itemTemplate = Trinity::Containers::MapGetValuePtr(_itemTemplateStore, fields[0].GetUInt32());
+        if (!itemTemplate)
+            continue;   // a vanilla item this client does not have
+
+        itemTemplate->MaxDurability = fields[1].GetUInt16();
+        ++count;
+    } while (result->NextRow());
+
+    TC_LOG_INFO("server.loading", ">> Loaded {} classic item durabilities in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
+}
+
 void ObjectMgr::LoadItemScriptNames()
 {
     uint32 oldMSTime = getMSTime();
