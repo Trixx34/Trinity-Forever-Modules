@@ -60,7 +60,7 @@ endfunction()
 module_test(module_bot_talent_spec_test BotTalentSpecTest.cpp)
 module_test(module_bot_ownership_test ModuleBotOwnershipTest.cpp ${MODULE_TEST_SRC}/ModuleBotOwnership.cpp)
 module_test(module_bot_route_cache_test ModuleBotRouteCacheTest.cpp)
-module_test(module_config_testModuleConfigTest.cpp ${MODULE_TEST_SRC}/ModuleConfig.cpp)
+module_test(module_config_test ModuleConfigTest.cpp ${MODULE_TEST_SRC}/ModuleConfig.cpp)
 module_test(module_store_rules_test ModuleStoreRulesTest.cpp ${MODULE_TEST_SRC}/ModuleStoreRules.cpp ${MODULE_TEST_SRC}/ModuleWire.cpp)
 module_test(module_approval_test ModuleApprovalTest.cpp ${MODULE_TEST_SRC}/ModuleApproval.cpp ${MODULE_TEST_SRC}/ModuleManifestInfo.cpp
   ${MODULE_TEST_DIR}/stubs/ErrorsStub.cpp)
