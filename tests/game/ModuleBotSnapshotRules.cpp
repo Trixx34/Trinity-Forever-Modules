@@ -541,3 +541,72 @@ TEST_CASE("Probe ring reports at most its capacity, oldest first", "[ModuleBotSn
     CHECK(ModuleBotSnapshotRules::DamageRingSlot(2, 4, 4, 0) == 2);
     CHECK(ModuleBotSnapshotRules::DamageRingSlot(2, 4, 4, 3) == 1);
 }
+
+TEST_CASE("SpellIdCache evicts on a slot collision and works the value out again", "[ModuleBotSnapshotRules]")
+{
+    Rules::SpellIdCache<uint32, 16> cache;
+    int calls = 0;
+    int tag = 0;
+    CHECK(cache.Get(3, &tag, [&calls] { ++calls; return 1u; }) == 1u);
+    CHECK(cache.Get(3 + 16, &tag, [&calls] { ++calls; return 2u; }) == 2u); // same slot, another id
+    CHECK(calls == 2);
+    CHECK(cache.Size() == 1u);
+    CHECK(cache.Get(3, &tag, [&calls] { ++calls; return 9u; }) == 9u); // evicted: worked out again, never the other id's value
+    CHECK(calls == 3);
+}
+
+TEST_CASE("SpellIdCache never caches spell id 0", "[ModuleBotSnapshotRules]")
+{
+    Rules::SpellIdCache<uint32, 16> cache;
+    int calls = 0;
+    CHECK(cache.Get(0, nullptr, [&calls] { ++calls; return 5u; }) == 5u);
+    CHECK(cache.Get(0, nullptr, [&calls] { ++calls; return 5u; }) == 5u);
+    CHECK(calls == 2);
+    CHECK(cache.Size() == 0u);
+}
+
+TEST_CASE("Idle rebuild is due on one snapshot in every and on each snapshot when off", "[ModuleBotSnapshotRules]")
+{
+    for (uint64 ordinal = 0; ordinal < 20; ++ordinal)
+    {
+        CHECK(Rules::IdleRebuildDue(ordinal, 12345, 1));
+        CHECK(Rules::IdleRebuildDue(ordinal, 12345, 0));
+    }
+    for (uint32 every : { 2u, 3u, 5u, 16u })
+        for (uint64 guid : { uint64(1), uint64(2), uint64(7), uint64(1000001) })
+        {
+            uint32 due = 0;
+            for (uint64 ordinal = 0; ordinal < every * 10; ++ordinal)
+                due += Rules::IdleRebuildDue(ordinal, guid, every) ? 1 : 0;
+            CHECK(due == 10u);
+            // never longer than `every` snapshots without a full rebuild
+            uint32 gap = 0;
+            for (uint64 ordinal = 0; ordinal < every * 10; ++ordinal)
+            {
+                gap = Rules::IdleRebuildDue(ordinal, guid, every) ? 0 : gap + 1;
+                CHECK(gap < every);
+            }
+        }
+}
+
+TEST_CASE("Idle bots may reuse their last entry and anything lively forces a rebuild", "[ModuleBotSnapshotRules]")
+{
+    Rules::IdleFacts idle;
+    CHECK(Rules::CanReuseSnapshot(idle));
+
+    auto blocks = [](auto change)
+    {
+        Rules::IdleFacts f;
+        change(f);
+        return !Rules::CanReuseSnapshot(f);
+    };
+    CHECK(blocks([](Rules::IdleFacts& f) { f.Alive = false; }));
+    CHECK(blocks([](Rules::IdleFacts& f) { f.InCombat = true; }));
+    CHECK(blocks([](Rules::IdleFacts& f) { f.HasVictim = true; }));
+    CHECK(blocks([](Rules::IdleFacts& f) { f.InGroup = true; }));
+    CHECK(blocks([](Rules::IdleFacts& f) { f.OnInstanceMap = true; }));
+    CHECK(blocks([](Rules::IdleFacts& f) { f.Casting = true; }));
+    CHECK(blocks([](Rules::IdleFacts& f) { f.InFlight = true; }));
+    CHECK(blocks([](Rules::IdleFacts& f) { f.SameMapAndLevel = false; }));
+    CHECK(blocks([](Rules::IdleFacts& f) { f.PreviousWasIdle = false; }));
+}

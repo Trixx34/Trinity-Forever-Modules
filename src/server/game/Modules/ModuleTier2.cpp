@@ -126,10 +126,10 @@ void ModuleTier2Region::PublishSnapshot(uint64 tick, std::vector<ModuleSnapshotB
     auto* nearbySlots = reinterpret_cast<NearbyUnit*>(buffer + Tier2NearbySectionOffset(maxBots));
     for (uint32 i = 0; i < count; ++i)
     {
-        BotSnapshot entry = bots[i].Bot;
+        // Straight into shared memory: no second copy of the (large) entry on the stack.
         uint32 const nearby = static_cast<uint32>(std::min<std::size_t>(bots[i].Nearby.size(), maxNearby));
-        entry.nearby_count = nearby;
-        std::memcpy(static_cast<void*>(botSlots + i), &entry, sizeof(entry));
+        std::memcpy(static_cast<void*>(botSlots + i), &bots[i].Bot, sizeof(BotSnapshot));
+        botSlots[i].nearby_count = nearby;
         if (nearby > 0)
             std::memcpy(static_cast<void*>(nearbySlots + std::size_t(i) * maxNearby), bots[i].Nearby.data(),
                         nearby * sizeof(NearbyUnit));

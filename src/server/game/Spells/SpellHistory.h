@@ -171,6 +171,8 @@ public:
     bool HasCooldown(SpellInfo const* spellInfo, uint32 itemId = 0) const;
     bool HasCooldown(uint32 spellId, uint32 itemId = 0) const;
     bool HasCooldownOnHold(uint32 spellId) const;
+    // True when any spell or category cooldown is running (expired ones are removed by Update). The bot snapshot skips a bot with none instead of asking per known spell.
+    bool HasActiveCooldowns() const { return !_spellCooldowns.empty() || !_categoryCooldowns.empty(); }
     Duration GetRemainingCooldown(SpellInfo const* spellInfo) const;
     Duration GetRemainingCategoryCooldown(uint32 categoryId) const;
     Duration GetRemainingCategoryCooldown(SpellInfo const* spellInfo) const;

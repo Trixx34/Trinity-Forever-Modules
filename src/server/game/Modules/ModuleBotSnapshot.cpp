@@ -113,8 +113,14 @@ void FillCooldowns(Player& bot, SpellCooldown (&slots)[forever_module::kMaxTrack
 {
     using Active = ModuleBotSnapshotRules::ActiveCooldown;
 
-    std::vector<Active> active;
     SpellHistory const* history = bot.GetSpellHistory();
+    // Most bots, most of the time, have no cooldown running: that is one check instead of a lookup per known spell (a bot knows a hundred or more).
+    if (!history->HasActiveCooldowns())
+        return;
+
+    // Reused between bots and ticks: the vector lives on the world thread only and is emptied here.
+    thread_local std::vector<Active> active;
+    active.clear();
     for (auto const& [spellId, spell] : bot.GetSpellMap())
     {
         if (spell.state == PLAYERSPELL_REMOVED)
@@ -1021,44 +1027,50 @@ uint32 AuraMaskOf(SpellInfo const* info)
 // already run out are left out: an aura the unit does not carry is not "about to expire".
 uint32 CollectAuras(Unit const& unit, AuraFact* out, uint32 capacity)
 {
+    // One walk of the aura container works out each aura's mask (a spell-id cache lookup) once; the two passes then run over that list.
+    // The list is reused between calls: the world thread is the only caller.
+    thread_local std::vector<AuraFact> live;
+    live.clear();
+    for (auto const& [spellId, application] : unit.GetAppliedAuras())
+    {
+        Aura const* aura = application->GetBase();
+        if (!aura)
+            continue;
+
+        bool const permanent = aura->IsPermanent();
+        int32 const left = aura->GetDuration();
+        if (!permanent && left <= 0)
+            continue;
+
+        live.push_back({ spellId, ModuleBotSnapshotRules::AuraRemainingMs(permanent, left),
+                         ModuleBotSnapshotRules::AuraStacks(aura->GetStackAmount()), AuraMaskOf(aura->GetSpellInfo()) });
+    }
+
     uint32 count = 0;
     for (uint32 pass = 0; pass < 2; ++pass)
     {
         bool const wantMasked = pass == 0;
-        for (auto const& [spellId, application] : unit.GetAppliedAuras())
+        for (AuraFact const& fact : live)
         {
-            Aura const* aura = application->GetBase();
-            if (!aura)
+            if (wantMasked != (fact.Mask != 0))
                 continue;
-
-            bool const permanent = aura->IsPermanent();
-            int32 const left = aura->GetDuration();
-            if (!permanent && left <= 0)
-                continue;
-
-            uint32 const mask = AuraMaskOf(aura->GetSpellInfo());
-            if (wantMasked != (mask != 0))
-                continue;
-
-            uint32 const remaining = ModuleBotSnapshotRules::AuraRemainingMs(permanent, left);
-            uint32 const stacks = ModuleBotSnapshotRules::AuraStacks(aura->GetStackAmount());
 
             // The same spell again (another caster): keep the longer one, and never a second entry for it.
             uint32 slot = count;
-            while (slot > 0 && out[slot - 1].SpellId == spellId)
+            while (slot > 0 && out[slot - 1].SpellId == fact.SpellId)
                 --slot;
             if (slot != count)
             {
-                if (remaining <= out[slot].RemainingMs)
+                if (fact.RemainingMs <= out[slot].RemainingMs)
                     continue;
-                out[slot].RemainingMs = remaining;
-                out[slot].Stacks = std::max(out[slot].Stacks, stacks);
+                out[slot].RemainingMs = fact.RemainingMs;
+                out[slot].Stacks = std::max(out[slot].Stacks, fact.Stacks);
                 continue;
             }
             if (count >= capacity)
                 continue;
 
-            out[count] = { spellId, remaining, stacks, mask };
+            out[count] = fact;
             ++count;
         }
     }
@@ -1436,6 +1448,44 @@ bool NeedsFreshNearby(Player const& bot)
         return true;
     Map const* map = bot.FindMap();
     return map && (map->IsDungeon() || map->IsRaid());
+}
+
+bool CanReuseSnapshotBot(Player& bot, forever_module::BotSnapshot const& last)
+{
+    ModuleBotSnapshotRules::IdleFacts facts;
+    facts.Alive = bot.IsAlive();
+    facts.InCombat = bot.IsInCombat();
+    facts.HasVictim = bot.GetVictim() != nullptr;
+    facts.InGroup = bot.GetGroup() != nullptr || bot.GetGroupInvite() != nullptr;
+    Map const* map = bot.FindMap();
+    facts.OnInstanceMap = !map || map->IsDungeon() || map->IsRaid();
+    facts.Casting = bot.GetCurrentSpell(CURRENT_GENERIC_SPELL) || bot.GetCurrentSpell(CURRENT_CHANNELED_SPELL);
+    facts.InFlight = bot.IsInFlight();
+    facts.SameMapAndLevel = last.map_id == bot.GetMapId() && last.level == bot.GetLevel();
+    facts.PreviousWasIdle = last.in_combat == 0 && last.casting_spell == 0 && last.gcd_remaining_ms == 0 && last.life_state == 0 &&
+        last.group_size == 0 && last.group_invite_from == 0 && last.in_flight == 0 && last.threat_target_guid == 0;
+    return ModuleBotSnapshotRules::CanReuseSnapshot(facts);
+}
+
+ModuleSnapshotBot ReuseSnapshotBot(Player& bot, forever_module::BotSnapshot& entry, uint32 maxNearby, std::vector<NearbyUnit> const& cachedNearby)
+{
+    entry.pos_x = bot.GetPositionX();
+    entry.pos_y = bot.GetPositionY();
+    entry.pos_z = bot.GetPositionZ();
+    entry.orientation = bot.GetOrientation();
+    entry.health = ClampToUint32(bot.GetHealth());
+    entry.max_health = ClampToUint32(bot.GetMaxHealth());
+    Powers const powerType = bot.GetPowerType();
+    entry.power_type = uint8(powerType);
+    entry.power = ClampToUint32(int64(bot.GetPower(powerType)));
+    entry.max_power = ClampToUint32(int64(bot.GetMaxPower(powerType)));
+    entry.moving = bot.isMoving() ? 1 : 0;
+
+    ModuleSnapshotBot result;
+    result.Bot = entry;
+    if (maxNearby != 0)
+        result.Nearby = std::span<NearbyUnit const>(cachedNearby).first(ModuleBotSnapshotRules::CapCount(cachedNearby.size(), maxNearby));
+    return result;
 }
 
 uint32 BotTransportEntry(WorldObject const& object)
