@@ -5387,6 +5387,13 @@ void SpellMgr::LoadSpellInfoCorrections()
     {
         properties->Control = SUMMON_CATEGORY_PET;
     });
+    // Classic 1.60 Hoof-Shaped Foot Pedal (item 269902): the centaur form ends on entering combat only outside Desolace, which its
+    // script (classic_spell_hoof_shaped_foot_pedal) does; the interrupt in the client data would end it in Desolace too.
+    ApplySpellFix({ 1286814 }, [](SpellInfo* spellInfo)
+    {
+        spellInfo->AuraInterruptFlags &= ~SpellAuraInterruptFlags::EnteringCombat;
+    });
+
 
     TC_LOG_INFO("server.loading", ">> Loaded SpellInfo corrections in {} ms", GetMSTimeDiffToNow(oldMSTime));
 }
