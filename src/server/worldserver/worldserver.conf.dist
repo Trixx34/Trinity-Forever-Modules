@@ -1982,9 +1982,10 @@ Bot.Limit.MaxDbQueue = 5000
 #    Bot.Perf.NoPathCache.HeightBandYards
 #        Default:     8
 #    Bot.Perf.NoPathCache.StartCellYards
-#        Default:     40
+#        Default:     200
 #        Size of the destination cell, of its height band and of the start cell in the key (map, destination cell, band, start cell). A start cell of 0 = the
-#        start does not take part (every bot shares the answer).
+#        start does not take part (every bot shares the answer: the most hits, but a destination that only a pocket of the map reaches is refused to bots outside
+#        the pocket). Measured on 60 min of journal: 40 yards = 6% of the failed checks answered from the cache on prod, 200 = 15%, 0 = 43%.
 #
 #    Bot.Perf.NoPathCache.MaxEntries
 #        Default:     20000

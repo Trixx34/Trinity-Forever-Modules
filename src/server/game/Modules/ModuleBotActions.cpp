@@ -2889,7 +2889,7 @@ bool HasFullRouteToCached(Player& bot, float x, float y, float z, bool& blockedB
     static uint32 const negMaxMs = uint32(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Perf.NoPathCache.MaxTtlSec", 900))) * 1000u;
     static float const destCell = float(std::max<int32>(2, sConfigMgr->GetIntDefault("Bot.Perf.NoPathCache.DestCellYards", 4)));
     static float const heightBand = float(std::max<int32>(2, sConfigMgr->GetIntDefault("Bot.Perf.NoPathCache.HeightBandYards", 8)));
-    static float const startCell = float(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Perf.NoPathCache.StartCellYards", 40)));
+    static float const startCell = float(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Perf.NoPathCache.StartCellYards", 200)));
     constexpr float kStartCellYards = 16.0f;
     static std::unordered_map<uint64, ModuleBotRouteCache::MoveAnswer> answers;
     static ModuleBotNoPathCache::Cache negative = []
