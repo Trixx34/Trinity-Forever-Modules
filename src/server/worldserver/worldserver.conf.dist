@@ -2405,9 +2405,40 @@ Bot.Spread.MaxRadiusYards = 200
 
 #    Bot.Login.TimeoutMs
 #        Default:     60000
-#        A bot whose character has not loaded after this long is logged out again and retried later.
+#        A bot whose character has not loaded after this long has its login failed. With Bot.Login.Retry.Enabled = 0 it then stays offline
+#        (nothing logs it in again until its module takes it back by guid); with 1 it is retried as below.
 
 Bot.Login.TimeoutMs = 60000
+
+#    Bot.Login.Retry.Enabled
+#        Default:     0
+#        1 = a bot whose login failed waits Bot.Login.Retry.BackoffMs (doubling per failure up to Bot.Login.Retry.BackoffMaxMs, plus up to 25%
+#        random) and is queued for login again, at most Bot.Login.Retry.MaxAttempts failed logins in all. A waiting retry does not start while the
+#        character database queue is above Bot.Limit.MaxDbQueue. Alts and logins failing at shutdown are not retried.
+#
+#    Bot.Login.Retry.MaxAttempts
+#        Default:     3
+#        Failed logins (the first included) after which a bot is given up. At least 1.
+#
+#    Bot.Login.Retry.BackoffMs
+#        Default:     30000
+#        Wait after the first failed login. At least 1000.
+#
+#    Bot.Login.Retry.BackoffMaxMs
+#        Default:     600000
+#        The longest wait between two tries (before the random part). Raised to Bot.Login.Retry.BackoffMs if lower.
+#
+#    Bot.Login.Retry.RevokeOnGiveUp
+#        Default:     0
+#        1 = a bot whose login failed for good (retry off, or attempts used up) is taken from its module (ControlRevoked), so the module's
+#        count and its ramp (BotsInitial, BotsStep) no longer include a bot that is not coming online. The character is kept; the module can
+#        take it back by guid, which logs it in with a fresh budget.
+
+Bot.Login.Retry.Enabled = 0
+Bot.Login.Retry.MaxAttempts = 3
+Bot.Login.Retry.BackoffMs = 30000
+Bot.Login.Retry.BackoffMaxMs = 600000
+Bot.Login.Retry.RevokeOnGiveUp = 0
 
 #    Bot.Relogin.DelayMs
 #        Default:     2000

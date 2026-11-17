@@ -172,6 +172,11 @@ TEST_CASE("Config defaults are the values in use today", "[BotMgrRules]")
     CHECK(LoginMaxPerTick(DEF_LOGIN_MAX_PER_TICK) == 5);
     CHECK(LoginTimeoutMs(DEF_LOGIN_TIMEOUT_MS) == 60000);
     CHECK(ReloginDelayMs(DEF_RELOGIN_DELAY_MS) == 2000);
+    CHECK(DEF_LOGIN_RETRY_ENABLED == false);
+    CHECK(DEF_LOGIN_RETRY_REVOKE_ON_GIVE_UP == false);
+    CHECK(LoginRetryMaxAttempts(DEF_LOGIN_RETRY_MAX_ATTEMPTS) == 3);
+    CHECK(LoginRetryBackoffMs(DEF_LOGIN_RETRY_BACKOFF_MS) == 30000);
+    CHECK(LoginRetryBackoffMaxMs(DEF_LOGIN_RETRY_BACKOFF_MAX_MS, 30000) == 600000);
     CHECK(HunterPetGraceMs(DEF_HUNTER_PET_GRACE_SEC) == 120000);
     CHECK(MailCollectEveryMs(DEF_MAIL_COLLECT_EVERY_SEC) == 30000);
     CHECK(SpreadYards(DEF_SPREAD_SPACING_YARDS) == 3.0f);
@@ -253,4 +258,48 @@ TEST_CASE("A bot may spend one talent point per level from 10, 51 at level 60", 
     CHECK(TalentPointsAllowed(30, DEF_TALENT_POINTS_PER_LEVEL_OFFSET) == 21);
     CHECK(TalentPointsAllowed(60, DEF_TALENT_POINTS_PER_LEVEL_OFFSET) == 51);
     CHECK(TalentPointsAllowed(1, 9) == 0);
+}
+
+TEST_CASE("A failed login is retried only when enabled and below the attempt cap", "[BotMgrRules][login-retry]")
+{
+    CHECK_FALSE(LoginRetryAllowed(false, 1, 3));  // default off: nothing changes
+    CHECK(LoginRetryAllowed(true, 1, 3));
+    CHECK(LoginRetryAllowed(true, 2, 3));
+    CHECK_FALSE(LoginRetryAllowed(true, 3, 3));   // the third failure is the last
+    CHECK_FALSE(LoginRetryAllowed(true, 9, 3));
+    CHECK(LoginRetryMaxAttempts(0) == 1);
+    CHECK(LoginRetryMaxAttempts(-4) == 1);
+    CHECK_FALSE(LoginRetryAllowed(true, 1, LoginRetryMaxAttempts(0)));  // a cap of 1 means no retry
+}
+
+TEST_CASE("The retry wait doubles, is capped, and the jitter adds at most a quarter", "[BotMgrRules][login-retry]")
+{
+    CHECK(LoginRetryDelayMs(1, 30000, 600000, 0) == 30000);
+    CHECK(LoginRetryDelayMs(2, 30000, 600000, 0) == 60000);
+    CHECK(LoginRetryDelayMs(3, 30000, 600000, 0) == 120000);
+    CHECK(LoginRetryDelayMs(6, 30000, 600000, 0) == 600000);   // 960000 capped
+    CHECK(LoginRetryDelayMs(40, 30000, 600000, 0) == 600000);  // no overflow for a large count
+    CHECK(LoginRetryDelayMs(1, 30000, 600000, 1000) == 37500);
+    CHECK(LoginRetryDelayMs(1, 30000, 600000, 500) == 33750);
+    CHECK(LoginRetryDelayMs(1, 30000, 600000, 99999) == 37500); // a draw above 1000 is clamped
+    CHECK(LoginRetryDelayMs(0, 30000, 600000, 0) == 30000);
+    CHECK(LoginRetryBackoffMs(10) == 1000);
+    CHECK(LoginRetryBackoffMaxMs(5, 30000) == 30000);           // never below the first wait
+    CHECK(LoginRetryDelayMs(7, 0xFFFFFFFFu, 0xFFFFFFFFu, 1000) == 0xFFFFFFFFu);  // saturates instead of wrapping
+}
+
+TEST_CASE("A waiting retry holds back while the character database is busy", "[BotMgrRules][login-retry]")
+{
+    CHECK(LoginRetryMayStart(0, 5000));
+    CHECK(LoginRetryMayStart(5000, 5000));
+    CHECK_FALSE(LoginRetryMayStart(5001, 5000));
+}
+
+TEST_CASE("A retry time is reached across the 32-bit uptime wrap", "[BotMgrRules][login-retry]")
+{
+    CHECK_FALSE(UptimeReached(1000, 1001));
+    CHECK(UptimeReached(1001, 1001));
+    CHECK(UptimeReached(5000, 1000));
+    CHECK_FALSE(UptimeReached(0xFFFFFF00u, 0x00000100u));   // due just after the wrap, not yet reached
+    CHECK(UptimeReached(0x00000200u, 0xFFFFFF00u));         // due just before the wrap, reached after it
 }
