@@ -416,3 +416,11 @@ TEST_CASE("RepairsBefore: durability compared as a fraction, a tie goes to the c
     CHECK(RepairsBefore({ 99, 100, 9, true }, { 0, 100, 1, false }));      // worn before the bags, even a broken bag item
     CHECK_FALSE(RepairsBefore({ 5, 10, 3, true }, { 5, 10, 3, true }));    // equal: not before (strict weak order)
 }
+
+TEST_CASE("A spawn reference names a service NPC of the same entry only", "[ModuleBotActionRules]")
+{
+    using BotActionRules::SpawnRefMatches;
+    CHECK(SpawnRefMatches(8719, 8719, 0x1000));        // an auctioneer of the entry the snapshot named
+    CHECK_FALSE(SpawnRefMatches(8719, 8720, 0x1000));  // another entry on that spawn id
+    CHECK_FALSE(SpawnRefMatches(1234, 1234, 0));       // a mob: a reference to one that is gone must not hit another spawn
+}

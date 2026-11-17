@@ -77,6 +77,24 @@ using forever_module::ActionType;
 using forever_module::BotAction;
 using forever_module::BotActionStatus;
 
+Creature* ResolveCreatureRef(Map* map, uint64 ref)
+{
+    if (!map || forever_module::UnitRefType(ref) != uint8(HighGuid::Creature))
+        return nullptr;
+    uint32 const entry = forever_module::UnitRefEntry(ref);
+    ObjectGuid::LowType const counter = forever_module::UnitRefCounter(ref);
+    if (Creature* live = map->GetCreature(ObjectGuid::Create<HighGuid::Creature>(uint16(map->GetId()), entry, counter)))
+        return live;
+
+    static bool const fallback = sConfigMgr->GetBoolDefault("Bot.Actions.SpawnRefFallback", true);
+    if (!fallback || !counter)
+        return nullptr;
+    Creature* spawned = map->GetCreatureBySpawnId(counter);
+    if (spawned && spawned->IsInWorld() && BotActionRules::SpawnRefMatches(entry, spawned->GetEntry(), uint64(spawned->GetNpcFlags())))
+        return spawned;
+    return nullptr;
+}
+
 namespace
 {
 
@@ -90,15 +108,7 @@ Unit* ResolveUnit(Player& bot, uint64 ref)
             return ObjectAccessor::FindPlayerByLowGUID(forever_module::UnitRefCounter(ref));
 
         case HighGuid::Creature:
-        {
-            Map* map = bot.GetMap();
-            if (!map)
-                return nullptr;
-            ObjectGuid const guid = ObjectGuid::Create<HighGuid::Creature>(uint16(map->GetId()),
-                                                                          forever_module::UnitRefEntry(ref),
-                                                                          forever_module::UnitRefCounter(ref));
-            return map->GetCreature(guid);
-        }
+            return ResolveCreatureRef(bot.GetMap(), ref);
 
         default:
             return nullptr;

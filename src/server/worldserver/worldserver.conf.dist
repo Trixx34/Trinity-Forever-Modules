@@ -1964,6 +1964,13 @@ Bot.Limit.MaxDbQueue = 5000
 #            skill S"). The sim showed Blacksmithing and Alchemy never learned and Mining missing in two of the eight sets (a bot held one profession of a pair where the
 #            other should have followed); the cause was not seen directly, this repairs the points and falls back to the spell. 0 = teaching as before.
 #
+#    Bot.Actions.SpawnRefFallback
+#        Default:     1
+#        1 = a creature reference a module sends (target_guid, auctioneer guid) that names no live creature by its guid is looked up again by spawn id on the bot's map,
+#            accepting a creature of the same entry with an npc flag. The snapshot's vendor, repairman, banker, trainer, flight master and auctioneer references carry
+#            the spawn id, live creatures are numbered otherwise (Map::GenerateLowGuid), so they never matched: every auction call was refused with "auctioneer not found on
+#            the player's map" even next to the auctioneer. 0 = the old exact guid lookup only.
+#
 #    Bot.Actions.UseObject
 #        Default:     0
 #        1 = a module may make a bot use a game object near it (kUseObject): click a door, a lever or an altar, or use an item on it (a key, a charge of powder; the
