@@ -21,13 +21,65 @@
 #include "DetourNavMeshQuery.h"
 #include "DisableMgr.h"
 #include "G3DPosition.hpp"
+#include "GameTime.h"
 #include "Log.h"
 #include "MMapManager.h"
 #include "Map.h"
 #include "Metric.h"
+#include "ModuleBotNoPathCache.h"
 #include "PhasingHandler.h"
+#include <mutex>
 
 ////////////////// PathGenerator //////////////////
+namespace PathHandoff
+{
+namespace
+{
+std::mutex Lock;   // parked by the world thread (kMoveTo), taken by the map update thread that starts the generator
+ModuleBotPathHandoff::Parking<Movement::PointsArray> Parked;
+uint64 TakenCount = 0;
+uint64 MissedCount = 0;
+constexpr uint32 MaxAgeMs = 2000;
+constexpr std::size_t MaxParked = 4096;
+}
+
+void Park(Unit const* unit, G3D::Vector3 const& dest, PathType type, Movement::PointsArray const& path)
+{
+    float const start[3] = { unit->GetPositionX(), unit->GetPositionY(), unit->GetPositionZ() };
+    float const to[3] = { dest.x, dest.y, dest.z };
+    std::lock_guard<std::mutex> guard(Lock);
+    Parked.Park(unit->GetGUID().GetCounter(), GameTime::GetGameTimeMS(), start, to, uint32(type), path, MaxParked);
+}
+
+bool Take(Unit const* unit, G3D::Vector3 const& dest, PathType& type, Movement::PointsArray& path)
+{
+    float const start[3] = { unit->GetPositionX(), unit->GetPositionY(), unit->GetPositionZ() };
+    float const to[3] = { dest.x, dest.y, dest.z };
+    uint32 rawType = 0;
+    std::lock_guard<std::mutex> guard(Lock);
+    if (Parked.Size() == 0)
+        return false;   // the common case: nothing parked, not counted
+    bool const ok = Parked.Take(unit->GetGUID().GetCounter(), GameTime::GetGameTimeMS(), MaxAgeMs, start, to, rawType, path);
+    ++(ok ? TakenCount : MissedCount);
+    if (ok)
+        type = PathType(rawType);
+    return ok;
+}
+
+void Drop(Unit const* unit)
+{
+    std::lock_guard<std::mutex> guard(Lock);
+    Parked.Drop(unit->GetGUID().GetCounter());
+}
+
+void Counters(uint64& taken, uint64& missed)
+{
+    std::lock_guard<std::mutex> guard(Lock);
+    taken = TakenCount;
+    missed = MissedCount;
+}
+}
+
 PathGenerator::PathGenerator(WorldObject const* owner) :
     _polyLength(0), _type(PATHFIND_BLANK), _useStraightPath(false),
     _forceDestination(false), _pointPathLimit(MAX_POINT_PATH_LENGTH), _useRaycast(false),

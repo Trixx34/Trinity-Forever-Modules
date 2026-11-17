@@ -24,6 +24,7 @@
 #include "MoveSplineInitArgs.h"
 #include <G3D/Vector3.h>
 
+class Unit;
 class WorldObject;
 
 // 512*4.0f=2048y number_of_points*interval = max_path_len
@@ -51,6 +52,17 @@ enum PathType
     PATHFIND_FARFROMPOLY_END   = 0x80,   // end positions is far from the mmap poligon
     PATHFIND_FARFROMPOLY       = PATHFIND_FARFROMPOLY_START | PATHFIND_FARFROMPOLY_END, // start or end positions are far from the mmap poligon
 };
+
+// A path the bot kMoveTo check has just computed, parked for the MovePoint that follows it (the generator starts on the next movement update and
+// would search the same path again). Take returns it only for the same unit, the same destination and the same start position, once.
+namespace PathHandoff
+{
+TC_GAME_API void Park(Unit const* unit, G3D::Vector3 const& dest, PathType type, Movement::PointsArray const& path);
+TC_GAME_API bool Take(Unit const* unit, G3D::Vector3 const& dest, PathType& type, Movement::PointsArray& path);
+TC_GAME_API void Drop(Unit const* unit);
+// Counters for the route stats line of the bot actions: handed over, and looked for without a match.
+TC_GAME_API void Counters(uint64& taken, uint64& missed);
+}
 
 class TC_GAME_API PathGenerator
 {

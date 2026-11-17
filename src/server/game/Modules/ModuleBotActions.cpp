@@ -1,6 +1,7 @@
 #include "ModuleBotActions.h"
 #include "ModuleBotActionRules.h"
 #include "ModuleBotRouteCache.h"
+#include "ModuleBotNoPathCache.h"
 #include "ModuleBotGearSellRules.h"
 #include "ModuleBotGearWeights.h"
 #include "ModuleGroupRules.h"
@@ -15,6 +16,7 @@
 #include "ModuleBotSnapshotRules.h"
 #include "ModuleBotSupplies.h"
 #include "ModuleBotSupplyRules.h"
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include "Bag.h"
@@ -2791,23 +2793,144 @@ bool HasFullRouteTo(Player& bot, float x, float y, float z)
     return !((type & (PATHFIND_NOPATH | PATHFIND_INCOMPLETE)) != 0);
 }
 
-// kMoveTo asks HasFullRouteTo and then MovePoint, which searches the same path again. A module resends a destination every tick while a bot walks, so the
-// answer is remembered per bot for Bot.Perf.MoveToRouteTtlMs (default 3000, 0 = ask every time) while the destination (2 yard cell) and the bot's start cell
-// (16 yards) are the same. Not used while the bot swims, flies or falls (PathGenerator does not use the mesh then).
-bool HasFullRouteToCached(Player& bot, float x, float y, float z)
+// What the kMoveTo route check made of its answer, for the stats line and for the negative cache.
+struct RouteCheckStats
+{
+    uint64 Checks = 0;          // real searches
+    uint64 Open = 0;
+    uint64 NoPath = 0;          // PATHFIND_NOPATH
+    uint64 Incomplete = 0;      // PATHFIND_INCOMPLETE
+    uint64 Rejected = 0;        // coordinate the map rejects
+    uint64 AnsweredByBot = 0;   // the per-bot 3 s answer
+    uint64 AnsweredByNoPath = 0;// the shared negative cache
+    uint64 SearchUs = 0;        // time spent in real searches
+    uint64 FailUs = 0;          // ... of which in failed ones
+    uint64 Parked = 0;          // paths handed to MovePoint
+    uint32 LastLogMs = 0;
+};
+
+// Bot.Perf.RouteStatsSec (default 60, 0 = off): one line "BotMgr: route stats" per interval with the counters above since the last line.
+void MaybeLogRouteStats(RouteCheckStats& st, uint32 now)
+{
+    static uint32 const everyMs = uint32(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Perf.RouteStatsSec", 60))) * 1000u;
+    if (!everyMs)
+        return;
+    if (!st.LastLogMs)
+    {
+        st.LastLogMs = now ? now : 1;
+        return;
+    }
+    if (uint32(now - st.LastLogMs) < everyMs)
+        return;
+    uint64 taken = 0, missed = 0;
+    PathHandoff::Counters(taken, missed);
+    static uint64 prevTaken = 0, prevMissed = 0;
+    TC_LOG_INFO("server.worldserver",
+        "BotMgr: route stats window={}s checks={} open={} nopath={} incomplete={} rejected={} bot_answer={} nopath_cache={} search_ms={} fail_ms={} parked={} handoff_taken={} handoff_missed={}",
+        (now - st.LastLogMs) / 1000u, st.Checks, st.Open, st.NoPath, st.Incomplete, st.Rejected, st.AnsweredByBot, st.AnsweredByNoPath,
+        st.SearchUs / 1000u, st.FailUs / 1000u, st.Parked, taken - prevTaken, missed - prevMissed);
+    prevTaken = taken;
+    prevMissed = missed;
+    uint32 const last = now ? now : 1;
+    st = RouteCheckStats{};
+    st.LastLogMs = last;
+}
+
+// The real route search of a kMoveTo (HasFullRouteTo with the numbers kept): the same answer, plus the path type for the negative cache, and
+// the checked path parked for the MovePoint that follows (Bot.Perf.ReuseCheckedPath, default 1).
+bool SearchRoute(Player& bot, float x, float y, float z, RouteCheckStats& st, bool& failedOnMesh)
+{
+    static bool const reuse = sConfigMgr->GetBoolDefault("Bot.Perf.ReuseCheckedPath", true);
+    failedOnMesh = false;
+    auto const began = std::chrono::steady_clock::now();
+    PathGenerator path(&bot);
+    bool const calculated = path.CalculatePath(x, y, z, false);
+    ++st.Checks;
+    bool reachable = false;
+    if (!calculated)
+        ++st.Rejected;
+    else
+    {
+        PathType const type = path.GetPathType();
+        if (type & PATHFIND_NOT_USING_PATH)
+            reachable = true;
+        else
+            reachable = !((type & (PATHFIND_NOPATH | PATHFIND_INCOMPLETE)) != 0);
+        if (reachable)
+            ++st.Open;
+        else
+        {
+            failedOnMesh = true;
+            ++(type & PATHFIND_NOPATH ? st.NoPath : st.Incomplete);
+        }
+        if (reuse && (!path.GetPath().empty() || (type & PATHFIND_NOPATH)))
+        {
+            PathHandoff::Park(&bot, G3D::Vector3(x, y, z), type, path.GetPath());
+            ++st.Parked;
+        }
+    }
+    uint64 const us = uint64(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began).count());
+    st.SearchUs += us;
+    if (!reachable)
+        st.FailUs += us;
+    return reachable;
+}
+
+// kMoveTo asks for the route and then MovePoint starts the move. A module resends a destination every tick while a bot walks, so the answer is remembered
+// per bot for Bot.Perf.MoveToRouteTtlMs (default 3000, 0 = ask every time) while the destination (2 yard cell) and the bot's start cell (16 yards) are the
+// same. Not used while the bot swims, flies or falls (PathGenerator does not use the mesh then).
+//
+// Negative cache (Bot.Perf.NoPathCache.*): a destination the navmesh could not reach is remembered for every bot, see ModuleBotNoPathCache.h. `blockedByCache`
+// is set when the answer "no route" came from it (no search was made); the caller may then skip MovePoint too (Bot.Perf.NoPathCache.SkipMove).
+bool HasFullRouteToCached(Player& bot, float x, float y, float z, bool& blockedByCache)
 {
     static uint32 const ttlMs = uint32(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Perf.MoveToRouteTtlMs", 3000)));
+    static uint32 const negBaseMs = uint32(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Perf.NoPathCache.TtlSec", 120))) * 1000u;
+    static uint32 const negMaxMs = uint32(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Perf.NoPathCache.MaxTtlSec", 900))) * 1000u;
+    static float const destCell = float(std::max<int32>(2, sConfigMgr->GetIntDefault("Bot.Perf.NoPathCache.DestCellYards", 4)));
+    static float const heightBand = float(std::max<int32>(2, sConfigMgr->GetIntDefault("Bot.Perf.NoPathCache.HeightBandYards", 8)));
+    static float const startCell = float(std::max<int32>(0, sConfigMgr->GetIntDefault("Bot.Perf.NoPathCache.StartCellYards", 200)));
     constexpr float kStartCellYards = 16.0f;
     static std::unordered_map<uint64, ModuleBotRouteCache::MoveAnswer> answers;
-    if (!ttlMs || bot.IsInWater() || bot.IsFlying() || bot.IsFalling())
-        return HasFullRouteTo(bot, x, y, z);
+    static ModuleBotNoPathCache::Cache negative = []
+    {
+        ModuleBotNoPathCache::Cache made;
+        made.Configure(negBaseMs, negMaxMs, size_t(std::max<int32>(1, sConfigMgr->GetIntDefault("Bot.Perf.NoPathCache.MaxEntries", 20000))));
+        return made;
+    }();
+    static RouteCheckStats stats;
+    blockedByCache = false;
     uint32 const now = GameTime::GetGameTimeMS();
+    MaybeLogRouteStats(stats, now);
+    bool failedOnMesh = false;
+    if (!ttlMs || bot.IsInWater() || bot.IsFlying() || bot.IsFalling())
+        return SearchRoute(bot, x, y, z, stats, failedOnMesh);
+
     uint64 const id = bot.GetGUID().GetCounter();
     auto found = answers.find(id);
     if (found != answers.end() &&
         ModuleBotRouteCache::MoveAnswerHolds(found->second, now, ttlMs, x, y, z, bot.GetPositionX(), bot.GetPositionY(), kStartCellYards))
+    {
+        ++stats.AnsweredByBot;
         return found->second.Reachable;
-    bool const reachable = HasFullRouteTo(bot, x, y, z);
+    }
+
+    ModuleBotNoPathCache::Key const negKey = ModuleBotNoPathCache::MakeKey(bot.GetMapId(), x, y, z, bot.GetPositionX(), bot.GetPositionY(), destCell, heightBand, startCell);
+    bool reachable = false;
+    if (negative.Blocked(negKey, id, now))
+    {
+        ++stats.AnsweredByNoPath;
+        blockedByCache = true;
+    }
+    else
+    {
+        reachable = SearchRoute(bot, x, y, z, stats, failedOnMesh);
+        if (reachable)
+            negative.Succeed(negKey);
+        else if (failedOnMesh)
+            negative.Fail(negKey, id, now);
+    }
+
     if (found == answers.end())
     {
         if (answers.size() >= 20000)
@@ -3635,9 +3758,16 @@ static BotActionStatus ApplyBotActionImpl(Player& bot, BotAction const& action, 
                 reason = "not a valid map position";
                 return BotActionStatus::kRefused;
             }
-            bool const reachable = HasFullRouteToCached(bot, action.dest_x, action.dest_y, action.dest_z);
-            bot.GetMotionMaster()->Clear();
-            bot.GetMotionMaster()->MovePoint(0, action.dest_x, action.dest_y, action.dest_z);
+            bool blockedByCache = false;
+            bool const reachable = HasFullRouteToCached(bot, action.dest_x, action.dest_y, action.dest_z, blockedByCache);
+            // Bot.Perf.NoPathCache.SkipMove (default 0): a destination the negative cache knows as unreachable is refused without the move as well. The
+            // move would search the same failed path again and walk the bot to the nearest point the mesh allows, which is all it does today.
+            static bool const skipMove = sConfigMgr->GetBoolDefault("Bot.Perf.NoPathCache.SkipMove", false);
+            if (!(blockedByCache && skipMove))
+            {
+                bot.GetMotionMaster()->Clear();
+                bot.GetMotionMaster()->MovePoint(0, action.dest_x, action.dest_y, action.dest_z);
+            }
             if (!reachable)
             {
                 reason = "no full route to (" + std::to_string(action.dest_x) + ", " + std::to_string(action.dest_y) +
