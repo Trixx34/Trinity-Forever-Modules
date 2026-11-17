@@ -3215,6 +3215,7 @@ void SpellMgr::LoadSpellInfoCustomAttributes()
                 case SPELL_EFFECT_CHARGE_DEST:
                 case SPELL_EFFECT_JUMP:
                 case SPELL_EFFECT_JUMP_DEST:
+                case SPELL_EFFECT_JUMP_DEST_3:
                 case SPELL_EFFECT_LEAP_BACK:
                     spellInfoMutable->AttributesCu |= SPELL_ATTR0_CU_CHARGE;
                     break;
@@ -5383,6 +5384,7 @@ void SpellMgr::LoadSpellInfoCorrections()
                 case SPELL_EFFECT_CHARGE_DEST:
                 case SPELL_EFFECT_JUMP:
                 case SPELL_EFFECT_JUMP_DEST:
+                case SPELL_EFFECT_JUMP_DEST_3:
                 case SPELL_EFFECT_LEAP_BACK:
                     if (!spellInfo->Speed && !spellInfo->SpellFamilyName && !spellInfo->HasAttribute(SPELL_ATTR9_MISSILE_SPEED_IS_DELAY_IN_SEC))
                         spellInfo->Speed = SPEED_CHARGE;

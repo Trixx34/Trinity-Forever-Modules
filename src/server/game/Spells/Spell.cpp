@@ -6844,6 +6844,7 @@ SpellCastResult Spell::CheckCast(bool strict, int32* param1 /*= nullptr*/, int32
             }
             case SPELL_EFFECT_JUMP:
             case SPELL_EFFECT_JUMP_DEST:
+            case SPELL_EFFECT_JUMP_DEST_3:
             {
                 Unit* unitCaster = m_caster->ToUnit();
                 if (!unitCaster)
