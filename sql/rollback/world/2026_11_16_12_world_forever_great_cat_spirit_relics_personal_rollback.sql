@@ -1,0 +1,13 @@
+-- Rollback for sql/custom/world/2026_11_16_12_world_forever_great_cat_spirit_relics_personal.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_02b3c462_gameobject_template` AS SELECT * FROM `gameobject_template` WHERE (`entry` IN (672821,673093,673094) AND `type` = 3);
+--
+-- STEP 1 (the undo that needs no before-image):
+-- gameobject_template: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `gameobject_template` SELECT * FROM `bak_02b3c462_gameobject_template`;  DROP TABLE `bak_02b3c462_gameobject_template`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_16_12_world_forever_great_cat_spirit_relics_personal.sql';` if the file is to run again.

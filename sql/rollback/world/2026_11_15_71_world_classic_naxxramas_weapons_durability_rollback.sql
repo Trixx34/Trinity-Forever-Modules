@@ -1,0 +1,13 @@
+-- Rollback for sql/custom/world/2026_11_15_71_world_classic_naxxramas_weapons_durability.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_3943c060_classic_item_durability` AS SELECT * FROM `classic_item_durability` WHERE (`entry` IN (22691,22798,22799,22800,22801,22802,22803,22804,22806,22807,22808,22809,22810,22811,22812,22813,22815,22816,22818,22819,22820,22821,22942,22988,23009,23014,23039,23044,23054,23056,23075,23221,23238,23242));
+--
+-- STEP 1 (the undo that needs no before-image):
+DELETE FROM `classic_item_durability` WHERE (`entry` IN (22691,22798,22799,22800,22801,22802,22803,22804,22806,22807,22808,22809,22810,22811,22812,22813,22815,22816,22818,22819,22820,22821,22942,22988,23009,23014,23039,23044,23054,23056,23075,23221,23238,23242));   -- the file's own delete condition: removes what it wrote
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `classic_item_durability` SELECT * FROM `bak_3943c060_classic_item_durability`;  DROP TABLE `bak_3943c060_classic_item_durability`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_15_71_world_classic_naxxramas_weapons_durability.sql';` if the file is to run again.

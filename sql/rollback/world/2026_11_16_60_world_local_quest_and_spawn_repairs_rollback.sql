@@ -1,0 +1,24 @@
+-- Rollback for sql/custom/world/2026_11_16_60_world_local_quest_and_spawn_repairs.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_319a2e18_gameobject_loot_template` AS SELECT * FROM `gameobject_loot_template` WHERE (Entry=665282 AND ItemType=0 AND GroupId=0 AND ((Item=278049 AND QuestRequired=0 AND Chance=30) OR (Item=278398 AND QuestRequired=1 AND Chance=70)));
+--   CREATE TABLE `bak_319a2e18_quest_template` AS SELECT * FROM `quest_template` WHERE ((ID=455 AND Flags=12) OR (ID=1699 AND Flags=5));
+--
+-- STEP 1 (the undo that needs no before-image):
+-- gameobject_loot_template: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+-- quest_poi: the file inserts rows that are not listed with their keys (INSERT ... SELECT / ON DUPLICATE KEY). Exact undo needs the before-image:
+--   STEP 0: CREATE TABLE `bak_319a2e18_quest_poi` AS SELECT * FROM `quest_poi`;   (full copy, before the file is applied)
+--   STEP 1b: DELETE x FROM `quest_poi` x LEFT JOIN `bak_319a2e18_quest_poi` b ON x.`QuestID` = b.`QuestID` AND x.`BlobIndex` = b.`BlobIndex` AND x.`Idx1` = b.`Idx1` WHERE b.`QuestID` IS NULL;   (rows the file added)
+--   STEP 2: REPLACE INTO `quest_poi` SELECT * FROM `bak_319a2e18_quest_poi`;  DROP TABLE `bak_319a2e18_quest_poi`;   (changed rows back)
+-- quest_poi_points: the file inserts rows that are not listed with their keys (INSERT ... SELECT / ON DUPLICATE KEY). Exact undo needs the before-image:
+--   STEP 0: CREATE TABLE `bak_319a2e18_quest_poi_points` AS SELECT * FROM `quest_poi_points`;   (full copy, before the file is applied)
+--   STEP 1b: DELETE x FROM `quest_poi_points` x LEFT JOIN `bak_319a2e18_quest_poi_points` b ON x.`QuestID` = b.`QuestID` AND x.`Idx1` = b.`Idx1` AND x.`Idx2` = b.`Idx2` WHERE b.`QuestID` IS NULL;   (rows the file added)
+--   STEP 2: REPLACE INTO `quest_poi_points` SELECT * FROM `bak_319a2e18_quest_poi_points`;  DROP TABLE `bak_319a2e18_quest_poi_points`;   (changed rows back)
+-- quest_template: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `gameobject_loot_template` SELECT * FROM `bak_319a2e18_gameobject_loot_template`;  DROP TABLE `bak_319a2e18_gameobject_loot_template`;
+--   REPLACE INTO `quest_template` SELECT * FROM `bak_319a2e18_quest_template`;  DROP TABLE `bak_319a2e18_quest_template`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_16_60_world_local_quest_and_spawn_repairs.sql';` if the file is to run again.

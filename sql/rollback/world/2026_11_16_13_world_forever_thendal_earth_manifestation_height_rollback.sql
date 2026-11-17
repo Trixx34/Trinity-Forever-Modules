@@ -1,0 +1,13 @@
+-- Rollback for sql/custom/world/2026_11_16_13_world_forever_thendal_earth_manifestation_height.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_1bb24c57_creature` AS SELECT * FROM `creature` WHERE (`guid` = 25116600 AND `id` = 251166 AND ABS(`position_z` - 1024.76) < 0.01);
+--
+-- STEP 1 (the undo that needs no before-image):
+-- creature: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `creature` SELECT * FROM `bak_1bb24c57_creature`;  DROP TABLE `bak_1bb24c57_creature`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_16_13_world_forever_thendal_earth_manifestation_height.sql';` if the file is to run again.

@@ -1,0 +1,25 @@
+-- Rollback for sql/custom/world/2026_11_13_63_world_forever_live_sniff_darkshore_1113b.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_e4c23b55_creature_loot_template` AS SELECT * FROM `creature_loot_template` WHERE (`Comment` LIKE 'Forever live drop 2026-11-13c (%');
+--   CREATE TABLE `bak_e4c23b55_npc_vendor` AS SELECT * FROM `npc_vendor` WHERE ((`entry`,`item`) IN ((4221,6303),(4221,6289),(4221,6308),(4221,6362),(4221,4603),(4221,8959)));
+--   CREATE TABLE `bak_e4c23b55_quest_offer_reward_locale` AS SELECT * FROM `quest_offer_reward_locale` WHERE (`locale` = 'ruRU' AND REGEXP_LIKE(`RewardText`, 'Wrestlecake|Rainon|Makky', 'c'));
+--   CREATE TABLE `bak_e4c23b55_quest_request_items_locale` AS SELECT * FROM `quest_request_items_locale` WHERE (`locale` = 'ruRU' AND REGEXP_LIKE(`CompletionText`, 'Wrestlecake|Rainon|Makky', 'c'));
+--
+-- STEP 1 (the undo that needs no before-image):
+DELETE FROM `creature_loot_template` WHERE (`Comment` LIKE 'Forever live drop 2026-11-13c (%');   -- the file's own delete condition: removes what it wrote
+DELETE FROM `npc_vendor` WHERE ((`entry`,`item`) IN ((4221,6303),(4221,6289),(4221,6308),(4221,6362),(4221,4603),(4221,8959)));   -- the file's own delete condition: removes what it wrote
+-- quest_offer_reward_locale: the file inserts rows that are not listed with their keys (INSERT ... SELECT / ON DUPLICATE KEY). Exact undo needs the before-image:
+--   STEP 0: CREATE TABLE `bak_e4c23b55_quest_offer_reward_locale` AS SELECT * FROM `quest_offer_reward_locale`;   (full copy, before the file is applied)
+--   STEP 1b: DELETE x FROM `quest_offer_reward_locale` x LEFT JOIN `bak_e4c23b55_quest_offer_reward_locale` b ON x.`ID` = b.`ID` AND x.`locale` = b.`locale` WHERE b.`ID` IS NULL;   (rows the file added)
+--   STEP 2: REPLACE INTO `quest_offer_reward_locale` SELECT * FROM `bak_e4c23b55_quest_offer_reward_locale`;  DROP TABLE `bak_e4c23b55_quest_offer_reward_locale`;   (changed rows back)
+-- quest_request_items_locale: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `creature_loot_template` SELECT * FROM `bak_e4c23b55_creature_loot_template`;  DROP TABLE `bak_e4c23b55_creature_loot_template`;
+--   REPLACE INTO `npc_vendor` SELECT * FROM `bak_e4c23b55_npc_vendor`;  DROP TABLE `bak_e4c23b55_npc_vendor`;
+--   REPLACE INTO `quest_offer_reward_locale` SELECT * FROM `bak_e4c23b55_quest_offer_reward_locale`;  DROP TABLE `bak_e4c23b55_quest_offer_reward_locale`;
+--   REPLACE INTO `quest_request_items_locale` SELECT * FROM `bak_e4c23b55_quest_request_items_locale`;  DROP TABLE `bak_e4c23b55_quest_request_items_locale`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_13_63_world_forever_live_sniff_darkshore_1113b.sql';` if the file is to run again.

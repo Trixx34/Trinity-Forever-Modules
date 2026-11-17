@@ -1,0 +1,23 @@
+-- Rollback for sql/custom/world/2026_11_14_10_world_forever_zephras_scene_npcs.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_7972962d_conditions` AS SELECT * FROM `conditions` WHERE (`SourceTypeOrReferenceId` = 32 AND `SourceGroup` = 5 AND `SourceEntry` IN (252076, 252077));
+--   CREATE TABLE `bak_7972962d_creature` AS SELECT * FROM `creature` WHERE (`map` = 2991 AND `id` IN (256249,256250,264712,264713,252863,252875,252957,255833,255830,256617,256620,256621,257862,257866));
+--   CREATE TABLE `bak_7972962d_creature_template` AS SELECT * FROM `creature_template` WHERE (`entry` = 255830);
+--
+-- STEP 1 (the undo that needs no before-image):
+DELETE FROM `conditions` WHERE (`SourceTypeOrReferenceId` = 32 AND `SourceGroup` = 5 AND `SourceEntry` IN (252076, 252077));   -- the file's own delete condition: removes what it wrote
+DELETE FROM `creature` WHERE (`map` = 2991 AND `id` IN (256249,256250,264712,264713,252863,252875,252957,255833,255830,256617,256620,256621,257862,257866));   -- the file's own delete condition: removes what it wrote
+-- creature_template: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+-- creature_template_addon: the file inserts rows that are not listed with their keys (INSERT ... SELECT / ON DUPLICATE KEY). Exact undo needs the before-image:
+--   STEP 0: CREATE TABLE `bak_7972962d_creature_template_addon` AS SELECT * FROM `creature_template_addon`;   (full copy, before the file is applied)
+--   STEP 1b: DELETE x FROM `creature_template_addon` x LEFT JOIN `bak_7972962d_creature_template_addon` b ON x.`entry` = b.`entry` WHERE b.`entry` IS NULL;   (rows the file added)
+--   STEP 2: REPLACE INTO `creature_template_addon` SELECT * FROM `bak_7972962d_creature_template_addon`;  DROP TABLE `bak_7972962d_creature_template_addon`;   (changed rows back)
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `conditions` SELECT * FROM `bak_7972962d_conditions`;  DROP TABLE `bak_7972962d_conditions`;
+--   REPLACE INTO `creature` SELECT * FROM `bak_7972962d_creature`;  DROP TABLE `bak_7972962d_creature`;
+--   REPLACE INTO `creature_template` SELECT * FROM `bak_7972962d_creature_template`;  DROP TABLE `bak_7972962d_creature_template`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_14_10_world_forever_zephras_scene_npcs.sql';` if the file is to run again.

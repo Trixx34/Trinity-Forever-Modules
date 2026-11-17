@@ -1,0 +1,19 @@
+-- Rollback for sql/custom/world/2026_11_16_10_world_forever_harvesting_the_harvesters_engineers.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_536d4ff8_conditions` AS SELECT * FROM `conditions` WHERE (`SourceTypeOrReferenceId` = 1 AND `SourceEntry` = 255155 AND `ConditionTypeOrReference` = 7);
+--   CREATE TABLE `bak_536d4ff8_quest_template_addon` AS SELECT * FROM `quest_template_addon` WHERE (`ID` IN (92910,92911));
+--
+-- STEP 1 (the undo that needs no before-image):
+DELETE FROM `conditions` WHERE (`SourceTypeOrReferenceId` = 1 AND `SourceEntry` = 255155 AND `ConditionTypeOrReference` = 7);   -- the file's own delete condition: removes what it wrote
+-- quest_template_addon: the file inserts rows that are not listed with their keys (INSERT ... SELECT / ON DUPLICATE KEY). Exact undo needs the before-image:
+--   STEP 0: CREATE TABLE `bak_536d4ff8_quest_template_addon` AS SELECT * FROM `quest_template_addon`;   (full copy, before the file is applied)
+--   STEP 1b: DELETE x FROM `quest_template_addon` x LEFT JOIN `bak_536d4ff8_quest_template_addon` b ON x.`ID` = b.`ID` WHERE b.`ID` IS NULL;   (rows the file added)
+--   STEP 2: REPLACE INTO `quest_template_addon` SELECT * FROM `bak_536d4ff8_quest_template_addon`;  DROP TABLE `bak_536d4ff8_quest_template_addon`;   (changed rows back)
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `conditions` SELECT * FROM `bak_536d4ff8_conditions`;  DROP TABLE `bak_536d4ff8_conditions`;
+--   REPLACE INTO `quest_template_addon` SELECT * FROM `bak_536d4ff8_quest_template_addon`;  DROP TABLE `bak_536d4ff8_quest_template_addon`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_16_10_world_forever_harvesting_the_harvesters_engineers.sql';` if the file is to run again.

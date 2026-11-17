@@ -1,0 +1,16 @@
+-- Rollback for sql/custom/characters/2026_11_15_81_characters_ghost_wolf_back_to_2645.sql. NOT run by the updater: run it by hand on the characters database (forever_*_characters); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_6aeda381_character_action` AS SELECT * FROM `character_action` WHERE (`action`=1238640 AND `type`=0);
+--   CREATE TABLE `bak_6aeda381_character_spell` AS SELECT * FROM `character_spell` WHERE (`spell`=1238640);
+--
+-- STEP 1 (the undo that needs no before-image):
+-- character_action: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+DELETE FROM `character_spell` WHERE (`spell`=1238640);   -- the file's own delete condition: removes what it wrote
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `character_action` SELECT * FROM `bak_6aeda381_character_action`;  DROP TABLE `bak_6aeda381_character_action`;
+--   REPLACE INTO `character_spell` SELECT * FROM `bak_6aeda381_character_spell`;  DROP TABLE `bak_6aeda381_character_spell`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_15_81_characters_ghost_wolf_back_to_2645.sql';` if the file is to run again.

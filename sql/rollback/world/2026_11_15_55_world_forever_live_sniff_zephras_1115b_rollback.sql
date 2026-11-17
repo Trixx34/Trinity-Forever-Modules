@@ -1,0 +1,13 @@
+-- Rollback for sql/custom/world/2026_11_15_55_world_forever_live_sniff_zephras_1115b.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_77b2f758_creature_loot_template` AS SELECT * FROM `creature_loot_template` WHERE (`Comment` LIKE 'Forever live drop 2026-11-15b (%');
+--
+-- STEP 1 (the undo that needs no before-image):
+DELETE FROM `creature_loot_template` WHERE (`Comment` LIKE 'Forever live drop 2026-11-15b (%');   -- the file's own delete condition: removes what it wrote
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `creature_loot_template` SELECT * FROM `bak_77b2f758_creature_loot_template`;  DROP TABLE `bak_77b2f758_creature_loot_template`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_15_55_world_forever_live_sniff_zephras_1115b.sql';` if the file is to run again.

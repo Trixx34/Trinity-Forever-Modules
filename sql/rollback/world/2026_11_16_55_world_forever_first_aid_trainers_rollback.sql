@@ -1,0 +1,13 @@
+-- Rollback for sql/custom/world/2026_11_16_55_world_forever_first_aid_trainers.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_a24c5f44_creature_trainer` AS SELECT * FROM `creature_trainer` WHERE ((`CreatureId`,`TrainerId`) IN ((2327,1002327),(2329,1002329),(3181,1003181),(3373,1003373),(4211,1004211),(4591,1004591),(5150,1005150),(5939,1005939), (5943,1005943),(6094,1006094)));
+--
+-- STEP 1 (the undo that needs no before-image):
+-- creature_trainer: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `creature_trainer` SELECT * FROM `bak_a24c5f44_creature_trainer`;  DROP TABLE `bak_a24c5f44_creature_trainer`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_16_55_world_forever_first_aid_trainers.sql';` if the file is to run again.

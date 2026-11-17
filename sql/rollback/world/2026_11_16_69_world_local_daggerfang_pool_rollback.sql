@@ -1,0 +1,18 @@
+-- Rollback for sql/custom/world/2026_11_16_69_world_local_daggerfang_pool.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--
+-- STEP 1 (the undo that needs no before-image):
+-- pool_members: the file inserts rows that are not listed with their keys (INSERT ... SELECT / ON DUPLICATE KEY). Exact undo needs the before-image:
+--   STEP 0: CREATE TABLE `bak_03659978_pool_members` AS SELECT * FROM `pool_members`;   (full copy, before the file is applied)
+--   STEP 1b: DELETE x FROM `pool_members` x LEFT JOIN `bak_03659978_pool_members` b ON x.`type` = b.`type` AND x.`spawnId` = b.`spawnId` WHERE b.`type` IS NULL;   (rows the file added)
+--   STEP 2: REPLACE INTO `pool_members` SELECT * FROM `bak_03659978_pool_members`;  DROP TABLE `bak_03659978_pool_members`;   (changed rows back)
+-- pool_template: the file inserts rows that are not listed with their keys (INSERT ... SELECT / ON DUPLICATE KEY). Exact undo needs the before-image:
+--   STEP 0: CREATE TABLE `bak_03659978_pool_template` AS SELECT * FROM `pool_template`;   (full copy, before the file is applied)
+--   STEP 1b: DELETE x FROM `pool_template` x LEFT JOIN `bak_03659978_pool_template` b ON x.`entry` = b.`entry` WHERE b.`entry` IS NULL;   (rows the file added)
+--   STEP 2: REPLACE INTO `pool_template` SELECT * FROM `bak_03659978_pool_template`;  DROP TABLE `bak_03659978_pool_template`;   (changed rows back)
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_16_69_world_local_daggerfang_pool.sql';` if the file is to run again.

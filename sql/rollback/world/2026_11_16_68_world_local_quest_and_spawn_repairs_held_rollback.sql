@@ -1,0 +1,33 @@
+-- Rollback for sql/custom/world/2026_11_16_68_world_local_quest_and_spawn_repairs_held.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_94531d31_creature` AS SELECT * FROM `creature` WHERE (guid=21451900 AND id=214519 AND map=0 AND ABS(position_x+9721.46)<0.1) OR (id=269185 AND map=0 AND guid IN (26918500,26918501));
+--   CREATE TABLE `bak_94531d31_creature_template` AS SELECT * FROM `creature_template` WHERE (entry=269153 AND ScriptName='');
+--   CREATE TABLE `bak_94531d31_gameobject` AS SELECT * FROM `gameobject` WHERE (guid=838000700 AND id=8380007 AND map=0 AND ABS(position_y+2206)<0.1);
+--   CREATE TABLE `bak_94531d31_quest_poi_points` AS SELECT * FROM `quest_poi_points` WHERE (QuestID=95999 AND Idx1=1 AND Idx2=0 AND X=-9817 AND Y=-3361);
+--
+-- STEP 1 (the undo that needs no before-image):
+DELETE FROM `creature` WHERE (id=269185 AND map=0 AND guid IN (26918500,26918501));   -- the file's own delete condition: removes what it wrote
+-- creature_template: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+-- gameobject: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+-- quest_poi: the file inserts rows that are not listed with their keys (INSERT ... SELECT / ON DUPLICATE KEY). Exact undo needs the before-image:
+--   STEP 0: CREATE TABLE `bak_94531d31_quest_poi` AS SELECT * FROM `quest_poi`;   (full copy, before the file is applied)
+--   STEP 1b: DELETE x FROM `quest_poi` x LEFT JOIN `bak_94531d31_quest_poi` b ON x.`QuestID` = b.`QuestID` AND x.`BlobIndex` = b.`BlobIndex` AND x.`Idx1` = b.`Idx1` WHERE b.`QuestID` IS NULL;   (rows the file added)
+--   STEP 2: REPLACE INTO `quest_poi` SELECT * FROM `bak_94531d31_quest_poi`;  DROP TABLE `bak_94531d31_quest_poi`;   (changed rows back)
+-- quest_poi_points: the file inserts rows that are not listed with their keys (INSERT ... SELECT / ON DUPLICATE KEY). Exact undo needs the before-image:
+--   STEP 0: CREATE TABLE `bak_94531d31_quest_poi_points` AS SELECT * FROM `quest_poi_points`;   (full copy, before the file is applied)
+--   STEP 1b: DELETE x FROM `quest_poi_points` x LEFT JOIN `bak_94531d31_quest_poi_points` b ON x.`QuestID` = b.`QuestID` AND x.`Idx1` = b.`Idx1` AND x.`Idx2` = b.`Idx2` WHERE b.`QuestID` IS NULL;   (rows the file added)
+--   STEP 2: REPLACE INTO `quest_poi_points` SELECT * FROM `bak_94531d31_quest_poi_points`;  DROP TABLE `bak_94531d31_quest_poi_points`;   (changed rows back)
+-- spell_script_names: the file inserts rows that are not listed with their keys (INSERT ... SELECT / ON DUPLICATE KEY). Exact undo needs the before-image:
+--   STEP 0: CREATE TABLE `bak_94531d31_spell_script_names` AS SELECT * FROM `spell_script_names`;   (full copy, before the file is applied)
+--   STEP 1b: no primary key on `spell_script_names`: compare against the copy by hand.
+--   STEP 2: REPLACE INTO `spell_script_names` SELECT * FROM `bak_94531d31_spell_script_names`;  DROP TABLE `bak_94531d31_spell_script_names`;   (changed rows back)
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `creature` SELECT * FROM `bak_94531d31_creature`;  DROP TABLE `bak_94531d31_creature`;
+--   REPLACE INTO `creature_template` SELECT * FROM `bak_94531d31_creature_template`;  DROP TABLE `bak_94531d31_creature_template`;
+--   REPLACE INTO `gameobject` SELECT * FROM `bak_94531d31_gameobject`;  DROP TABLE `bak_94531d31_gameobject`;
+--   REPLACE INTO `quest_poi_points` SELECT * FROM `bak_94531d31_quest_poi_points`;  DROP TABLE `bak_94531d31_quest_poi_points`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_16_68_world_local_quest_and_spawn_repairs_held.sql';` if the file is to run again.
