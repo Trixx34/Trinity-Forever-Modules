@@ -525,10 +525,7 @@ public:
     {
         if (!sourceInfo.mConditionMap)
             return false;
-        Battlefield* wintergrasp = sBattlefieldMgr->GetBattlefieldByBattleId(sourceInfo.mConditionMap, BATTLEFIELD_BATTLEID_WG);
-        if (wintergrasp->IsEnabled() && wintergrasp->GetDefenderTeam() == TEAM_HORDE)
-            return true;
-        return false;
+        return IsBattlefieldHeldBy(sBattlefieldMgr->GetBattlefieldByBattleId(sourceInfo.mConditionMap, BATTLEFIELD_BATTLEID_WG), TEAM_HORDE);
     }
 };
 
@@ -541,10 +538,7 @@ public:
     {
         if (!sourceInfo.mConditionMap)
             return false;
-        Battlefield* wintergrasp = sBattlefieldMgr->GetBattlefieldByBattleId(sourceInfo.mConditionMap, BATTLEFIELD_BATTLEID_WG);
-        if (wintergrasp->IsEnabled() && wintergrasp->GetDefenderTeam() == TEAM_ALLIANCE)
-            return true;
-        return false;
+        return IsBattlefieldHeldBy(sBattlefieldMgr->GetBattlefieldByBattleId(sourceInfo.mConditionMap, BATTLEFIELD_BATTLEID_WG), TEAM_ALLIANCE);
     }
 };
 
