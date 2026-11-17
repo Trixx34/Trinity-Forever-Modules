@@ -1962,6 +1962,43 @@ Bot.Limit.MaxDbQueue = 5000
 #        Default:     3000
 #        kMoveTo remembers its route answer per bot for this long while the destination and the start cell stay the same. 0 = ask every time.
 #
+#    Bot.Perf.ReuseCheckedPath
+#        Default:     1
+#        1 = the path kMoveTo searched to answer "is there a route" is used by the MovePoint that follows it (same bot, same destination, same start
+#            position, at most 2 s old) instead of searching it again. The move is the same; one search less per kMoveTo that was not answered from the per-bot memory.
+#            0 = the move searches its own path as before.
+#
+#    Bot.Perf.NoPathCache.TtlSec
+#        Default:     120
+#    Bot.Perf.NoPathCache.MaxTtlSec
+#        Default:     900
+#        A kMoveTo destination the navmesh could not reach (no path, or only a partial one) is remembered for every bot: the next bot asking for the same
+#        destination cell from the same start cell is told "no route" without a search (a failed search expands the whole reachable region and is the most
+#        expensive kind). The memory lasts TtlSec and doubles with every repeated failure up to MaxTtlSec; a search that finds a route erases it. An answer
+#        is only given to another bot after a second bot has failed on the same key. 0 = TtlSec off (no negative cache).
+#
+#    Bot.Perf.NoPathCache.DestCellYards
+#        Default:     4
+#    Bot.Perf.NoPathCache.HeightBandYards
+#        Default:     8
+#    Bot.Perf.NoPathCache.StartCellYards
+#        Default:     40
+#        Size of the destination cell, of its height band and of the start cell in the key (map, destination cell, band, start cell). A start cell of 0 = the
+#        start does not take part (every bot shares the answer).
+#
+#    Bot.Perf.NoPathCache.MaxEntries
+#        Default:     20000
+#
+#    Bot.Perf.NoPathCache.SkipMove
+#        Default:     0
+#        1 = a destination answered "no route" from the negative cache is refused without the move: no second (failed) search by MovePoint, and the bot does
+#        not walk to the nearest reachable point and is not stopped. The answer to the module is the same. 0 = the move is made as before (only the route check is saved).
+#
+#    Bot.Perf.RouteStatsSec
+#        Default:     60
+#        One log line "BotMgr: route stats" per interval: real route searches, how many failed (nopath / incomplete), milliseconds spent in them, answers from the
+#        per-bot memory and the negative cache, paths handed to MovePoint. 0 = no line.
+#
 #    Bot.Vendor.SellGear
 #        Default:     1
 #        1 = a module may add bit 2048 to a kVendor action: the bot sells the gear in its bags that what it wears outclasses (green or lower, usable, not a quest or

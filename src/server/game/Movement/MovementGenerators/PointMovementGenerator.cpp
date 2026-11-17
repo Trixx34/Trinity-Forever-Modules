@@ -77,8 +77,29 @@ bool PointMovementGenerator::Initialize(Unit* owner)
     {
         if (_generatePath)
         {
-            PathGenerator path(owner);
             G3D::Vector3 dest = PositionToVector3(_destination);
+            // A bot's kMoveTo has just searched this very path to answer "is there a route"; it is used instead of searching again
+            // (same unit, same destination, same start position, parked a moment ago).
+            if (!_closeEnoughDistance && owner->GetTypeId() == TYPEID_PLAYER)
+            {
+                PathType parkedType = PATHFIND_BLANK;
+                Movement::PointsArray parkedPath;
+                if (PathHandoff::Take(owner, dest, parkedType, parkedPath))
+                {
+                    if (parkedType & PATHFIND_NOPATH)
+                    {
+                        // the straight line below, as the generator itself would have taken
+                        init.MoveTo(_destination.GetPositionX(), _destination.GetPositionY(), _destination.GetPositionZ(), false);
+                        return;
+                    }
+                    if (!parkedPath.empty())
+                    {
+                        init.MovebyPath(parkedPath);
+                        return;
+                    }
+                }
+            }
+            PathGenerator path(owner);
             bool result = path.CalculatePath(dest.x, dest.y, dest.z, false);
             if (result && !(path.GetPathType() & PATHFIND_NOPATH))
             {
