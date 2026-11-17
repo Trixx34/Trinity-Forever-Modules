@@ -179,6 +179,7 @@ class TC_GAME_API BotMgr
         uint32 _mailCollectAtMs = 0;
         bool _hunterPetGrant = true;
         uint32 _hunterPetGraceMs = 120000;
+        bool _hunterPetReplaceDead = false;                       // Bot.Hunter.PetReplaceDead
         uint32 _hunterPetCheckAtMs = 0;
         std::vector<uint32> _hunterPetEntries;                    // creature entries a granted pet is picked from (Bot.Hunter.PetEntries)
         std::unordered_map<uint64, uint32> _hunterNoPetSinceMs;   // bot guid counter -> uptime at which it was first seen without a pet

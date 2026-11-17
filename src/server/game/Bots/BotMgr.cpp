@@ -412,6 +412,7 @@ void BotMgr::LoadRegistry()
     _loginRetryBackoffMaxMs = BotMgrRules::LoginRetryBackoffMaxMs(sConfigMgr->GetIntDefault("Bot.Login.Retry.BackoffMaxMs", BotMgrRules::DEF_LOGIN_RETRY_BACKOFF_MAX_MS), _loginRetryBackoffMs);
     _mailCollect = sConfigMgr->GetBoolDefault("Bot.Mail.Collect", true);
     _hunterPetGrant = sConfigMgr->GetBoolDefault("Bot.Hunter.PetGrant", true);
+    _hunterPetReplaceDead = sConfigMgr->GetBoolDefault("Bot.Hunter.PetReplaceDead", false);
     _hunterPetGraceMs = BotMgrRules::HunterPetGraceMs(sConfigMgr->GetIntDefault("Bot.Hunter.PetGraceSec", BotMgrRules::DEF_HUNTER_PET_GRACE_SEC));
     _hunterPetEntries.clear();
     std::string const petEntries = sConfigMgr->GetStringDefault("Bot.Hunter.PetEntries", "3425,2069,3243,2071,2237");
@@ -1055,13 +1056,26 @@ void BotMgr::GrantHunterPets()
             player->IsBeingTeleported())
             continue;
         bool hasPet = !player->GetPetGUID().IsEmpty();
+        bool deadPet = false;
         if (PetStable const* stable = player->GetPetStable())
         {
             hasPet = hasPet || stable->CurrentPetIndex.has_value();
             for (Optional<PetStable::PetInfo> const& active : stable->ActivePets)
                 hasPet = hasPet || active.has_value();
+            if (_hunterPetReplaceDead && hasPet)
+            {
+                // A pet with curhealth 0 (it died, or was saved dead) stays the current pet: Tame Beast and Call Pet are refused for it. It counts as no pet, so
+                // after the grace period (the module may revive it with Revive Pet meanwhile) it is deleted and replaced.
+                Pet const* live = player->GetPet();
+                PetStable::PetInfo const* current = stable->GetCurrentPet();
+                deadPet = BotMgrRules::HunterPetIsDead(live != nullptr, live && live->IsAlive(), current != nullptr, current ? current->Health : 0);
+                if (!live && !deadPet)
+                    for (Optional<PetStable::PetInfo> const& active : stable->ActivePets)
+                        if (active && BotMgrRules::HunterPetIsDead(false, false, true, active->Health) && !current)
+                            deadPet = true;
+            }
         }
-        if (hasPet)
+        if (hasPet && !deadPet)
         {
             _hunterNoPetSinceMs.erase(guid);
             continue;
@@ -1069,6 +1083,25 @@ void BotMgr::GrantHunterPets()
         auto const [since, first] = _hunterNoPetSinceMs.try_emplace(guid, _uptimeMs);
         if (_uptimeMs - since->second < _hunterPetGraceMs)
             continue;
+        if (deadPet)
+        {
+            // delete the dead pet: the live one through RemovePet, a stored one by its number
+            uint32 deadNumber = 0;
+            if (PetStable const* stable = player->GetPetStable())
+            {
+                if (PetStable::PetInfo const* current = stable->GetCurrentPet())
+                    deadNumber = current->PetNumber;
+                else
+                    for (Optional<PetStable::PetInfo> const& active : stable->ActivePets)
+                        if (active && active->Health == 0)
+                            deadNumber = active->PetNumber;
+            }
+            if (Pet* live = player->GetPet())
+                player->RemovePet(live, PET_SAVE_AS_DELETED);
+            else if (deadNumber)
+                player->DeletePetFromDB(deadNumber);
+            TC_LOG_INFO("server.worldserver", "BotMgr: hunter {} had a dead pet (number {}) for {} s, deleted it to give a new one.", player->GetName(), deadNumber, _hunterPetGraceMs / 1000);
+        }
         uint32 const entry = _hunterPetEntries[urand(0, uint32(_hunterPetEntries.size()) - 1)];
         Pet* pet = player->CreateTamedPetFrom(entry, 0);
         if (!pet)

@@ -303,3 +303,24 @@ TEST_CASE("A retry time is reached across the 32-bit uptime wrap", "[BotMgrRules
     CHECK_FALSE(UptimeReached(0xFFFFFF00u, 0x00000100u));   // due just after the wrap, not yet reached
     CHECK(UptimeReached(0x00000200u, 0xFFFFFF00u));         // due just before the wrap, reached after it
 }
+
+TEST_CASE("A hunter is given Tame Beast and Revive Pet from level 10 on the first request", "[BotMgrRules][hunter]")
+{
+    CHECK(HunterAutoLearnsSpell(1515, true, 10, false, true));
+    CHECK(HunterAutoLearnsSpell(1515, true, 10, false, false));      // Tame Beast does not depend on the revive key
+    CHECK(HunterAutoLearnsSpell(982, true, 10, false, true));
+    CHECK_FALSE(HunterAutoLearnsSpell(982, true, 10, false, false)); // key off
+    CHECK_FALSE(HunterAutoLearnsSpell(982, true, 9, false, true));   // too low
+    CHECK_FALSE(HunterAutoLearnsSpell(982, false, 30, false, true)); // not a hunter
+    CHECK_FALSE(HunterAutoLearnsSpell(982, true, 30, true, true));   // already known
+    CHECK_FALSE(HunterAutoLearnsSpell(883, true, 30, false, true));  // another spell
+}
+
+TEST_CASE("A hunter pet with no health counts as dead", "[BotMgrRules][hunter]")
+{
+    CHECK(HunterPetIsDead(true, false, true, 100));   // the live pet decides when there is one
+    CHECK_FALSE(HunterPetIsDead(true, true, true, 0));
+    CHECK(HunterPetIsDead(false, false, true, 0));    // stored with curhealth 0
+    CHECK_FALSE(HunterPetIsDead(false, false, true, 55));
+    CHECK_FALSE(HunterPetIsDead(false, false, false, 0)); // no pet at all is a different case (the old grant path)
+}

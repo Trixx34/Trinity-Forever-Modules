@@ -18,6 +18,7 @@
 #include <limits>
 #include "Bag.h"
 #include "BotMgr.h"
+#include "BotMgrRules.h"
 #include "BotTalentSpec.h"
 #include "Cell.h"
 #include "CharmInfo.h"
@@ -3706,8 +3707,11 @@ static BotActionStatus ApplyBotActionImpl(Player& bot, BotAction const& action, 
             }
             // Tame Beast (1515) is taught by a quest line the bots never run: a hunter of level 10 or more is given it on its first request,
             // the same way a cook is given the basic campfire. Without it every tame cast answered "spell not known".
-            if (action.spell_id == 1515 && bot.GetClass() == CLASS_HUNTER && bot.GetLevel() >= 10 && !bot.HasSpell(1515))
-                bot.LearnSpell(1515, false);
+            // Revive Pet (982) is in no trainer row and the 49 hunters of the sim that knew it got it from quests: without it a dead pet stayed dead
+            // (Bot.Hunter.ReviveAutoLearn).
+            static bool const reviveAutoLearn = sConfigMgr->GetBoolDefault("Bot.Hunter.ReviveAutoLearn", true);
+            if (BotMgrRules::HunterAutoLearnsSpell(action.spell_id, bot.GetClass() == CLASS_HUNTER, bot.GetLevel(), bot.HasSpell(action.spell_id), reviveAutoLearn))
+                bot.LearnSpell(action.spell_id, false);
             // The module names a rank 1 spell; the bot casts the highest rank it knows. Protocol 28: dest_x >= 1 names the exact rank to cast
             // (healer downranking); the bot must know it (BotActionRules::ResolveCastRank).
             uint32 const castId = BotActionRules::ResolveCastRank(action.dest_x, action.spell_id, action.dest_x >= 1.0f && bot.HasSpell(action.spell_id),

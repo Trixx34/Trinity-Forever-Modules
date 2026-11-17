@@ -67,6 +67,22 @@ inline bool LoginRetryMayStart(uint64 dbQueue, uint32 maxDbQueue) { return dbQue
 inline bool UptimeReached(uint32 nowMs, uint32 dueMs) { return int32(nowMs - dueMs) >= 0; }
 // Bot.Hunter.PetGraceSec: 0 to 3600 seconds, returned in milliseconds.
 inline uint32 HunterPetGraceMs(int32 rawSec) { return uint32(std::clamp<int32>(rawSec, 0, 3600)) * 1000; }
+// The hunter spells a bot is given on its first request, since the quest lines that teach them are never run: Tame Beast (1515) and, with
+// Bot.Hunter.ReviveAutoLearn, Revive Pet (982, in no trainer row), from level 10.
+inline constexpr uint32 HUNTER_TAME_BEAST_SPELL = 1515;
+inline constexpr uint32 HUNTER_REVIVE_PET_SPELL = 982;
+inline bool HunterAutoLearnsSpell(uint32 spellId, bool isHunter, uint32 level, bool knowsIt, bool reviveKey)
+{
+    if (!isHunter || level < 10 || knowsIt)
+        return false;
+    return spellId == HUNTER_TAME_BEAST_SPELL || (spellId == HUNTER_REVIVE_PET_SPELL && reviveKey);
+}
+// Whether a hunter's pet is dead and so counts as no pet for the grant (Bot.Hunter.PetReplaceDead): the live pet when there is one, else the stored current or
+// active pet (curhealth 0).
+inline bool HunterPetIsDead(bool liveExists, bool liveAlive, bool storedExists, uint32 storedHealth)
+{
+    return liveExists ? !liveAlive : (storedExists && storedHealth == 0);
+}
 // Bot.Mail.CollectEverySec: 5 to 3600 seconds, returned in milliseconds.
 inline uint32 MailCollectEveryMs(int32 rawSec) { return uint32(std::clamp<int32>(rawSec, 5, 3600)) * 1000; }
 // Bot.Spread.SpacingYards and Bot.Spread.MaxRadiusYards: at least 0.
