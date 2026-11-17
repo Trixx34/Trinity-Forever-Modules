@@ -134,7 +134,8 @@ void WorldSocket::Start()
         uint32(std::max(sConfigMgr->GetIntDefault("Network.ConnectionsPerIp", 16), 0)));
     if (!_ipConnectionSlot)
     {
-        TC_LOG_ERROR("network", "WorldSocket::Start: {} already has Network.ConnectionsPerIp open connections, refusing another", address.to_string());
+        TC_LOG_ERROR("network", "WorldSocket::Start: {} already has Network.ConnectionsPerIp ({}) open connections, refusing another",
+            address.to_string(), WorldConnectionLimit.GetCount(address.to_string()));
         CloseSocket();
         return;
     }
@@ -287,6 +288,11 @@ void WorldSocket::SendAuthSession()
 
 void WorldSocket::OnClose()
 {
+    // The address's place is given back when the connection closes, not when the WorldSocket object goes: the session keeps its
+    // closed sockets until the player's reconnect window runs out (WorldSession::Update), so a player who dropped and came back
+    // a few times could be refused with no connection open at all. (From Sakhwoow/WoWForever 2e10d8b714 via the everlake fork 5754c079ea.)
+    _ipConnectionSlot.reset();
+
     {
         std::scoped_lock sessionGuard(_worldSessionLock);
         _worldSession = nullptr;
