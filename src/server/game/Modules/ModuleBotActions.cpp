@@ -8,6 +8,7 @@
 #include "BotProfessions.h"
 #include "BotTaxi.h"
 #include "BotGearRules.h"
+#include "BotHearthRules.h"
 #include "BotQuestRewardRules.h"
 #include "BotSpellRanks.h"
 #include "ModuleBotSnapshot.h"
@@ -58,6 +59,8 @@
 #include "SpellInfo.h"
 #include "DB2Stores.h"
 #include "TaxiPathGraph.h"
+#include "TerrainMgr.h"
+#include "PhasingHandler.h"
 #include "Transport.h"
 #include "SpellMgr.h"
 #include "Trainer.h"
@@ -1600,6 +1603,147 @@ BotActionStatus QuestAction(Player& bot, uint32 code, uint64 targetRef, std::str
     return BotActionStatus::kApplied;
 }
 
+// The innkeepers of the world, from the creature spawns (npcflag innkeeper), with the zone of each. Built once, on the first masked teleport.
+std::vector<BotHearthRules::Inn> const& InnkeeperSpawns(std::vector<uint32>& factions)
+{
+    static std::vector<BotHearthRules::Inn> inns;
+    static std::vector<uint32> innFactions;
+    static bool built = false;
+    if (!built)
+    {
+        built = true;
+        for (auto const& pair : sObjectMgr->GetAllCreatureData())
+        {
+            CreatureData const& data = pair.second;
+            CreatureTemplate const* tmpl = sObjectMgr->GetCreatureTemplate(data.id);
+            if (!tmpl || !(tmpl->npcflag & UNIT_NPC_FLAG_INNKEEPER))
+                continue;
+            BotHearthRules::Inn inn;
+            inn.map = data.mapId;
+            inn.zone = sTerrainMgr.GetZoneId(PhasingHandler::GetEmptyPhaseShift(), data.mapId, data.spawnPoint.GetPositionX(), data.spawnPoint.GetPositionY(), data.spawnPoint.GetPositionZ());
+            inn.x = data.spawnPoint.GetPositionX();
+            inn.y = data.spawnPoint.GetPositionY();
+            inn.z = data.spawnPoint.GetPositionZ();
+            inn.o = data.spawnPoint.GetOrientation();
+            if (!inn.zone)
+                continue;
+            inns.push_back(inn);
+            innFactions.push_back(tmpl->faction);
+        }
+        TC_LOG_INFO("modules.bots", "Bot.Hearth: {} innkeeper spawns indexed", inns.size());
+    }
+    factions = innFactions;
+    return inns;
+}
+
+// kTeleport mask (Bot.Hearth.Enabled): a teleport into another zone is a Hearthstone hop. Returns true when it decided the action (status and reason set);
+// false lets TeleportAction go on with the plain teleport.
+bool HearthMaskTeleport(Player& bot, uint32 mapId, BotAction const& action, BotActionStatus& status, std::string& reason)
+{
+    static bool const enabled = sConfigMgr->GetBoolDefault("Bot.Hearth.Enabled", false);
+    if (!enabled)
+        return false;
+    BotHearthRules::Config config;
+    config.enabled = true;
+    config.fallbackTeleport = sConfigMgr->GetBoolDefault("Bot.Hearth.FallbackTeleport", false);
+    config.grantStone = sConfigMgr->GetBoolDefault("Bot.Hearth.GrantStone", false);
+
+    MapEntry const* destEntry = sMapStore.LookupEntry(mapId);
+    BotHearthRules::Situation s;
+    s.alive = bot.IsAlive();
+    s.inCombat = bot.IsInCombat();
+    s.inFlight = bot.IsInFlight();
+    s.onTransport = bot.GetTransport() != nullptr;
+    s.botMap = bot.GetMapId();
+    s.destMap = mapId;
+    s.botMapIsInstance = bot.GetMap()->Instanceable() || bot.InBattleground() || bot.InArena();
+    s.destMapIsInstance = !destEntry || destEntry->IsDungeon() || destEntry->IsBattlegroundOrArena();
+    s.botZone = bot.GetZoneId();
+    s.destZone = sTerrainMgr.GetZoneId(bot.GetPhaseShift(), mapId, action.dest_x, action.dest_y, action.dest_z);
+    s.casting = bot.GetCurrentSpell(CURRENT_GENERIC_SPELL) && bot.GetCurrentSpell(CURRENT_GENERIC_SPELL)->GetSpellInfo()->Id == BotHearthRules::kHearthstoneSpell;
+    s.hasStone = bot.HasItemCount(BotHearthRules::kHearthstoneItem, 1, false);
+    s.stoneCooling = bot.GetSpellHistory()->HasCooldown(BotHearthRules::kHearthstoneSpell, BotHearthRules::kHearthstoneItem) ||
+        bot.GetSpellHistory()->HasCooldown(BotHearthRules::kHearthstoneSpell);
+    s.bindInDestZone = s.destZone != 0 && bot.m_homebind.GetMapId() == mapId &&
+        sTerrainMgr.GetZoneId(bot.GetPhaseShift(), bot.m_homebind.GetMapId(), bot.m_homebind.GetPositionX(), bot.m_homebind.GetPositionY(), bot.m_homebind.GetPositionZ()) == s.destZone;
+
+    int innIndex = -1;
+    std::vector<uint32> factions;
+    std::vector<BotHearthRules::Inn> inns;
+    if (BotHearthRules::IsZoneChange(s) && !BotHearthRules::Guarded(s))
+    {
+        inns = InnkeeperSpawns(factions);
+        FactionTemplateEntry const* botFaction = bot.GetFactionTemplateEntry();
+        for (size_t i = 0; i < inns.size(); ++i)
+        {
+            FactionTemplateEntry const* innFaction = sFactionTemplateStore.LookupEntry(factions[i]);
+            inns[i].sideOk = !innFaction || !botFaction || !innFaction->IsHostileTo(botFaction);
+        }
+        innIndex = BotHearthRules::PickInn(inns, mapId, s.destZone, action.dest_x, action.dest_y);
+        s.innFound = innIndex >= 0;
+    }
+
+    BotHearthRules::Decision const decision = BotHearthRules::Decide(config, s);
+    switch (decision.outcome)
+    {
+        case BotHearthRules::Outcome::PassThrough:
+        case BotHearthRules::Outcome::Fallback:
+            if (decision.outcome == BotHearthRules::Outcome::Fallback)
+                TC_LOG_INFO("modules.bots", "kTeleport: bot {} hearth mask fallback to a plain teleport: {}", bot.GetGUID().ToString(), decision.reason);
+            return false;
+        case BotHearthRules::Outcome::InProgress:
+            status = BotActionStatus::kApplied;
+            return true;
+        case BotHearthRules::Outcome::Refuse:
+            reason = std::string(decision.reason) + " (Bot.Hearth.FallbackTeleport is off)";
+            status = BotActionStatus::kRefused;
+            return true;
+        case BotHearthRules::Outcome::Hearth:
+            break;
+    }
+
+    if (decision.grant)
+    {
+        ItemPosCountVec dest;
+        if (bot.CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, BotHearthRules::kHearthstoneItem, 1) != EQUIP_ERR_OK || !bot.StoreNewItem(dest, BotHearthRules::kHearthstoneItem, true))
+        {
+            reason = "the bot has no Hearthstone and no room for one";
+            status = BotActionStatus::kRefused;
+            return true;
+        }
+    }
+    Item* stone = bot.GetItemByEntry(BotHearthRules::kHearthstoneItem);
+    if (!stone)
+    {
+        reason = "the bot has no Hearthstone";
+        status = BotActionStatus::kRefused;
+        return true;
+    }
+    if (bot.isMoving())
+        bot.StopMoving(); // the cast has a cast time: a walking bot would interrupt it
+    WorldLocation const oldBind = bot.m_homebind;
+    uint32 const oldBindArea = bot.m_homebindAreaId;
+    if (decision.bind)
+    {
+        BotHearthRules::Inn const& inn = inns[innIndex];
+        bot.SetHomebind(WorldLocation(inn.map, inn.x, inn.y, inn.z, inn.o), sTerrainMgr.GetAreaId(PhasingHandler::GetEmptyPhaseShift(), inn.map, inn.x, inn.y, inn.z));
+    }
+    CastSpellExtraArgs args(TRIGGERED_NONE);
+    args.SetCastItem(stone);
+    SpellCastResult const result = bot.CastSpell(&bot, BotHearthRules::kHearthstoneSpell, args);
+    if (result != SPELL_CAST_OK)
+    {
+        if (decision.bind)
+            bot.SetHomebind(oldBind, oldBindArea);
+        reason = "use of the Hearthstone returned result " + std::to_string(int32(result));
+        status = StatusForCast(result);
+        return true;
+    }
+    TC_LOG_INFO("modules.bots", "kTeleport: bot {} hearths to zone {} ({} bind)", bot.GetGUID().ToString(), s.destZone, decision.bind ? "new" : "kept");
+    status = BotActionStatus::kApplied;
+    return true;
+}
+
 // kTeleport (scenarios): spell_id is the map, dest the position. Off unless Bot.Actions.Teleport is on; refused in combat.
 BotActionStatus TeleportAction(Player& bot, BotAction const& action, std::string& reason)
 {
@@ -1619,6 +1763,11 @@ BotActionStatus TeleportAction(Player& bot, BotAction const& action, std::string
     {
         reason = "not a valid map position";
         return BotActionStatus::kRefused;
+    }
+    {
+        BotActionStatus maskStatus = BotActionStatus::kApplied;
+        if (HearthMaskTeleport(bot, mapId, action, maskStatus, reason))
+            return maskStatus;
     }
     // A ghost sent back to its corpse in a dungeon or raid must find the instance it died in. When that instance is gone (the run ended, the group
     // disbanded), the arrival would create a new instance with its own map, grid load and lock for every ghost at once: the 2026-11-09 sim stall (20 ghosts
