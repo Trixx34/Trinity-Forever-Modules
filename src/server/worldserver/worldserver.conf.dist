@@ -1891,6 +1891,25 @@ Bot.Limit.MaxDbQueue = 5000
 #            instead of creating a new instance for it. A finished run's ghosts sent to their corpses in one tick otherwise create one instance each on the
 #            world thread (suspected cause of the sim's 2026-11-09 18:05 world thread hang). The module's corpse run then ends as a failed run.
 #
+#    Bot.Hearth.Enabled
+#        Default:     0
+#        1 = a module teleport (kTeleport, Bot.Actions.Teleport must be 1) of a living bot into another zone is not silent: the bot's home bind is set
+#            to the nearest innkeeper of the destination zone that is not hostile to its side (kept when the bind already is in that zone), then the bot
+#            casts its Hearthstone (spell 8690, the normal cast time and cooldown) and arrives at that inn. The bot is stopped for the cast
+#            (a module should not move it meanwhile: MOD-Forever-Bots holds a bot that is casting the stone). Never from or to a dungeon, raid, battleground, arena or Skyborne map 2991, never for a ghost,
+#            a bot in flight or on a transport: those teleports are unchanged. A teleport inside one zone is unchanged. The bot arrives at the inn,
+#            not at the exact spot the module asked for: its next decision starts from there.
+#
+#    Bot.Hearth.FallbackTeleport
+#        Default:     0
+#        1 = when the Hearthstone is missing or on cooldown (or the zone has no inn for the bot's side) the plain teleport runs at once.
+#            0 = the teleport is refused with a reason and the module walks or waits. Only read when Bot.Hearth.Enabled = 1.
+#
+#    Bot.Hearth.GrantStone
+#        Default:     0
+#        1 = a bot without a Hearthstone gets one before the hop, as an inn gives one at binding. 0 = no stone is a refusal (or the fallback).
+#            Only read when Bot.Hearth.Enabled = 1.
+#
 #    Bot.Actions.Grant
 #        Default:     0
 #        1 = a module may add items to the bags of the bots it controls (kGrant). For scenarios and tests only.
@@ -2252,6 +2271,9 @@ Bot.Limit.MaxDbQueue = 5000
 #            has) and the weapon proficiencies are learned. 0 = leave them as the core sets them.
 
 Bot.Actions.Teleport = 0
+Bot.Hearth.Enabled = 0
+Bot.Hearth.FallbackTeleport = 0
+Bot.Hearth.GrantStone = 0
 Bot.Actions.Grant = 0
 Bot.Actions.AutoGear = 1
 Bot.AutoGear.MaxQuality = 2
