@@ -1,11 +1,13 @@
 #include "BotProfessions.h"
 #include "Config.h"
+#include "Log.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "Trainer.h"
 
+#include <array>
 #include <unordered_map>
 
 namespace BotProfessions
@@ -67,15 +69,50 @@ bool TrainerMayTeach(Trainer::Trainer const& trainer, uint64 botGuid)
     return true;
 }
 
+namespace
+{
+bool RepairPoints()
+{
+    static bool const value = sConfigMgr->GetBoolDefault("Bot.Professions.RepairPoints", true);
+    return value;
+}
+
+// How many of the bot's two professions it does not have.
+uint32 Missing(Player const& bot, std::array<uint32, 2> const& set)
+{
+    return MissingCount(bot.HasSkill(set[0]), bot.HasSkill(set[1]));
+}
+
+// The first rank spell of a profession (the spell with its SKILL effect, in a trainer of that profession), 0 if no trainer has one.
+uint32 ApprenticeSpellOf(uint32 skill)
+{
+    for (auto const& [id, trainer] : sObjectMgr->GetTrainers())
+        if (trainer.GetType() == Trainer::Type::Tradeskill && SkillOfTrainer(trainer) == skill)
+            for (Trainer::Spell const& spell : trainer.Spells())
+                if (SkillOfSpell(spell.SpellId) == skill)
+                    return spell.SpellId;
+    return 0;
+}
+}
+
 uint32 Teach(Player& bot)
 {
     if (!Enabled())
         return 0;
 
     uint64 const key = bot.GetGUID().GetCounter();
+    std::array<uint32, 2> const set = SetFor(key);
     uint32 taught = 0;
     for (int pass = 0; pass < 4; ++pass) // learning a rank can make the next one available
     {
+        if (RepairPoints())
+        {
+            uint32 const current = bot.GetFreePrimaryProfessionPoints();
+            uint32 const wanted = PointsToHave(current, Missing(bot, set));
+            if (wanted != current)
+                bot.SetFreePrimaryProfessions(uint16(wanted));
+        }
+
         uint32 learned = 0;
         for (auto const& [id, trainer] : sObjectMgr->GetTrainers())
         {
@@ -89,6 +126,31 @@ uint32 Teach(Player& bot)
         if (!learned)
             break;
     }
+
+    // A profession of the set that no trainer taught: learn its first rank directly, and say so (the log line names which path was needed)
+    if (RepairPoints())
+        for (uint32 skill : set)
+            if (!bot.HasSkill(skill))
+            {
+                uint32 const spell = ApprenticeSpellOf(skill);
+                if (!spell)
+                    continue;
+                uint32 const current = bot.GetFreePrimaryProfessionPoints();
+                uint32 const wanted = PointsToHave(current, Missing(bot, set));
+                if (wanted != current)
+                    bot.SetFreePrimaryProfessions(uint16(wanted));
+                bot.LearnSpell(spell, false);
+                TC_LOG_INFO("server.worldserver", "BotProfessions: bot {} was not taught skill {} by its trainers (points {}), learned spell {} directly: {}",
+                    bot.GetGUID().GetCounter(), skill, current, spell, bot.HasSkill(skill) ? "ok" : "still missing");
+                if (bot.HasSkill(skill))
+                {
+                    ++taught;
+                    // its recipes and the higher ranks the skill allows
+                    for (auto const& [id, trainer] : sObjectMgr->GetTrainers())
+                        if (trainer.GetType() == Trainer::Type::Tradeskill && SkillOfTrainer(trainer) == skill && TrainerMayTeach(trainer, key))
+                            taught += trainer.TeachAvailableSpellsFree(&bot, true);
+                }
+            }
     return taught;
 }
 }

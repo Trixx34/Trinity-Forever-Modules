@@ -1957,6 +1957,13 @@ Bot.Limit.MaxDbQueue = 5000
 #            outside its pair (kTrain refuses them). First Aid, Cooking, Fishing and Riding are not restricted. Higher ranks are learned as the skill allows; nothing raises
 #            the skill yet.
 #
+#    Bot.Professions.RepairPoints
+#        Default:     1
+#        1 = before the free profession teaching of a bot (Bot.Professions.Enabled) its free primary profession points are raised to the number of its two professions it
+#            still lacks, and a profession of its pair that no trainer taught is learned by its first-rank spell directly (log line "BotProfessions: bot N was not taught
+#            skill S"). The sim showed Blacksmithing and Alchemy never learned and Mining missing in two of the eight sets (a bot held one profession of a pair where the
+#            other should have followed); the cause was not seen directly, this repairs the points and falls back to the spell. 0 = teaching as before.
+#
 #    Bot.Actions.UseObject
 #        Default:     0
 #        1 = a module may make a bot use a game object near it (kUseObject): click a door, a lever or an altar, or use an item on it (a key, a charge of powder; the

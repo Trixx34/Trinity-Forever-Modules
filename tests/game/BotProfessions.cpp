@@ -66,3 +66,24 @@ TEST_CASE("A bot may learn exactly its own two primary professions", "[BotProfes
         CHECK(allowed == 2);
     }
 }
+
+TEST_CASE("A bot always has a free point for each profession it lacks", "[BotProfessions]")
+{
+    // MissingCount from what the bot holds, PointsToHave never lowers the points and never leaves fewer than the missing professions
+    CHECK(MissingCount(false, false) == 2);
+    CHECK(MissingCount(true, false) == 1);
+    CHECK(MissingCount(false, true) == 1);
+    CHECK(MissingCount(true, true) == 0);
+    for (uint32 current = 0; current <= 2; ++current)
+        for (uint32 missing = 0; missing <= 2; ++missing)
+        {
+            uint32 const have = PointsToHave(current, missing);
+            CHECK(have >= current);
+            CHECK(have >= missing);
+            CHECK(have <= 2);
+        }
+    // the case of the sim: one profession held and the point gone (Mining + Herbalism, Herbalism held, 0 points) gets its one point
+    CHECK(PointsToHave(0, MissingCount(false, true)) == 1);
+    // Blacksmithing and Alchemy bots hold one profession each and lack one
+    CHECK(PointsToHave(0, MissingCount(true, false)) == 1);
+}
