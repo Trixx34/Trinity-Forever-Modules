@@ -366,4 +366,13 @@ class TC_GAME_API Battlefield : public ZoneScript
         void TeamCastSpell(TeamId team, int32 spellId);
 };
 
+// Whether a battlefield is enabled and held (defended) by the given team. Null counts as not held: a battlefield lookup
+// such as BattlefieldMgr::GetBattlefieldByBattleId returns null on every map that has no such battlefield, and
+// conditions on Wintergrasp are checked on any map (quest availability, for one).
+template <typename BattlefieldType>
+inline bool IsBattlefieldHeldBy(BattlefieldType const* battlefield, TeamId team)
+{
+    return battlefield && battlefield->IsEnabled() && battlefield->GetDefenderTeam() == team;
+}
+
 #endif
