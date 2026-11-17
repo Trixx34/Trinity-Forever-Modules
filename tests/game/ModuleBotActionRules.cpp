@@ -416,3 +416,83 @@ TEST_CASE("RepairsBefore: durability compared as a fraction, a tie goes to the c
     CHECK(RepairsBefore({ 99, 100, 9, true }, { 0, 100, 1, false }));      // worn before the bags, even a broken bag item
     CHECK_FALSE(RepairsBefore({ 5, 10, 3, true }, { 5, 10, 3, true }));    // equal: not before (strict weak order)
 }
+
+namespace
+{
+// A mount item as the handler describes it: usable, one ON_LEARN effect for a ground mount the bot does not know.
+MountItemCandidate MountItemFor(uint32 spell, bool usable = true, bool known = false)
+{
+    MountItemCandidate candidate;
+    candidate.MountItem = true;
+    candidate.Usable = usable;
+    candidate.Effects.push_back({ true, spell, known, true });
+    return candidate;
+}
+}
+
+TEST_CASE("PickMountItem: nothing to learn from an empty bag or from items that are not mounts", "[ModuleBotActionRules]")
+{
+    CHECK(PickMountItem({}).Index == -1);
+    CHECK(PickMountItem({}).Spells.empty());
+
+    MountItemCandidate notMount = MountItemFor(6777);
+    notMount.MountItem = false;
+    CHECK(PickMountItem({ notMount }).Index == -1);
+}
+
+TEST_CASE("PickMountItem: an item the bot may not use, or whose spell it knows, is skipped", "[ModuleBotActionRules]")
+{
+    CHECK(PickMountItem({ MountItemFor(6777, false) }).Index == -1);   // level, faction, class or riding refused it
+    CHECK(PickMountItem({ MountItemFor(6777, true, true) }).Index == -1); // already known: no second learn, the item stays
+}
+
+TEST_CASE("PickMountItem: the first usable mount wins and only its learnable spells are returned", "[ModuleBotActionRules]")
+{
+    MountItemPick const pick = PickMountItem({ MountItemFor(1111, false), MountItemFor(6777), MountItemFor(8394) });
+    CHECK(pick.Index == 1);
+    CHECK(pick.Spells == std::vector<uint32>{ 6777 });
+}
+
+TEST_CASE("PickMountItem: search and learn share one predicate (ON_LEARN, ground mount, not known)", "[ModuleBotActionRules]")
+{
+    MountItemCandidate candidate;
+    candidate.MountItem = true;
+    candidate.Usable = true;
+    candidate.Effects.push_back({ false, 55884, false, true }); // a USE effect (Learning): ignored
+    candidate.Effects.push_back({ true, 4001, false, false });  // ON_LEARN but not a ground mount (flying or no mounted aura): ignored
+    candidate.Effects.push_back({ true, 4002, true, true });    // known already: ignored
+    candidate.Effects.push_back({ true, 4003, false, true });   // the one
+    candidate.Effects.push_back({ true, 4004, false, true });   // a second mount spell of the same item
+    MountItemPick const pick = PickMountItem({ candidate });
+    CHECK(pick.Index == 0);
+    CHECK(pick.Spells == std::vector<uint32>{ 4003, 4004 });
+
+    CHECK(IsLearnableMountEffect({ true, 1, false, true }));
+    CHECK_FALSE(IsLearnableMountEffect({ false, 1, false, true }));
+    CHECK_FALSE(IsLearnableMountEffect({ true, 1, true, true }));
+    CHECK_FALSE(IsLearnableMountEffect({ true, 1, false, false }));
+}
+
+TEST_CASE("PickMountItem: an item with only a USE effect is not learned from", "[ModuleBotActionRules]")
+{
+    MountItemCandidate candidate;
+    candidate.MountItem = true;
+    candidate.Usable = true;
+    candidate.Effects.push_back({ false, 6777, false, true });
+    CHECK(PickMountItem({ candidate }).Index == -1);
+}
+
+TEST_CASE("MountLearnSucceeded: the item is used up only when a spell is known afterwards", "[ModuleBotActionRules]")
+{
+    CHECK_FALSE(MountLearnSucceeded({}));
+    CHECK_FALSE(MountLearnSucceeded({ false }));
+    CHECK_FALSE(MountLearnSucceeded({ false, false }));
+    CHECK(MountLearnSucceeded({ true }));
+    CHECK(MountLearnSucceeded({ false, true }));
+}
+
+TEST_CASE("Mount learn reasons are fixed text the module log shows", "[ModuleBotActionRules]")
+{
+    CHECK(std::string(kNoMountItemReason) == "bot has no mount and no usable mount item in its bags");
+    CHECK(std::string(kMountLearnFailedReason) == "the mount item taught no spell, kept in the bags");
+}

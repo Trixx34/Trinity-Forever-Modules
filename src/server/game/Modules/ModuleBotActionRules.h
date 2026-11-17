@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <vector>
 
 namespace BotActionRules
@@ -349,6 +350,68 @@ inline RepairPlan PlanRepair(std::vector<RepairPiece> const& pieces, uint64 mone
     }
     return plan;
 }
+// ---- Bot.Mount.LearnFromItem (MountAction / LearnMountFromBags in ModuleBotActions.cpp) ----
+// A vendor mount is an item (class Miscellaneous, subclass Mount) whose ON_LEARN item effect names the mount spell it teaches. The handler describes every
+// bag item as a MountItemCandidate and this decides which one to learn from, so the rule is the same in the test and in the handler.
+struct MountItemEffect
+{
+    bool OnLearn = false;      // the effect trigger is ITEM_SPELLTRIGGER_ON_LEARN
+    uint32 Spell = 0;
+    bool Known = false;        // the bot already has the spell
+    bool GroundMount = false;  // the one mount predicate: a mounted aura and no flying-speed aura (the same test the best-mount search uses)
+};
+
+struct MountItemCandidate
+{
+    bool MountItem = false;    // item class Miscellaneous, subclass Mount
+    bool Usable = false;       // Player::CanUseItem(proto) == EQUIP_ERR_OK
+    std::vector<MountItemEffect> Effects;
+};
+
+// The spell of an effect that the learn takes: an ON_LEARN effect of a ground mount the bot does not know yet. Search and learn both use this.
+inline bool IsLearnableMountEffect(MountItemEffect const& effect)
+{
+    return effect.OnLearn && effect.GroundMount && !effect.Known;
+}
+
+struct MountItemPick
+{
+    int Index = -1;                 // the candidate to learn from, -1 for none
+    std::vector<uint32> Spells;     // the spells to learn from it: exactly the ones the search accepted
+};
+
+// The first candidate that is a usable mount item with at least one learnable mount effect (bag order). Items that are not mounts, that the bot may not use,
+// whose spells it knows already, or whose effects are not ground mounts or not ON_LEARN (a USE effect) are skipped.
+inline MountItemPick PickMountItem(std::vector<MountItemCandidate> const& candidates)
+{
+    MountItemPick pick;
+    for (size_t i = 0; i < candidates.size(); ++i)
+    {
+        MountItemCandidate const& candidate = candidates[i];
+        if (!candidate.MountItem || !candidate.Usable)
+            continue;
+        std::vector<uint32> spells;
+        for (MountItemEffect const& effect : candidate.Effects)
+            if (IsLearnableMountEffect(effect))
+                spells.push_back(effect.Spell);
+        if (!spells.empty())
+        {
+            pick.Index = int(i);
+            pick.Spells = std::move(spells);
+            return pick;
+        }
+    }
+    return pick;
+}
+
+// The item is used up only when at least one of the spells it was to teach is known afterwards (LearnSpell returns nothing).
+inline bool MountLearnSucceeded(std::vector<bool> const& knownAfter)
+{
+    return std::find(knownAfter.begin(), knownAfter.end(), true) != knownAfter.end();
+}
+
+inline constexpr char const* kNoMountItemReason = "bot has no mount and no usable mount item in its bags";
+inline constexpr char const* kMountLearnFailedReason = "the mount item taught no spell, kept in the bags";
 } // namespace BotActionRules
 
 #endif
