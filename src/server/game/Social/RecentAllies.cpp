@@ -34,6 +34,7 @@
 #include <mutex>
 #include "ObjectAccessor.h"
 #include "Opcodes.h"
+#include "Packet.h"
 #include "Player.h"
 #include "Util.h"
 #include "WorldPacket.h"
