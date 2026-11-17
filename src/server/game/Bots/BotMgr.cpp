@@ -405,6 +405,11 @@ void BotMgr::LoadRegistry()
     _loginMaxPerTick = BotMgrRules::LoginMaxPerTick(sConfigMgr->GetIntDefault("Bot.Login.MaxPerTick", BotMgrRules::DEF_LOGIN_MAX_PER_TICK));
     _loginTimeoutMs = BotMgrRules::LoginTimeoutMs(sConfigMgr->GetIntDefault("Bot.Login.TimeoutMs", BotMgrRules::DEF_LOGIN_TIMEOUT_MS));
     _reloginDelayMs = BotMgrRules::ReloginDelayMs(sConfigMgr->GetIntDefault("Bot.Relogin.DelayMs", BotMgrRules::DEF_RELOGIN_DELAY_MS));
+    _loginRetryEnabled = sConfigMgr->GetBoolDefault("Bot.Login.Retry.Enabled", BotMgrRules::DEF_LOGIN_RETRY_ENABLED);
+    _loginRetryRevokeOnGiveUp = sConfigMgr->GetBoolDefault("Bot.Login.Retry.RevokeOnGiveUp", BotMgrRules::DEF_LOGIN_RETRY_REVOKE_ON_GIVE_UP);
+    _loginRetryMaxAttempts = BotMgrRules::LoginRetryMaxAttempts(sConfigMgr->GetIntDefault("Bot.Login.Retry.MaxAttempts", BotMgrRules::DEF_LOGIN_RETRY_MAX_ATTEMPTS));
+    _loginRetryBackoffMs = BotMgrRules::LoginRetryBackoffMs(sConfigMgr->GetIntDefault("Bot.Login.Retry.BackoffMs", BotMgrRules::DEF_LOGIN_RETRY_BACKOFF_MS));
+    _loginRetryBackoffMaxMs = BotMgrRules::LoginRetryBackoffMaxMs(sConfigMgr->GetIntDefault("Bot.Login.Retry.BackoffMaxMs", BotMgrRules::DEF_LOGIN_RETRY_BACKOFF_MAX_MS), _loginRetryBackoffMs);
     _mailCollect = sConfigMgr->GetBoolDefault("Bot.Mail.Collect", true);
     _hunterPetGrant = sConfigMgr->GetBoolDefault("Bot.Hunter.PetGrant", true);
     _hunterPetGraceMs = BotMgrRules::HunterPetGraceMs(sConfigMgr->GetIntDefault("Bot.Hunter.PetGraceSec", BotMgrRules::DEF_HUNTER_PET_GRACE_SEC));
@@ -957,6 +962,7 @@ bool BotMgr::RequestLogin(uint64 guid, std::string& error)
         case BOT_OFFLINE:
             bot.State = BOT_QUEUED;
             bot.LogoutRequested = false;
+            bot.LoginFailures = 0; // an explicit request (a module taking the bot back) starts a new retry budget
             _loginQueue.push_back(guid);
             return true;
     }
@@ -996,6 +1002,7 @@ bool BotMgr::RequestLogout(uint64 guid, char const* reason)
             break;
         case BOT_QUEUED:
             _loginQueue.erase(std::remove(_loginQueue.begin(), _loginQueue.end(), guid), _loginQueue.end());
+            _loginRetry.erase(std::remove_if(_loginRetry.begin(), _loginRetry.end(), [guid](auto const& entry) { return entry.first == guid; }), _loginRetry.end());
             bot.State = BOT_OFFLINE;
             break;
         case BOT_CREATING:
@@ -1023,6 +1030,7 @@ void BotMgr::Update(uint32 diff)
     _lastWorldDiffMs = diff;
     PollCreates();
     PollLogins();
+    PollLoginRetries();
     CheckStopTime();
     ProcessLogins(diff);
     PumpTeleports();
@@ -1203,9 +1211,10 @@ void BotMgr::Shutdown(char const* reason)
     {
         auto it = _bots.find(guid);
         if (it != _bots.end() && it->second.Session)
-            FailLogin(it->second, "server shut down before the login finished");
+            FailLogin(it->second, "server shut down before the login finished", false);
     }
     _loggingIn.clear();
+    _loginRetry.clear();
 
     LogoutAll(reason);
 }
@@ -1419,6 +1428,7 @@ uint8 BotMgr::TalentRoleOf(uint64 botCounter)
 void BotMgr::FinishLogin(BotInfo& bot)
 {
     bot.State = BOT_ONLINE;
+    bot.LoginFailures = 0;
     if (Player* player = bot.Session->GetPlayer())
     {
         if (bot.HasStart)
@@ -1450,7 +1460,7 @@ void BotMgr::FinishLogin(BotInfo& bot)
     }
 }
 
-void BotMgr::FailLogin(BotInfo& bot, char const* reason)
+void BotMgr::FailLogin(BotInfo& bot, char const* reason, bool allowRetry)
 {
     TC_LOG_ERROR("server.worldserver", "BotMgr: login of bot {} (guid {}) failed: {}", bot.Name, bot.Guid, reason);
     delete bot.Session;
@@ -1458,6 +1468,55 @@ void BotMgr::FailLogin(BotInfo& bot, char const* reason)
     bot.State = BOT_OFFLINE;
     bot.LogoutRequested = false;
     bot.NotBeforeMs = _uptimeMs + _reloginDelayMs;
+    ++bot.LoginFailures;
+
+    // A player's own character (alt) and a failure at shutdown are never retried.
+    if (!allowRetry || bot.Alt)
+        return;
+
+    if (BotMgrRules::LoginRetryAllowed(_loginRetryEnabled, bot.LoginFailures, _loginRetryMaxAttempts))
+    {
+        uint32 const wait = std::max<uint32>(_reloginDelayMs, BotMgrRules::LoginRetryDelayMs(bot.LoginFailures, _loginRetryBackoffMs, _loginRetryBackoffMaxMs, urand(0, 1000)));
+        bot.State = BOT_QUEUED;                       // waits here, outside _loginQueue
+        bot.NotBeforeMs = _uptimeMs + wait;
+        _loginRetry.emplace_back(bot.Guid, bot.NotBeforeMs);
+        TC_LOG_WARN("server.worldserver", "BotMgr: bot {} (guid {}) tries to log in again in {} s (failure {} of {}).", bot.Name, bot.Guid, wait / 1000,
+            bot.LoginFailures, _loginRetryMaxAttempts);
+        return;
+    }
+
+    // Given up: the bot stays offline. Taking its module's control back removes it from the module's count, so the module's ramp
+    // (BotsInitial, BotsStep) does not count a bot that will never come online; the module may take it back by guid later.
+    if (_loginRetryEnabled)
+        TC_LOG_ERROR("server.worldserver", "BotMgr: bot {} (guid {}) gave up after {} failed logins.", bot.Name, bot.Guid, bot.LoginFailures);
+    if (_loginRetryRevokeOnGiveUp)
+        sModuleMgr->RevokeBot(bot.Guid, "login failed");
+}
+
+// Bots whose retry time has come go back to the login queue, where the login rate (Bot.Login.MaxPerSecond, MaxPerTick) paces them like any other. While the
+// character database queue is above Bot.Limit.MaxDbQueue they keep waiting: a retry into a busy database fails the same way.
+void BotMgr::PollLoginRetries()
+{
+    if (_loginRetry.empty() || !BotMgrRules::LoginRetryMayStart(uint64(CharacterDatabase.QueueSize()), _limitMaxDbQueue))
+        return;
+
+    for (size_t i = 0; i < _loginRetry.size();)
+    {
+        auto const [guid, dueMs] = _loginRetry[i];
+        auto it = _bots.find(guid);
+        if (it == _bots.end() || it->second.State != BOT_QUEUED)
+        {
+            _loginRetry.erase(_loginRetry.begin() + static_cast<std::ptrdiff_t>(i));
+            continue;
+        }
+        if (!BotMgrRules::UptimeReached(_uptimeMs, dueMs))
+        {
+            ++i;
+            continue;
+        }
+        _loginRetry.erase(_loginRetry.begin() + static_cast<std::ptrdiff_t>(i));
+        _loginQueue.push_back(guid);
+    }
 }
 
 // Saves and removes the character, drops the session, and tells the controlling module (if any) the bot is gone.

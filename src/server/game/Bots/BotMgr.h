@@ -49,6 +49,7 @@ struct BotInfo
     bool Alt = false;                  // a character of a player's own account, logged in as a bot (Bot.Alt.Enabled)
     uint32 NotBeforeMs = 0;            // no login before this uptime (the previous logout save must land first)
     uint32 LoginStartedMs = 0;
+    uint32 LoginFailures = 0;          // failed logins since the last successful one or the last explicit login request (Bot.Login.Retry.*)
     bool HasStart = false;             // placed at a given spot on login (a scenario), not spread around the race's start
     uint32 StartMap = 0;
     float StartX = 0.0f;
@@ -145,7 +146,9 @@ class TC_GAME_API BotMgr
         void FinishCreate(uint64 guid, bool success);
         void FinishLogin(BotInfo& bot);
         void SpreadBot(Player& bot); // puts a bot that is in the world onto its spread point around its race's start
-        void FailLogin(BotInfo& bot, char const* reason);
+        // allowRetry false: the failure is final (server shutdown). Otherwise the bot is requeued with a backoff, or given up, as Bot.Login.Retry.* say.
+        void FailLogin(BotInfo& bot, char const* reason, bool allowRetry = true);
+        void PollLoginRetries(); // moves the bots whose retry time has come, while the character database is not busy, back to the login queue
         void LogoutBot(BotInfo& bot, char const* reason);
 
         std::unordered_map<uint64, BotInfo> _bots;
@@ -153,6 +156,14 @@ class TC_GAME_API BotMgr
         uint32 _nextAccountNumber = 1;
         std::deque<uint64> _loginQueue;
         std::vector<uint64> _loggingIn;
+        // Bots waiting for a retry after a failed login (state BOT_QUEUED, not in _loginQueue): guid and the uptime from which they may log in.
+        // Kept apart from _loginQueue, whose head blocks the queue while it cools down.
+        std::vector<std::pair<uint64, uint32>> _loginRetry;
+        bool _loginRetryEnabled = false;       // Bot.Login.Retry.Enabled
+        bool _loginRetryRevokeOnGiveUp = false; // Bot.Login.Retry.RevokeOnGiveUp
+        uint32 _loginRetryMaxAttempts = 3;
+        uint32 _loginRetryBackoffMs = 30000;
+        uint32 _loginRetryBackoffMaxMs = 600000;
         std::vector<std::pair<uint64, TransactionCallback>> _creating; // character commits in flight
 
         uint32 _uptimeMs = 0;

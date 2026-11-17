@@ -16,6 +16,11 @@ namespace BotMgrRules
 inline constexpr int32 DEF_LOGIN_MAX_PER_TICK = 5;
 inline constexpr int32 DEF_LOGIN_TIMEOUT_MS = 60000;
 inline constexpr int32 DEF_RELOGIN_DELAY_MS = 2000;
+inline constexpr bool DEF_LOGIN_RETRY_ENABLED = false;
+inline constexpr bool DEF_LOGIN_RETRY_REVOKE_ON_GIVE_UP = false;
+inline constexpr int32 DEF_LOGIN_RETRY_MAX_ATTEMPTS = 3;
+inline constexpr int32 DEF_LOGIN_RETRY_BACKOFF_MS = 30000;
+inline constexpr int32 DEF_LOGIN_RETRY_BACKOFF_MAX_MS = 600000;
 inline constexpr int32 DEF_HUNTER_PET_GRACE_SEC = 120;
 inline constexpr int32 DEF_MAIL_COLLECT_EVERY_SEC = 30;
 inline constexpr float DEF_SPREAD_SPACING_YARDS = 3.0f;
@@ -34,6 +39,32 @@ inline uint32 LoginMaxPerTick(int32 raw) { return uint32(std::max<int32>(1, raw)
 inline uint32 LoginTimeoutMs(int32 raw) { return uint32(std::max<int32>(1000, raw)); }
 // Bot.Relogin.DelayMs: at least 0.
 inline uint32 ReloginDelayMs(int32 raw) { return uint32(std::max<int32>(0, raw)); }
+// Bot.Login.Retry.MaxAttempts: at least 1 (failed logins in all, the first one included, after which a bot is given up).
+inline uint32 LoginRetryMaxAttempts(int32 raw) { return uint32(std::max<int32>(1, raw)); }
+// Bot.Login.Retry.BackoffMs: at least 1000. Bot.Login.Retry.BackoffMaxMs: at least the backoff.
+inline uint32 LoginRetryBackoffMs(int32 raw) { return uint32(std::max<int32>(1000, raw)); }
+inline uint32 LoginRetryBackoffMaxMs(int32 raw, uint32 backoffMs) { return std::max<uint32>(backoffMs, uint32(std::max<int32>(0, raw))); }
+
+// ---- Failed logins: a bot whose login failed (timed out) is retried later, a limited number of times ----
+// failures counts the failed logins of the bot so far, this one included. A retry is allowed while there are fewer than maxAttempts of them.
+inline bool LoginRetryAllowed(bool enabled, uint32 failures, uint32 maxAttempts) { return enabled && failures < maxAttempts; }
+// The wait before the retry that follows failure number `failures` (1 for the first): base * 2^(failures-1), at most maxMs, plus up to a
+// quarter of it for jitter (jitterPermille 0 to 1000, drawn by the caller), so bots that failed together do not come back together.
+// The jitter may take the result above maxMs by at most a quarter.
+inline uint32 LoginRetryDelayMs(uint32 failures, uint32 baseMs, uint32 maxMs, uint32 jitterPermille)
+{
+    uint64 delay = baseMs;
+    for (uint32 step = 1; step < failures && delay < maxMs; ++step)
+        delay *= 2;
+    delay = std::min<uint64>(delay, maxMs);
+    delay += delay * std::min<uint32>(jitterPermille, 1000) / 4000;
+    return uint32(std::min<uint64>(delay, 0xFFFFFFFFull));
+}
+// A waiting retry starts only while the character database queue is not above the limit it also refuses new spawns at (Bot.Limit.MaxDbQueue):
+// retrying into a busy database is what made the logins time out.
+inline bool LoginRetryMayStart(uint64 dbQueue, uint32 maxDbQueue) { return dbQueue <= maxDbQueue; }
+// A due time that has passed, wrap-safe for the 32-bit uptime in milliseconds (the uptime wraps after 49 days).
+inline bool UptimeReached(uint32 nowMs, uint32 dueMs) { return int32(nowMs - dueMs) >= 0; }
 // Bot.Hunter.PetGraceSec: 0 to 3600 seconds, returned in milliseconds.
 inline uint32 HunterPetGraceMs(int32 rawSec) { return uint32(std::clamp<int32>(rawSec, 0, 3600)) * 1000; }
 // Bot.Mail.CollectEverySec: 5 to 3600 seconds, returned in milliseconds.
