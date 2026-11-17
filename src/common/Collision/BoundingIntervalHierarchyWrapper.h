@@ -105,10 +105,36 @@ public:
         ++unbalanced_times;
     }
 
+    // Removes the objects whose bounds the tree cannot place, logging each one. Run before every build: an infinite bound makes
+    // BIH::build loop for ever (the split never narrows), and NaN or low-above-high bounds can make it throw "invalid node overlap".
+    void dropUnusableBounds(char const* when)
+    {
+        std::vector<T const*> unusable;
+        for (T const* obj : m_objects)
+        {
+            G3D::AABox box;
+            BoundsFunc()(obj, box);
+            if (!UsableBounds(box))
+                unusable.push_back(obj);
+        }
+        for (T const* obj : unusable)
+        {
+            G3D::AABox box;
+            BoundsFunc()(obj, box);
+            TC_LOG_ERROR("maps", "BIHWrap: {}: dropped object {} with bounds lo=({}, {}, {}) hi=({}, {}, {})", when, static_cast<void const*>(obj),
+                box.low().x, box.low().y, box.low().z, box.high().x, box.high().y, box.high().z);
+            remove(*obj);
+        }
+    }
+
     void balance()
     {
         if (unbalanced_times == 0)
             return;
+
+        // Objects with unusable bounds stay out of the tree (no dynamic collision for them) until they are removed and inserted
+        // again; the build never sees them, so it can neither hang nor throw on them.
+        dropUnusableBounds("before the build");
 
         try
         {
@@ -116,45 +142,20 @@ public:
         }
         catch (std::logic_error const& error)
         {
-            // An object whose bounds the tree cannot place ("invalid node overlap") made the build throw, and nothing caught it: the world server
-            // aborted (several times an hour on the test server). The objects with unusable bounds are logged and dropped, then the tree is built
-            // again; if it still fails, the tree stays empty (no dynamic collision in this cell) until it changes.
-            TC_LOG_ERROR("maps", "BIHWrap: building the tree of {} object(s) failed: {}", m_objects.size(), error.what());
-            std::vector<T const*> unusable;
+            // Backstop: BIH::build threw for usable bounds too. Nothing on the map update thread catches it, so the world server would
+            // abort. The tree is left empty (no dynamic collision on this map) until it changes, and the first objects are logged.
+            TC_LOG_ERROR("maps", "BIHWrap: building the tree of {} object(s) failed ({}); the tree is left empty", m_objects.size(), error.what());
+            std::size_t logged = 0;
             for (T const* obj : m_objects)
             {
+                if (logged++ >= 8)
+                    break;
                 G3D::AABox box;
                 BoundsFunc()(obj, box);
-                if (!UsableBounds(box))
-                    unusable.push_back(obj);
-            }
-            for (T const* obj : unusable)
-            {
-                G3D::AABox box;
-                BoundsFunc()(obj, box);
-                TC_LOG_ERROR("maps", "BIHWrap: dropped object {} with bounds lo=({}, {}, {}) hi=({}, {}, {})", static_cast<void const*>(obj),
+                TC_LOG_ERROR("maps", "BIHWrap:   object {} bounds lo=({}, {}, {}) hi=({}, {}, {})", static_cast<void const*>(obj),
                     box.low().x, box.low().y, box.low().z, box.high().x, box.high().y, box.high().z);
-                remove(*obj);
             }
-            try
-            {
-                m_tree.build(m_objects, BoundsFunc());
-            }
-            catch (std::logic_error const& again)
-            {
-                TC_LOG_ERROR("maps", "BIHWrap: building the tree again failed too ({}); the tree of {} object(s) is left empty", again.what(), m_objects.size());
-                std::size_t logged = 0;
-                for (T const* obj : m_objects)
-                {
-                    if (logged++ >= 8)
-                        break;
-                    G3D::AABox box;
-                    BoundsFunc()(obj, box);
-                    TC_LOG_ERROR("maps", "BIHWrap:   object {} bounds lo=({}, {}, {}) hi=({}, {}, {})", static_cast<void const*>(obj),
-                        box.low().x, box.low().y, box.low().z, box.high().x, box.high().y, box.high().z);
-                }
-                m_tree.build(std::vector<T const*>(), BoundsFunc());
-            }
+            m_tree.build(std::vector<T const*>(), BoundsFunc());
         }
         unbalanced_times = 0;
     }
