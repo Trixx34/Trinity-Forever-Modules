@@ -2462,6 +2462,67 @@ BotActionStatus ReviveAction(Player& bot, BotAction const& action, std::string& 
     return BotActionStatus::kApplied;
 }
 
+// Bot.Mount.LearnFromItem: a vendor mount is an item (class Miscellaneous, subclass Mount) whose ItemEffect of trigger type ON_LEARN names the mount spell
+// the item teaches (Player::CanUseItem reads it the same way). Learns the ground mount spells of the first such item in the bags that the bot may use (the
+// decision is BotActionRules::PickMountItem) and uses the item up as a normal use does, but only when a spell was really learned. Returns whether it learned;
+// reason says why not, or what was learned.
+bool IsGroundMountSpell(SpellInfo const* info)
+{
+    return info && info->HasAura(SPELL_AURA_MOUNTED) && !info->HasAura(SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED);
+}
+
+bool LearnMountFromBags(Player& bot, std::string& reason)
+{
+    std::vector<Item*> items;
+    std::vector<BotActionRules::MountItemCandidate> candidates;
+    bot.ForEachItem(ItemSearchLocation::Inventory, [&bot, &items, &candidates](Item* item)
+    {
+        ItemTemplate const* proto = item->GetTemplate();
+        BotActionRules::MountItemCandidate candidate;
+        if (proto && proto->GetClass() == ITEM_CLASS_MISCELLANEOUS && proto->GetSubClass() == ITEM_SUBCLASS_MISCELLANEOUS_MOUNT)
+        {
+            candidate.MountItem = true;
+            candidate.Usable = bot.CanUseItem(proto) == EQUIP_ERR_OK;
+            for (ItemEffectEntry const* itemEffect : proto->Effects)
+            {
+                BotActionRules::MountItemEffect effect;
+                effect.OnLearn = itemEffect->TriggerType == ITEM_SPELLTRIGGER_ON_LEARN;
+                effect.Spell = uint32(itemEffect->SpellID);
+                effect.Known = bot.HasSpell(effect.Spell);
+                effect.GroundMount = IsGroundMountSpell(sSpellMgr->GetSpellInfo(effect.Spell, DIFFICULTY_NONE));
+                candidate.Effects.push_back(effect);
+            }
+        }
+        items.push_back(item);
+        candidates.push_back(std::move(candidate));
+        return ItemSearchCallbackResult::Continue;
+    });
+
+    BotActionRules::MountItemPick const pick = BotActionRules::PickMountItem(candidates);
+    if (pick.Index < 0)
+    {
+        reason = BotActionRules::kNoMountItemReason;
+        return false;
+    }
+
+    Item* found = items[size_t(pick.Index)];
+    uint32 const itemId = found->GetEntry();
+    std::vector<bool> knownAfter;
+    for (uint32 spell : pick.Spells)
+    {
+        bot.LearnSpell(spell, false);
+        knownAfter.push_back(bot.HasSpell(spell));
+    }
+    if (!BotActionRules::MountLearnSucceeded(knownAfter))
+    {
+        reason = std::string(BotActionRules::kMountLearnFailedReason) + " (item " + std::to_string(itemId) + ")";
+        return false;
+    }
+    bot.DestroyItem(found->GetBagSlot(), found->GetSlot(), true);
+    reason = "learned mount spell " + std::to_string(pick.Spells.front()) + " from item " + std::to_string(itemId);
+    return true;
+}
+
 BotActionStatus MountAction(Player& bot, BotAction const& action, std::string& reason)
 {
     static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Chat.Orders.Enabled", false);
@@ -2496,29 +2557,42 @@ BotActionStatus MountAction(Player& bot, BotAction const& action, std::string& r
         return BotActionStatus::kRefused;
     }
 
-    // The fastest learned ground mount: a spell with a mounted aura and a mounted speed effect, flying mounts left out.
+    // The fastest learned ground mount: a spell with a mounted aura and a mounted speed effect, flying mounts left out (IsGroundMountSpell).
     uint32 bestSpell = 0;
     int32 bestSpeed = -1;
-    for (auto const& [spellId, playerSpell] : bot.GetSpellMap())
+    bool triedItem = false;
+    std::string learnReason;
+    for (;;)
     {
-        if (playerSpell.state == PLAYERSPELL_REMOVED || playerSpell.disabled)
-            continue;
-        SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE);
-        if (!info || !info->HasAura(SPELL_AURA_MOUNTED) || info->HasAura(SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED))
-            continue;
-        int32 speed = 0;
-        for (SpellEffectInfo const& effect : info->GetEffects())
-            if (effect.ApplyAuraName == SPELL_AURA_MOD_INCREASE_MOUNTED_SPEED)
-                speed = std::max(speed, int32(effect.CalcValue(&bot)));
-        if (speed > bestSpeed || (speed == bestSpeed && spellId < bestSpell))
+        for (auto const& [spellId, playerSpell] : bot.GetSpellMap())
         {
-            bestSpell = spellId;
-            bestSpeed = speed;
+            if (playerSpell.state == PLAYERSPELL_REMOVED || playerSpell.disabled)
+                continue;
+            SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE);
+            if (!IsGroundMountSpell(info))
+                continue;
+            int32 speed = 0;
+            for (SpellEffectInfo const& effect : info->GetEffects())
+                if (effect.ApplyAuraName == SPELL_AURA_MOD_INCREASE_MOUNTED_SPEED)
+                    speed = std::max(speed, int32(effect.CalcValue(&bot)));
+            if (speed > bestSpeed || (speed == bestSpeed && spellId < bestSpell))
+            {
+                bestSpell = spellId;
+                bestSpeed = speed;
+            }
         }
+        if (bestSpell == 0 && !triedItem && sConfigMgr->GetBoolDefault("Bot.Mount.LearnFromItem", false))
+        {
+            // No mount spell known: a mount item in the bags teaches one (learning changes the spell map, so it is read again).
+            triedItem = true;
+            if (LearnMountFromBags(bot, learnReason))
+                continue;
+        }
+        break;
     }
     if (bestSpell == 0)
     {
-        reason = "bot has no mount";
+        reason = triedItem ? learnReason : "bot has no mount";
         return BotActionStatus::kRefused;
     }
     SpellCastResult const result = bot.CastSpell(&bot, bestSpell, false);
@@ -2527,6 +2601,8 @@ BotActionStatus MountAction(Player& bot, BotAction const& action, std::string& r
         reason = "cast of mount " + std::to_string(bestSpell) + " returned result " + std::to_string(int32(result));
         return StatusForCast(result);
     }
+    if (!learnReason.empty() && triedItem && bestSpell != 0)
+        reason = learnReason; // a mount learned from an item on this order reaches the module log
     return BotActionStatus::kApplied;
 }
 
