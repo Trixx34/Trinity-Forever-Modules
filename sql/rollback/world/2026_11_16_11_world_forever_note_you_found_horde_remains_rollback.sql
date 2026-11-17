@@ -1,0 +1,16 @@
+-- Rollback for sql/custom/world/2026_11_16_11_world_forever_note_you_found_horde_remains.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_95ef459a_conditions` AS SELECT * FROM `conditions` WHERE (`SourceTypeOrReferenceId` = 32 AND `SourceGroup` = 8 AND `SourceEntry` IN (415106,415107));
+--   CREATE TABLE `bak_95ef459a_gameobject_template_addon` AS SELECT * FROM `gameobject_template_addon` WHERE (`entry` IN (415106,417072,424010));
+--
+-- STEP 1 (the undo that needs no before-image):
+DELETE FROM `conditions` WHERE (`SourceTypeOrReferenceId` = 32 AND `SourceGroup` = 8 AND `SourceEntry` IN (415106,415107));   -- the file's own delete condition: removes what it wrote
+-- gameobject_template_addon: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `conditions` SELECT * FROM `bak_95ef459a_conditions`;  DROP TABLE `bak_95ef459a_conditions`;
+--   REPLACE INTO `gameobject_template_addon` SELECT * FROM `bak_95ef459a_gameobject_template_addon`;  DROP TABLE `bak_95ef459a_gameobject_template_addon`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_16_11_world_forever_note_you_found_horde_remains.sql';` if the file is to run again.

@@ -1,0 +1,13 @@
+-- Rollback for sql/custom/world/2026_11_15_00_world_classic_escorts_walk_their_path_once.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_746904bf_smart_scripts` AS SELECT * FROM `smart_scripts` WHERE (`source_type` = 9 AND `action_type` = 53 AND `action_param3` = 1 AND ((`entryorguid` = 950000034 AND `id` = 4 AND `action_param2` = 820077840 AND `action_param4` = 648) OR (`entryorguid` = 950000061 AND `id` = 4 AND `action_param2` = 820078060 AND `action_param4` = 836) OR (`entryorguid` = 950000185 AND `id` = 4 AND `action_param2` = 820078070 AND `action_param4` = 2767) OR (`entryorguid` = 950000197 AND `id` = 3 AND `action_param2` = 810082840 AND `action_param4` = 3367) OR (`entryorguid` = 950000253 AND `id` = 0 AND `action_param2` = 820018420 AND `action_param4` = 5944) OR (`entryorguid` = 950000258 AND `id` = 3 AND `action_param2` = 820118560 AND `action_param4` = 6523)));
+--
+-- STEP 1 (the undo that needs no before-image):
+-- smart_scripts: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `smart_scripts` SELECT * FROM `bak_746904bf_smart_scripts`;  DROP TABLE `bak_746904bf_smart_scripts`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_15_00_world_classic_escorts_walk_their_path_once.sql';` if the file is to run again.

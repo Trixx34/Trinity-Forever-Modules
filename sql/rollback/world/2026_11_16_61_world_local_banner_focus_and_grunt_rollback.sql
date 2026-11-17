@@ -1,0 +1,21 @@
+-- Rollback for sql/custom/world/2026_11_16_61_world_local_banner_focus_and_grunt.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_9da30cdf_creature` AS SELECT * FROM `creature` WHERE (guid=20006742 AND id=440 AND map=0 AND ABS(position_x+9711.56)<0.01 AND ABS(position_y+3165.54)<0.01);
+--
+-- STEP 1 (the undo that needs no before-image):
+-- creature: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+-- gameobject: the file inserts rows that are not listed with their keys (INSERT ... SELECT / ON DUPLICATE KEY). Exact undo needs the before-image:
+--   STEP 0: CREATE TABLE `bak_9da30cdf_gameobject` AS SELECT * FROM `gameobject`;   (full copy, before the file is applied)
+--   STEP 1b: DELETE x FROM `gameobject` x LEFT JOIN `bak_9da30cdf_gameobject` b ON x.`guid` = b.`guid` WHERE b.`guid` IS NULL;   (rows the file added)
+--   STEP 2: REPLACE INTO `gameobject` SELECT * FROM `bak_9da30cdf_gameobject`;  DROP TABLE `bak_9da30cdf_gameobject`;   (changed rows back)
+-- gameobject_template: the file inserts rows that are not listed with their keys (INSERT ... SELECT / ON DUPLICATE KEY). Exact undo needs the before-image:
+--   STEP 0: CREATE TABLE `bak_9da30cdf_gameobject_template` AS SELECT * FROM `gameobject_template`;   (full copy, before the file is applied)
+--   STEP 1b: DELETE x FROM `gameobject_template` x LEFT JOIN `bak_9da30cdf_gameobject_template` b ON x.`entry` = b.`entry` WHERE b.`entry` IS NULL;   (rows the file added)
+--   STEP 2: REPLACE INTO `gameobject_template` SELECT * FROM `bak_9da30cdf_gameobject_template`;  DROP TABLE `bak_9da30cdf_gameobject_template`;   (changed rows back)
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `creature` SELECT * FROM `bak_9da30cdf_creature`;  DROP TABLE `bak_9da30cdf_creature`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_16_61_world_local_banner_focus_and_grunt.sql';` if the file is to run again.

@@ -1,0 +1,22 @@
+-- Rollback for sql/custom/world/2026_11_14_97_world_forever_questie_1114.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_fc933065_creature_questender` AS SELECT * FROM `creature_questender` WHERE (`quest`=98517);
+--   CREATE TABLE `bak_fc933065_creature_queststarter` AS SELECT * FROM `creature_queststarter` WHERE (`id` IN (211022,211033) AND `quest` IN (78146,78148,78150,79535,79536,81947,81952,81953)) OR (`quest`=98517);
+--   CREATE TABLE `bak_fc933065_quest_template` AS SELECT * FROM `quest_template` WHERE (`ID`=98285 AND `AllowableRaces`=12884902143);
+--   CREATE TABLE `bak_fc933065_quest_template_addon` AS SELECT * FROM `quest_template_addon` WHERE (`ID` IN (615,8553) AND `NextQuestID`=0) OR (`ID`=98517 AND `BreadcrumbForQuestId`=0);
+--
+-- STEP 1 (the undo that needs no before-image):
+DELETE FROM `creature_questender` WHERE (`quest`=98517);   -- the file's own delete condition: removes what it wrote
+DELETE FROM `creature_queststarter` WHERE (`id` IN (211022,211033) AND `quest` IN (78146,78148,78150,79535,79536,81947,81952,81953)) OR (`quest`=98517);   -- the file's own delete condition: removes what it wrote
+-- quest_template: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+-- quest_template_addon: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `creature_questender` SELECT * FROM `bak_fc933065_creature_questender`;  DROP TABLE `bak_fc933065_creature_questender`;
+--   REPLACE INTO `creature_queststarter` SELECT * FROM `bak_fc933065_creature_queststarter`;  DROP TABLE `bak_fc933065_creature_queststarter`;
+--   REPLACE INTO `quest_template` SELECT * FROM `bak_fc933065_quest_template`;  DROP TABLE `bak_fc933065_quest_template`;
+--   REPLACE INTO `quest_template_addon` SELECT * FROM `bak_fc933065_quest_template_addon`;  DROP TABLE `bak_fc933065_quest_template_addon`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_14_97_world_forever_questie_1114.sql';` if the file is to run again.

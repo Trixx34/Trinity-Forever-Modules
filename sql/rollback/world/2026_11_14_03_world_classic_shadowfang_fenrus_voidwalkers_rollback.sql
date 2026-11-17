@@ -1,0 +1,16 @@
+-- Rollback for sql/custom/world/2026_11_14_03_world_classic_shadowfang_fenrus_voidwalkers.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_cc99f19f_creature_template` AS SELECT * FROM `creature_template` WHERE (`entry` = 4627);
+--   CREATE TABLE `bak_cc99f19f_smart_scripts` AS SELECT * FROM `smart_scripts` WHERE (`entryorguid` = 4274 AND `source_type` = 0 AND `id` = 2) OR (`entryorguid` = 4274 AND `source_type` = 0 AND `id` = 3) OR (`entryorguid` = 4275 AND `source_type` = 0 AND `id` = 20) OR (`entryorguid` = 950001184 AND `source_type` = 9 AND `id` = 0) OR (`entryorguid` = 4627 AND `source_type` = 0);
+--
+-- STEP 1 (the undo that needs no before-image):
+-- creature_template: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+DELETE FROM `smart_scripts` WHERE (`entryorguid` = 4274 AND `source_type` = 0 AND `id` = 3) OR (`entryorguid` = 4275 AND `source_type` = 0 AND `id` = 20) OR (`entryorguid` = 4627 AND `source_type` = 0);   -- the file's own delete condition: removes what it wrote
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `creature_template` SELECT * FROM `bak_cc99f19f_creature_template`;  DROP TABLE `bak_cc99f19f_creature_template`;
+--   REPLACE INTO `smart_scripts` SELECT * FROM `bak_cc99f19f_smart_scripts`;  DROP TABLE `bak_cc99f19f_smart_scripts`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_14_03_world_classic_shadowfang_fenrus_voidwalkers.sql';` if the file is to run again.

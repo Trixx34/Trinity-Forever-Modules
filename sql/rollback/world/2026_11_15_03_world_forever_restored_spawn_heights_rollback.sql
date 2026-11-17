@@ -1,0 +1,16 @@
+-- Rollback for sql/custom/world/2026_11_15_03_world_forever_restored_spawn_heights.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_7176cc37_creature` AS SELECT * FROM `creature` WHERE (`guid` = 439410 AND `id` = 4394 AND ABS(`position_z` - 40.78) < 0.01) OR (`guid` = 439411 AND `id` = 4394 AND ABS(`position_z` - 41.0521) < 0.01);
+--   CREATE TABLE `bak_7176cc37_gameobject` AS SELECT * FROM `gameobject` WHERE (`guid` = 67309300 AND `id` = 673093 AND ABS(`position_z` - 592.861) < 0.01) OR (`guid` = 67309400 AND `id` = 673094 AND ABS(`position_z` - 415.55) < 0.01);
+--
+-- STEP 1 (the undo that needs no before-image):
+-- creature: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+-- gameobject: only UPDATE in the file: nothing to remove; old values come back only through STEP 2.
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `creature` SELECT * FROM `bak_7176cc37_creature`;  DROP TABLE `bak_7176cc37_creature`;
+--   REPLACE INTO `gameobject` SELECT * FROM `bak_7176cc37_gameobject`;  DROP TABLE `bak_7176cc37_gameobject`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_15_03_world_forever_restored_spawn_heights.sql';` if the file is to run again.

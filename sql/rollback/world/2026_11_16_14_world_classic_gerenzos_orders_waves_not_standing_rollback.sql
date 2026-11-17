@@ -1,0 +1,13 @@
+-- Rollback for sql/custom/world/2026_11_16_14_world_classic_gerenzos_orders_waves_not_standing.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_7c16b610_creature` AS SELECT * FROM `creature` WHERE (`guid` IN (128028,128032,128033,128034,128035,128036,128037) AND `map` = 1 AND `id` IN (3998,4002,4003,4004));
+--
+-- STEP 1 (the undo that needs no before-image):
+DELETE FROM `creature` WHERE (`guid` IN (128028,128032,128033,128034,128035,128036,128037) AND `map` = 1 AND `id` IN (3998,4002,4003,4004));   -- the file's own delete condition: removes what it wrote
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `creature` SELECT * FROM `bak_7c16b610_creature`;  DROP TABLE `bak_7c16b610_creature`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_16_14_world_classic_gerenzos_orders_waves_not_standing.sql';` if the file is to run again.

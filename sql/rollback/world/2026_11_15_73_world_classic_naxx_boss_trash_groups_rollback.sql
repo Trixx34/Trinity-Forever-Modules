@@ -1,0 +1,14 @@
+-- Rollback for sql/custom/world/2026_11_15_73_world_classic_naxx_boss_trash_groups.sql. NOT run by the updater: run it by hand on the world database (forever_*_world); restart the worldserver afterwards.
+-- Generated from the file's own statements: the active DELETEs remove the rows the file wrote (same keys the file deletes before it inserts).
+-- Rows the file itself DELETED or UPDATED cannot be restored exactly without a before-image. Take it BEFORE the file is applied (STEP 0), then use STEP 2.
+--
+-- STEP 0 (before applying the file, optional but needed for an exact undo of deleted/updated rows):
+--   CREATE TABLE `bak_422818e6_creature_formations` AS SELECT * FROM `creature_formations` WHERE (`leaderGUID` IN (20088298, 20088460, 20088303) AND `memberGUID` <> `leaderGUID`);
+--
+-- STEP 1 (the undo that needs no before-image):
+DELETE FROM `creature_formations` WHERE (`leaderGUID` IN (20088298, 20088460, 20088303) AND `memberGUID` <> `leaderGUID`);   -- the file's own delete condition: removes what it wrote
+-- NOTE creature_formations: multi-table DELETE (join) - before-image by hand: DELETE f FROM `creature_formations` f JOIN `creature` l ON l.`guid` = f.`leaderGUID` JOIN `creature` c ON c.`guid` = f.`memberGUID` WHERE f.`leaderGUID` = 20088496 AND f.`memberGUID` <> f.`leaderGUID` AND (POW(c.`position_x` - l.`position_x`, 2) + POW(c.`position_y` - l.`position_y`, 2)) > 20 * 20
+--
+-- STEP 2 (only if STEP 0 was done before applying: put the old rows back, then drop the backup):
+--   REPLACE INTO `creature_formations` SELECT * FROM `bak_422818e6_creature_formations`;  DROP TABLE `bak_422818e6_creature_formations`;
+-- Afterwards `DELETE FROM updates WHERE name = '2026_11_15_73_world_classic_naxx_boss_trash_groups.sql';` if the file is to run again.
