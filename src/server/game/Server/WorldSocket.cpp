@@ -38,6 +38,7 @@
 #include "RealmList.pb.h"
 #include "ScriptMgr.h"
 #include "SessionKeyGenerator.h"
+#include "Util.h"
 #include "World.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
