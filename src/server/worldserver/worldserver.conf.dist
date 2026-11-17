@@ -2155,6 +2155,12 @@ Bot.Limit.MaxDbQueue = 5000
 #            mount or dismount a bot (kMount). The bots module's summon, revive, mount and dismount chat orders use them. A summon is refused
 #            while the bot or the speaker fights, or when the speaker is in an instance (see Bot.Summon.EnterInstance); a revive is refused on a hardcore realm.
 #
+#    Bot.Mount.LearnFromItem
+#        Default:     0
+#        1 = a mount order (kMount) for a bot that knows no ground mount spell makes it learn the spell of a mount item in its bags (item class Miscellaneous,
+#            subclass Mount, a learn effect naming a mounted spell) that it may use, and uses the item up as a player's use does, then mounts. Bots that already
+#            know a mount are not affected. Needs Bot.Chat.Orders.Enabled.
+#
 #    Bot.Summon.EnterInstance
 #        Default:     0
 #        1 = a summon (and the move of a revive) to a speaker inside a dungeon or raid instance puts the bot into that very instance, when the bot is in the
@@ -2262,6 +2268,7 @@ Bot.Alt.MaxPerAccount = 4
 Bot.Chat.Orders.Enabled = 0
 Bot.Chat.Orders.ReviveSickness = 1
 Bot.Summon.EnterInstance = 0
+Bot.Mount.LearnFromItem = 0
 
 Bot.Trade.Enabled = 0
 Bot.Trade.Scope = 1

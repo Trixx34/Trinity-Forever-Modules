@@ -2462,6 +2462,43 @@ BotActionStatus ReviveAction(Player& bot, BotAction const& action, std::string& 
     return BotActionStatus::kApplied;
 }
 
+// Bot.Mount.LearnFromItem: a vendor mount is an item (class Miscellaneous, subclass Mount) whose ItemEffect of trigger type ON_LEARN names the mount spell
+// the item teaches (Player::CanUseItem reads it the same way). Learns the spells of the first such item in the bags that the bot may use, and uses the item
+// up as a normal use does. Returns whether a spell was learned.
+bool LearnMountFromBags(Player& bot)
+{
+    Item* found = nullptr;
+    bot.ForEachItem(ItemSearchLocation::Inventory, [&bot, &found](Item* item)
+    {
+        ItemTemplate const* proto = item->GetTemplate();
+        if (!proto || proto->GetClass() != ITEM_CLASS_MISCELLANEOUS || proto->GetSubClass() != ITEM_SUBCLASS_MISCELLANEOUS_MOUNT)
+            return ItemSearchCallbackResult::Continue;
+        if (bot.CanUseItem(proto) != EQUIP_ERR_OK)
+            return ItemSearchCallbackResult::Continue;
+        for (ItemEffectEntry const* itemEffect : proto->Effects)
+        {
+            if (itemEffect->TriggerType != ITEM_SPELLTRIGGER_ON_LEARN || bot.HasSpell(uint32(itemEffect->SpellID)))
+                continue;
+            SpellInfo const* info = sSpellMgr->GetSpellInfo(uint32(itemEffect->SpellID), DIFFICULTY_NONE);
+            if (info && info->HasAura(SPELL_AURA_MOUNTED))
+            {
+                found = item;
+                return ItemSearchCallbackResult::Stop;
+            }
+        }
+        return ItemSearchCallbackResult::Continue;
+    });
+    if (!found)
+        return false;
+
+    ItemTemplate const* proto = found->GetTemplate();
+    for (ItemEffectEntry const* itemEffect : proto->Effects)
+        if (itemEffect->TriggerType == ITEM_SPELLTRIGGER_ON_LEARN && !bot.HasSpell(uint32(itemEffect->SpellID)))
+            bot.LearnSpell(uint32(itemEffect->SpellID), false);
+    bot.DestroyItem(found->GetBagSlot(), found->GetSlot(), true);
+    return true;
+}
+
 BotActionStatus MountAction(Player& bot, BotAction const& action, std::string& reason)
 {
     static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Chat.Orders.Enabled", false);
@@ -2499,22 +2536,34 @@ BotActionStatus MountAction(Player& bot, BotAction const& action, std::string& r
     // The fastest learned ground mount: a spell with a mounted aura and a mounted speed effect, flying mounts left out.
     uint32 bestSpell = 0;
     int32 bestSpeed = -1;
-    for (auto const& [spellId, playerSpell] : bot.GetSpellMap())
+    bool triedItem = false;
+    for (;;)
     {
-        if (playerSpell.state == PLAYERSPELL_REMOVED || playerSpell.disabled)
-            continue;
-        SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE);
-        if (!info || !info->HasAura(SPELL_AURA_MOUNTED) || info->HasAura(SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED))
-            continue;
-        int32 speed = 0;
-        for (SpellEffectInfo const& effect : info->GetEffects())
-            if (effect.ApplyAuraName == SPELL_AURA_MOD_INCREASE_MOUNTED_SPEED)
-                speed = std::max(speed, int32(effect.CalcValue(&bot)));
-        if (speed > bestSpeed || (speed == bestSpeed && spellId < bestSpell))
+        for (auto const& [spellId, playerSpell] : bot.GetSpellMap())
         {
-            bestSpell = spellId;
-            bestSpeed = speed;
+            if (playerSpell.state == PLAYERSPELL_REMOVED || playerSpell.disabled)
+                continue;
+            SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE);
+            if (!info || !info->HasAura(SPELL_AURA_MOUNTED) || info->HasAura(SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED))
+                continue;
+            int32 speed = 0;
+            for (SpellEffectInfo const& effect : info->GetEffects())
+                if (effect.ApplyAuraName == SPELL_AURA_MOD_INCREASE_MOUNTED_SPEED)
+                    speed = std::max(speed, int32(effect.CalcValue(&bot)));
+            if (speed > bestSpeed || (speed == bestSpeed && spellId < bestSpell))
+            {
+                bestSpell = spellId;
+                bestSpeed = speed;
+            }
         }
+        if (bestSpell == 0 && !triedItem && sConfigMgr->GetBoolDefault("Bot.Mount.LearnFromItem", false))
+        {
+            // No mount spell known: a mount item in the bags teaches one (learning changes the spell map, so it is read again).
+            triedItem = true;
+            if (LearnMountFromBags(bot))
+                continue;
+        }
+        break;
     }
     if (bestSpell == 0)
     {
