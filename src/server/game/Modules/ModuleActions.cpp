@@ -276,15 +276,9 @@ namespace
 
 static Creature* ResolveAuctioneerCreature(Player* player, uint64 ref)
 {
-    if (!player || forever_module::UnitRefType(ref) != uint8(HighGuid::Creature))
+    if (!player)
         return nullptr;
-    Map* map = player->GetMap();
-    if (!map)
-        return nullptr;
-    ObjectGuid const guid = ObjectGuid::Create<HighGuid::Creature>(uint16(map->GetId()),
-                                                                  forever_module::UnitRefEntry(ref),
-                                                                  forever_module::UnitRefCounter(ref));
-    return map->GetCreature(guid);
+    return ResolveCreatureRef(player->GetMap(), ref);   // by guid, then by spawn id (ModuleBotActions.h)
 }
 
 void BuyItemAction(Player* primaryPlayer, ModuleWire::ActionRequestMsg const& request, ModuleWire::ActionReplyMsg& reply)

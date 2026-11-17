@@ -303,3 +303,60 @@ TEST_CASE("A retry time is reached across the 32-bit uptime wrap", "[BotMgrRules
     CHECK_FALSE(UptimeReached(0xFFFFFF00u, 0x00000100u));   // due just after the wrap, not yet reached
     CHECK(UptimeReached(0x00000200u, 0xFFFFFF00u));         // due just before the wrap, reached after it
 }
+
+TEST_CASE("A hunter is given Tame Beast and Revive Pet from level 10 on the first request", "[BotMgrRules][hunter]")
+{
+    CHECK(HunterAutoLearnsSpell(1515, true, 10, false, true));
+    CHECK(HunterAutoLearnsSpell(1515, true, 10, false, false));      // Tame Beast does not depend on the revive key
+    CHECK(HunterAutoLearnsSpell(982, true, 10, false, true));
+    CHECK_FALSE(HunterAutoLearnsSpell(982, true, 10, false, false)); // key off
+    CHECK_FALSE(HunterAutoLearnsSpell(982, true, 9, false, true));   // too low
+    CHECK_FALSE(HunterAutoLearnsSpell(982, false, 30, false, true)); // not a hunter
+    CHECK_FALSE(HunterAutoLearnsSpell(982, true, 30, true, true));   // already known
+    CHECK_FALSE(HunterAutoLearnsSpell(883, true, 30, false, true));  // another spell
+}
+
+TEST_CASE("A hunter pet with no health counts as dead", "[BotMgrRules][hunter]")
+{
+    CHECK(HunterPetIsDead(true, false, true, 100));   // the live pet decides when there is one
+    CHECK_FALSE(HunterPetIsDead(true, true, true, 0));
+    CHECK(HunterPetIsDead(false, false, true, 0));    // stored with curhealth 0
+    CHECK_FALSE(HunterPetIsDead(false, false, true, 55));
+    CHECK_FALSE(HunterPetIsDead(false, false, false, 0)); // no pet at all is a different case (the old grant path)
+}
+
+TEST_CASE("Hunter pet care retries back off and double up to 15 minutes", "[BotMgrRules][hunter]")
+{
+    CHECK(HunterPetReviveRetryMs(30) == 30000);
+    CHECK(HunterPetReviveRetryMs(0) == 5000);        // clamped
+    CHECK(HunterPetReviveRetryMs(999999) == 3600000);
+    CHECK(HunterPetFailsBeforeReplace(-4) == 0);
+    CHECK(HunterPetFailsBeforeReplace(5) == 5);
+    CHECK(HunterPetFailsBeforeReplace(500) == 100);
+    CHECK(HunterPetCareBackoffMs(1, 30000) == 30000);
+    CHECK(HunterPetCareBackoffMs(2, 30000) == 60000);
+    CHECK(HunterPetCareBackoffMs(3, 30000) == 120000);
+    CHECK(HunterPetCareBackoffMs(20, 30000) == HUNTER_PET_CARE_MAX_RETRY_MS);
+    CHECK(HunterPetCareBackoffMs(0, 30000) == 30000);
+    CHECK(HunterPetCareBackoffMs(1, 3600000) == HUNTER_PET_CARE_MAX_RETRY_MS);
+}
+
+TEST_CASE("The core revives a dead pet only after the module's head start and at the retry time", "[BotMgrRules][hunter]")
+{
+    CHECK_FALSE(HunterPetCareDue(true, 14999, 100000, 0));   // the module still has its 15 s
+    CHECK(HunterPetCareDue(true, 15000, 100000, 0));
+    CHECK_FALSE(HunterPetCareDue(true, 60000, 100000, 100001)); // the retry time has not come
+    CHECK(HunterPetCareDue(true, 60000, 100000, 100000));
+    CHECK_FALSE(HunterPetCareDue(false, 60000, 100000, 0));  // key off
+    CHECK(HunterPetCareDue(true, 60000, 0x00000200u, 0xFFFFFF00u)); // across the uptime wrap
+}
+
+TEST_CASE("A dead pet is deleted only as a last resort", "[BotMgrRules][hunter]")
+{
+    CHECK_FALSE(HunterPetMayBeReplaced(false, true, 99999999, 120000, 99, 5));   // replace key off: never
+    CHECK_FALSE(HunterPetMayBeReplaced(true, true, 119999, 120000, 9, 5));       // grace not passed
+    CHECK_FALSE(HunterPetMayBeReplaced(true, true, 600000, 120000, 4, 5));       // not enough failed revives
+    CHECK(HunterPetMayBeReplaced(true, true, 600000, 120000, 5, 5));
+    CHECK(HunterPetMayBeReplaced(true, true, 120000, 120000, 0, 0));             // 0 = the grace alone decides
+    CHECK(HunterPetMayBeReplaced(true, false, 120000, 120000, 0, 5));            // revive off: nothing was tried, fails are not asked for
+}

@@ -17,8 +17,16 @@
 
 #include <string>
 
+class Creature;
 class ItemTemplate;
+class Map;
 class Player;
+
+// The live creature a creature unit reference names on `map`: first by the guid the reference spells (a live creature's own counter), then, with
+// Bot.Actions.SpawnRefFallback (default 1), by spawn id, because the snapshot's vendor, repairman, banker, trainer, flight master and auctioneer references
+// carry the spawn id as the counter while live creatures are numbered by Map::GenerateLowGuid (so they never matched). The fallback only returns a creature
+// with the referenced entry and an npc flag (BotActionRules::SpawnRefMatches). Null when there is none.
+Creature* ResolveCreatureRef(Map* map, uint64 ref);
 
 // Applies the action and returns what happened. Anything but kApplied comes with the reason in `reason` (for the log). `reasonOut`, when given, receives
 // the ActionReason code of a refusal the handler classifies (kQuest accept: ActionResult::reason), else 0.

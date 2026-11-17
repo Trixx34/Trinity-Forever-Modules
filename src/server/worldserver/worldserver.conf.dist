@@ -1957,6 +1957,20 @@ Bot.Limit.MaxDbQueue = 5000
 #            outside its pair (kTrain refuses them). First Aid, Cooking, Fishing and Riding are not restricted. Higher ranks are learned as the skill allows; nothing raises
 #            the skill yet.
 #
+#    Bot.Professions.RepairPoints
+#        Default:     1
+#        1 = before the free profession teaching of a bot (Bot.Professions.Enabled) its free primary profession points are raised to the number of its two professions it
+#            still lacks, and a profession of its pair that no trainer taught is learned by its first-rank spell directly (log line "BotProfessions: bot N was not taught
+#            skill S"). The sim showed Blacksmithing and Alchemy never learned and Mining missing in two of the eight sets (a bot held one profession of a pair where the
+#            other should have followed); the cause was not seen directly, this repairs the points and falls back to the spell. 0 = teaching as before.
+#
+#    Bot.Actions.SpawnRefFallback
+#        Default:     1
+#        1 = a creature reference a module sends (target_guid, auctioneer guid) that names no live creature by its guid is looked up again by spawn id on the bot's map,
+#            accepting a creature of the same entry with an npc flag. The snapshot's vendor, repairman, banker, trainer, flight master and auctioneer references carry
+#            the spawn id, live creatures are numbered otherwise (Map::GenerateLowGuid), so they never matched: every auction call was refused with "auctioneer not found on
+#            the player's map" even next to the auctioneer. 0 = the old exact guid lookup only.
+#
 #    Bot.Actions.UseObject
 #        Default:     0
 #        1 = a module may make a bot use a game object near it (kUseObject): click a door, a lever or an altar, or use an item on it (a key, a charge of powder; the
@@ -2316,10 +2330,46 @@ Bot.Learn.Talents = 1
 #        Default:     "3425,2069,3243,2071,2237"
 #        Creature entries (beasts, comma separated) a granted pet is picked from; entries with no creature template are ignored.
 #        The default is cats (Savannah Prowler, Moonstalker, Savannah Highmane, Moonstalker Matriarch, Moonstalker Sire).
+#
+#    Bot.Hunter.PetRevive
+#        Default:     1
+#        1 = a hunter bot whose pet is dead (the live pet, or the stored pet with curhealth 0, which is what a pet that died with its owner or before a logout is) casts Revive Pet (982) like a player: out of combat, standing, not mounted, with the mana
+#            (the spell costs a whole base mana pool; a cast that waits for mana, for the bot to stand still or for the cooldown is no failure). The module does the same from the snapshot; the core tries 15 s after it saw the pet dead, then every
+#            Bot.Hunter.PetReviveRetrySec, doubling per failed try up to 15 minutes. 0 = the core never revives (the module still may).
+#
+#    Bot.Hunter.PetCall
+#        Default:     1
+#        1 = a hunter bot with a stored live pet that is not out (dismissed, left behind, the hunter died) casts Call Pet (883) 15 s after it was seen so, with the same retries.
+#            Not while mounted, flying, casting, or when the core resummons the pet itself after a mount or a flight. 0 = off.
+#
+#    Bot.Hunter.PetReviveRetrySec
+#        Default:     30
+#        5 to 3600. The wait after a failed revive or Call Pet try (doubled for each further failure, at most 900 s). A cast that went out and left the pet in the same state
+#        counts as a failed try on the next round.
+#
+#    Bot.Hunter.PetReplaceDead
+#        Default:     0
+#        1 = last resort: a dead pet is deleted and a new one given (Bot.Hunter.PetGrant) when the pet has been dead Bot.Hunter.PetGraceSec seconds AND, with Bot.Hunter.PetRevive on,
+#            the core's revives failed Bot.Hunter.PetReviveFailsBeforeReplace times. A pet that is merely waiting for mana is never deleted. 0 = a dead pet is never deleted.
+#
+#    Bot.Hunter.PetReviveFailsBeforeReplace
+#        Default:     5
+#        0 to 100. Failed revive tries before Bot.Hunter.PetReplaceDead may delete the pet (0 = the grace alone decides). Ignored while Bot.Hunter.PetRevive = 0.
+#
+#    Bot.Hunter.ReviveAutoLearn
+#        Default:     1
+#        1 = a hunter of level 10 or more is given Revive Pet (982) on its first request for it, like Tame Beast (1515). The spell is in no trainer row and only a
+#            quest reward teaches it. 0 = only Tame Beast.
 
 Bot.Hunter.PetGrant = 1
 Bot.Hunter.PetGraceSec = 120
 Bot.Hunter.PetEntries = "3425,2069,3243,2071,2237"
+Bot.Hunter.PetReplaceDead = 0
+Bot.Hunter.PetRevive = 1
+Bot.Hunter.PetCall = 1
+Bot.Hunter.PetReviveRetrySec = 30
+Bot.Hunter.PetReviveFailsBeforeReplace = 5
+Bot.Hunter.ReviveAutoLearn = 1
 
 #    Bot.Pet.NoUpkeep
 #        Default:     1

@@ -17,6 +17,7 @@
 #include "CryptoRandom.h"
 #include "DatabaseEnv.h"
 #include "Log.h"
+#include "ModuleBotActions.h"
 #include "ModuleBotSnapshot.h"
 #include "ModuleMgr.h"
 #include "Map.h"
@@ -412,6 +413,11 @@ void BotMgr::LoadRegistry()
     _loginRetryBackoffMaxMs = BotMgrRules::LoginRetryBackoffMaxMs(sConfigMgr->GetIntDefault("Bot.Login.Retry.BackoffMaxMs", BotMgrRules::DEF_LOGIN_RETRY_BACKOFF_MAX_MS), _loginRetryBackoffMs);
     _mailCollect = sConfigMgr->GetBoolDefault("Bot.Mail.Collect", true);
     _hunterPetGrant = sConfigMgr->GetBoolDefault("Bot.Hunter.PetGrant", true);
+    _hunterPetReplaceDead = sConfigMgr->GetBoolDefault("Bot.Hunter.PetReplaceDead", false);
+    _hunterPetRevive = sConfigMgr->GetBoolDefault("Bot.Hunter.PetRevive", true);
+    _hunterPetCall = sConfigMgr->GetBoolDefault("Bot.Hunter.PetCall", true);
+    _hunterPetReviveRetryMs = BotMgrRules::HunterPetReviveRetryMs(sConfigMgr->GetIntDefault("Bot.Hunter.PetReviveRetrySec", BotMgrRules::DEF_HUNTER_PET_REVIVE_RETRY_SEC));
+    _hunterPetFailsBeforeReplace = BotMgrRules::HunterPetFailsBeforeReplace(sConfigMgr->GetIntDefault("Bot.Hunter.PetReviveFailsBeforeReplace", BotMgrRules::DEF_HUNTER_PET_REVIVE_FAILS_BEFORE_REPLACE));
     _hunterPetGraceMs = BotMgrRules::HunterPetGraceMs(sConfigMgr->GetIntDefault("Bot.Hunter.PetGraceSec", BotMgrRules::DEF_HUNTER_PET_GRACE_SEC));
     _hunterPetEntries.clear();
     std::string const petEntries = sConfigMgr->GetStringDefault("Bot.Hunter.PetEntries", "3425,2069,3243,2071,2237");
@@ -1038,12 +1044,67 @@ void BotMgr::Update(uint32 diff)
     GrantHunterPets();
 }
 
+// A player whose hunter pet died casts Revive Pet (982: a 10 s cast, a whole base mana pool, no reagent, it works with the pet not out), and one whose pet
+// is not out (dismissed, left behind, the hunter died) casts Call Pet (883). The module does the same from the snapshot; this is the core's net for the hunters it
+// does not reach (bots on a route, in transit). The first try comes Bot.Hunter.PetReviveDelay after the pet was seen so, then at most every
+// Bot.Hunter.PetReviveRetrySec, doubling per failed try. A cast that could not start yet (moving, busy, no mana, cooldown) is no failure; a cast that went out and
+// left the pet dead (it was interrupted) or that the core refused is.
+void BotMgr::CareForHunterPet(Player* player, uint64 guid, uint8 kind)
+{
+    bool const keyOn = kind == 1 ? _hunterPetRevive : _hunterPetCall;
+    if (player->IsMounted() || player->IsInFlight() || player->HasUnitState(UNIT_STATE_CASTING))
+        return; // a mount or a flight keeps the pet away on purpose, and a cast in progress would be interrupted
+    HunterPetCare& care = _hunterPetCare[guid];
+    if (care.Kind != kind)
+        care = HunterPetCare{ kind, _uptimeMs, _uptimeMs, 0, false };
+    if (!BotMgrRules::HunterPetCareDue(keyOn, _uptimeMs - care.SinceMs, _uptimeMs, care.NextAtMs))
+        return;
+    if (care.CastPending)
+    {
+        // the last cast went out and the pet is still in the same state: it was interrupted or did not do what it should
+        care.CastPending = false;
+        ++care.Fails;
+    }
+    uint32 const spell = kind == 1 ? BotMgrRules::HUNTER_REVIVE_PET_SPELL : BotMgrRules::HUNTER_CALL_PET_SPELL;
+    forever_module::BotAction action;
+    action.bot_guid = guid;
+    action.type = forever_module::ActionType::kCastSpell;
+    action.spell_id = spell;
+    action.target_guid = 0; // the pet is the spell's own target
+    std::string reason;
+    forever_module::BotActionStatus const status = ApplyBotAction(*player, action, reason);
+    using forever_module::BotActionStatus;
+    switch (status)
+    {
+        case BotActionStatus::kApplied:
+            care.CastPending = true;
+            care.NextAtMs = _uptimeMs + std::max<uint32>(BotMgrRules::HunterPetCareBackoffMs(care.Fails + 1, _hunterPetReviveRetryMs), 20000);
+            TC_LOG_DEBUG("server.worldserver", "BotMgr: hunter {} casts spell {} for its {} pet (failed tries so far {}).", player->GetName(), spell, kind == 1 ? "dead" : "unsummoned", care.Fails);
+            break;
+        case BotActionStatus::kBusy:
+        case BotActionStatus::kMoving:
+        case BotActionStatus::kNotEnoughPower:
+        case BotActionStatus::kOnCooldown:
+        case BotActionStatus::kOutOfRange:
+            care.NextAtMs = _uptimeMs + BotMgrRules::HUNTER_PET_CARE_TRANSIENT_WAIT_MS;
+            break;
+        default:
+            ++care.Fails;
+            care.NextAtMs = _uptimeMs + BotMgrRules::HunterPetCareBackoffMs(care.Fails, _hunterPetReviveRetryMs);
+            if (care.Fails == 1 || care.Fails == _hunterPetFailsBeforeReplace)
+                TC_LOG_INFO("server.worldserver", "BotMgr: hunter {} could not cast spell {} for its {} pet ({}), failed tries {}.", player->GetName(), spell, kind == 1 ? "dead" : "unsummoned", reason, care.Fails);
+            break;
+    }
+}
+
 // A hunter bot gets its pet by taming a beast (Tame Beast, a 20 s channel next to a wild beast), which a bot in a dungeon party hardly ever gets to do.
 // One that is still without a pet Bot.Hunter.PetGraceSec seconds after it was first seen so (level 10 or more, out of combat, in the world) is given one: a
 // beast of Bot.Hunter.PetEntries, picked at random, at the owner's level, saved as its current pet and brought out. Not for an alt (a player's own character).
+// A dead pet is revived first (CareForHunterPet) and only replaced (Bot.Hunter.PetReplaceDead) after the revives failed; a stored live pet that is not out is called.
 void BotMgr::GrantHunterPets()
 {
-    if (!_hunterPetGrant || _hunterPetEntries.empty() || _uptimeMs - _hunterPetCheckAtMs < 5000)
+    bool const grant = _hunterPetGrant && !_hunterPetEntries.empty();
+    if ((!grant && !_hunterPetRevive && !_hunterPetCall) || _uptimeMs - _hunterPetCheckAtMs < 5000)
         return;
     _hunterPetCheckAtMs = _uptimeMs;
     for (auto& [guid, bot] : _bots)
@@ -1055,20 +1116,70 @@ void BotMgr::GrantHunterPets()
             player->IsBeingTeleported())
             continue;
         bool hasPet = !player->GetPetGUID().IsEmpty();
+        bool deadPet = false;
+        bool storedAlive = false;   // a stored pet with health that is not out
         if (PetStable const* stable = player->GetPetStable())
         {
             hasPet = hasPet || stable->CurrentPetIndex.has_value();
             for (Optional<PetStable::PetInfo> const& active : stable->ActivePets)
                 hasPet = hasPet || active.has_value();
+            if (hasPet)
+            {
+                // A pet with curhealth 0 (it died, or was saved dead, or its owner died with it) stays the pet: Tame Beast and Call Pet are refused for it, only
+                // Revive Pet works. The live pet decides when there is one, else the stored current or first active pet.
+                Pet const* live = player->GetPet();
+                PetStable::PetInfo const* current = stable->GetCurrentPet();
+                PetStable::PetInfo const* stored = current;
+                if (!stored)
+                    for (Optional<PetStable::PetInfo> const& active : stable->ActivePets)
+                        if (active && !stored)
+                            stored = &*active;
+                deadPet = BotMgrRules::HunterPetIsDead(live != nullptr, live && live->IsAlive(), stored != nullptr, stored ? stored->Health : 0);
+                storedAlive = !live && stored && stored->Health != 0 && stored->Type == HUNTER_PET && !player->GetTemporaryUnsummonedPetNumber() &&
+                              !player->IsPetNeedBeTemporaryUnsummoned();
+            }
         }
-        if (hasPet)
+        if (deadPet)
+            CareForHunterPet(player, guid, 1);
+        else if (storedAlive)
+            CareForHunterPet(player, guid, 2);
+        else
+            _hunterPetCare.erase(guid);
+        if (hasPet && !deadPet)
         {
             _hunterNoPetSinceMs.erase(guid);
             continue;
         }
+        if (!grant)
+            continue;
         auto const [since, first] = _hunterNoPetSinceMs.try_emplace(guid, _uptimeMs);
         if (_uptimeMs - since->second < _hunterPetGraceMs)
             continue;
+        if (deadPet)
+        {
+            // A dead pet is replaced only when Bot.Hunter.PetReplaceDead is on and the revives failed Bot.Hunter.PetReviveFailsBeforeReplace times.
+            auto const care = _hunterPetCare.find(guid);
+            uint32 const fails = care != _hunterPetCare.end() ? care->second.Fails : 0;
+            if (!BotMgrRules::HunterPetMayBeReplaced(_hunterPetReplaceDead, _hunterPetRevive, _uptimeMs - since->second, _hunterPetGraceMs, fails, _hunterPetFailsBeforeReplace))
+                continue;
+            // delete the dead pet: the live one through RemovePet, a stored one by its number
+            uint32 deadNumber = 0;
+            if (PetStable const* stable = player->GetPetStable())
+            {
+                if (PetStable::PetInfo const* current = stable->GetCurrentPet())
+                    deadNumber = current->PetNumber;
+                else
+                    for (Optional<PetStable::PetInfo> const& active : stable->ActivePets)
+                        if (active && active->Health == 0)
+                            deadNumber = active->PetNumber;
+            }
+            if (Pet* live = player->GetPet())
+                player->RemovePet(live, PET_SAVE_AS_DELETED);
+            else if (deadNumber)
+                player->DeletePetFromDB(deadNumber);
+            _hunterPetCare.erase(guid);
+            TC_LOG_INFO("server.worldserver", "BotMgr: hunter {} had a dead pet (number {}) for {} s and {} failed revives, deleted it to give a new one.", player->GetName(), deadNumber, (_uptimeMs - since->second) / 1000, fails);
+        }
         uint32 const entry = _hunterPetEntries[urand(0, uint32(_hunterPetEntries.size()) - 1)];
         Pet* pet = player->CreateTamedPetFrom(entry, 0);
         if (!pet)

@@ -67,6 +67,53 @@ inline bool LoginRetryMayStart(uint64 dbQueue, uint32 maxDbQueue) { return dbQue
 inline bool UptimeReached(uint32 nowMs, uint32 dueMs) { return int32(nowMs - dueMs) >= 0; }
 // Bot.Hunter.PetGraceSec: 0 to 3600 seconds, returned in milliseconds.
 inline uint32 HunterPetGraceMs(int32 rawSec) { return uint32(std::clamp<int32>(rawSec, 0, 3600)) * 1000; }
+// The hunter spells a bot is given on its first request, since the quest lines that teach them are never run: Tame Beast (1515) and, with
+// Bot.Hunter.ReviveAutoLearn, Revive Pet (982, in no trainer row), from level 10.
+inline constexpr uint32 HUNTER_TAME_BEAST_SPELL = 1515;
+inline constexpr uint32 HUNTER_REVIVE_PET_SPELL = 982;
+inline bool HunterAutoLearnsSpell(uint32 spellId, bool isHunter, uint32 level, bool knowsIt, bool reviveKey)
+{
+    if (!isHunter || level < 10 || knowsIt)
+        return false;
+    return spellId == HUNTER_TAME_BEAST_SPELL || (spellId == HUNTER_REVIVE_PET_SPELL && reviveKey);
+}
+// Whether a hunter's pet is dead and so counts as no pet for the grant (Bot.Hunter.PetReplaceDead): the live pet when there is one, else the stored current or
+// active pet (curhealth 0).
+inline bool HunterPetIsDead(bool liveExists, bool liveAlive, bool storedExists, uint32 storedHealth)
+{
+    return liveExists ? !liveAlive : (storedExists && storedHealth == 0);
+}
+// ---- Hunter pet care (Bot.Hunter.PetRevive, Bot.Hunter.PetCall): a player whose pet died casts Revive Pet (982, 10 s cast, a whole base mana pool, no reagent, no
+// pet needs to be out) and one whose pet is only not out casts Call Pet (883); deleting a dead pet is the last resort, after the revives failed. ----
+inline constexpr int32 DEF_HUNTER_PET_REVIVE_RETRY_SEC = 30;
+inline constexpr int32 DEF_HUNTER_PET_REVIVE_FAILS_BEFORE_REPLACE = 5;
+inline constexpr uint32 HUNTER_CALL_PET_SPELL = 883;
+inline constexpr uint32 HUNTER_PET_CARE_DELAY_MS = 15000;        // the module gets this long to revive or call the pet itself before the core does
+inline constexpr uint32 HUNTER_PET_CARE_TRANSIENT_WAIT_MS = 5000; // a cast that could not start yet (moving, busy, no mana): look again soon, it is no failure
+inline constexpr uint32 HUNTER_PET_CARE_MAX_RETRY_MS = 900000;
+// Bot.Hunter.PetReviveRetrySec: 5 to 3600 seconds, returned in milliseconds.
+inline uint32 HunterPetReviveRetryMs(int32 rawSec) { return uint32(std::clamp<int32>(rawSec, 5, 3600)) * 1000; }
+// Bot.Hunter.PetReviveFailsBeforeReplace: 0 to 100 (0 = a dead pet may be replaced as soon as the grace has passed, whatever the revives did).
+inline uint32 HunterPetFailsBeforeReplace(int32 raw) { return uint32(std::clamp<int32>(raw, 0, 100)); }
+// The wait after the Nth failed attempt (N from 1): the base, doubled per further failure, at most 15 minutes.
+inline uint32 HunterPetCareBackoffMs(uint32 failures, uint32 baseMs)
+{
+    uint64 wait = std::max<uint32>(baseMs, 1000);
+    for (uint32 i = 1; i < failures && wait < HUNTER_PET_CARE_MAX_RETRY_MS; ++i)
+        wait *= 2;
+    return uint32(std::min<uint64>(wait, HUNTER_PET_CARE_MAX_RETRY_MS));
+}
+// Whether the core casts the revive (or Call Pet) now: the key is on, the pet has been in that state for the delay, and the retry time has come.
+inline bool HunterPetCareDue(bool keyOn, uint32 inStateMs, uint32 nowMs, uint32 dueMs)
+{
+    return keyOn && inStateMs >= HUNTER_PET_CARE_DELAY_MS && UptimeReached(nowMs, dueMs);
+}
+// Whether a dead pet is deleted and replaced (Bot.Hunter.PetReplaceDead): the key is on, the grace has passed and, when the core revives, at least `minFails` revives
+// failed (a revive that is only waiting for mana or for the bot to stand still is no failure). With the revive off nothing was tried, so the fails are not asked for.
+inline bool HunterPetMayBeReplaced(bool replaceKey, bool reviveKey, uint32 deadForMs, uint32 graceMs, uint32 fails, uint32 minFails)
+{
+    return replaceKey && deadForMs >= graceMs && (!reviveKey || fails >= minFails);
+}
 // Bot.Mail.CollectEverySec: 5 to 3600 seconds, returned in milliseconds.
 inline uint32 MailCollectEveryMs(int32 rawSec) { return uint32(std::clamp<int32>(rawSec, 5, 3600)) * 1000; }
 // Bot.Spread.SpacingYards and Bot.Spread.MaxRadiusYards: at least 0.

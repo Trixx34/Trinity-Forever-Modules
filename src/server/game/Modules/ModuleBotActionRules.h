@@ -412,6 +412,14 @@ inline bool MountLearnSucceeded(std::vector<bool> const& knownAfter)
 
 inline constexpr char const* kNoMountItemReason = "bot has no mount and no usable mount item in its bags";
 inline constexpr char const* kMountLearnFailedReason = "the mount item taught no spell, kept in the bags";
+
+// A unit reference built from a spawn (the snapshot's vendor, banker, trainer, flight master and auctioneer references carry the SPAWN id as the counter, but
+// a live creature is numbered by Map::GenerateLowGuid) names the live creature of that spawn when the spawn's creature has the entry the reference names and
+// is a service NPC (any npc flag). Never for a creature without npc flags: a reference to a mob that is gone must not turn into an attack on another spawn of it.
+inline bool SpawnRefMatches(uint32 refEntry, uint32 foundEntry, uint64 foundNpcFlags)
+{
+    return foundEntry == refEntry && foundNpcFlags != 0;
+}
 } // namespace BotActionRules
 
 #endif

@@ -496,3 +496,11 @@ TEST_CASE("Mount learn reasons are fixed text the module log shows", "[ModuleBot
     CHECK(std::string(kNoMountItemReason) == "bot has no mount and no usable mount item in its bags");
     CHECK(std::string(kMountLearnFailedReason) == "the mount item taught no spell, kept in the bags");
 }
+
+TEST_CASE("A spawn reference names a service NPC of the same entry only", "[ModuleBotActionRules]")
+{
+    using BotActionRules::SpawnRefMatches;
+    CHECK(SpawnRefMatches(8719, 8719, 0x1000));        // an auctioneer of the entry the snapshot named
+    CHECK_FALSE(SpawnRefMatches(8719, 8720, 0x1000));  // another entry on that spawn id
+    CHECK_FALSE(SpawnRefMatches(1234, 1234, 0));       // a mob: a reference to one that is gone must not hit another spawn
+}

@@ -141,6 +141,7 @@ class TC_GAME_API BotMgr
         void PollLogins(); // advances the logins in flight: finishes or fails them
         void PollCreates(); // runs the save callbacks of characters that finished committing
         void CollectMail(); // takes the delivered mail of every online bot, at most every Bot.Mail.CollectEverySec seconds
+        void CareForHunterPet(Player* player, uint64 guid, uint8 kind); // kind 1: revive a dead pet (Revive Pet), 2: Call Pet for one that is not out; Bot.Hunter.PetRevive, PetCall
         void GrantHunterPets(); // a hunter bot with no pet that did not tame one within Bot.Hunter.PetGraceSec is given one (Bot.Hunter.PetGrant)
         void PumpTeleports(); // answers the teleport steps a client would (suspend token, world port, teleport ack) for the bots
         void FinishCreate(uint64 guid, bool success);
@@ -179,6 +180,21 @@ class TC_GAME_API BotMgr
         uint32 _mailCollectAtMs = 0;
         bool _hunterPetGrant = true;
         uint32 _hunterPetGraceMs = 120000;
+        bool _hunterPetReplaceDead = false;                       // Bot.Hunter.PetReplaceDead
+        bool _hunterPetRevive = true;                             // Bot.Hunter.PetRevive
+        bool _hunterPetCall = true;                               // Bot.Hunter.PetCall
+        uint32 _hunterPetReviveRetryMs = 30000;                   // Bot.Hunter.PetReviveRetrySec
+        uint32 _hunterPetFailsBeforeReplace = 5;                  // Bot.Hunter.PetReviveFailsBeforeReplace
+        // What the core has done for one hunter's dead (kind 1) or not summoned (kind 2) pet: since when, the next try, the failed tries, whether a cast went out.
+        struct HunterPetCare
+        {
+            uint8 Kind = 0;
+            uint32 SinceMs = 0;
+            uint32 NextAtMs = 0;
+            uint32 Fails = 0;
+            bool CastPending = false;
+        };
+        std::unordered_map<uint64, HunterPetCare> _hunterPetCare;
         uint32 _hunterPetCheckAtMs = 0;
         std::vector<uint32> _hunterPetEntries;                    // creature entries a granted pet is picked from (Bot.Hunter.PetEntries)
         std::unordered_map<uint64, uint32> _hunterNoPetSinceMs;   // bot guid counter -> uptime at which it was first seen without a pet

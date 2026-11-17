@@ -103,6 +103,20 @@ constexpr bool MayLearn(uint64 botGuid, uint32 skill)
     return !IsPrimary(skill) || IsOneOf(botGuid, skill);
 }
 
+// How many of the bot's two professions it does not hold yet (0, 1 or 2), from whether it holds the first and the second.
+constexpr uint32 MissingCount(bool holdsFirst, bool holdsSecond)
+{
+    return (holdsFirst ? 0u : 1u) + (holdsSecond ? 0u : 1u);
+}
+
+// The free primary profession points a bot needs before it is taught its missing professions: never fewer than it has, never fewer than the professions
+// it still lacks. A profession's first rank costs one point (Trainer::CanTeachSpell refuses it with none left), and a bot that lost points to anything else
+// (a first rank counted twice, a rank spell of another line) was left with one profession of its two.
+constexpr uint32 PointsToHave(uint32 current, uint32 missing)
+{
+    return current < missing ? missing : current;
+}
+
 // ---- checked when the file is compiled ----
 constexpr bool EverySetIsAllowed()
 {
@@ -144,6 +158,9 @@ static_assert(IsAllowedPair(SKILL_ENCHANTING, SKILL_TAILORING) && IsAllowedPair(
 static_assert(!IsAllowedPair(SKILL_ALCHEMY, SKILL_BLACKSMITHING) && !IsAllowedPair(SKILL_ENGINEERING, SKILL_TAILORING) && !IsAllowedPair(SKILL_MINING, SKILL_MINING) &&
     !IsAllowedPair(SKILL_MINING, SKILL_COOKING) && !IsAllowedPair(SKILL_HERBALISM, SKILL_LEATHERWORKING) && !IsAllowedPair(SKILL_SKINNING, SKILL_ALCHEMY),
     "the others do not");
+static_assert(MissingCount(false, false) == 2 && MissingCount(true, false) == 1 && MissingCount(false, true) == 1 && MissingCount(true, true) == 0, "missing professions are counted");
+static_assert(PointsToHave(0, 2) == 2 && PointsToHave(1, 2) == 2 && PointsToHave(1, 1) == 1 && PointsToHave(2, 1) == 2 && PointsToHave(0, 0) == 0 && PointsToHave(2, 0) == 2,
+    "a bot always has a point for each profession it lacks and never loses one");
 static_assert(MayLearn(1, SKILL_COOKING) && MayLearn(1, 0) && MayLearn(7, SKILL_FISHING), "secondary professions are not restricted");
 
 bool Enabled();
@@ -156,7 +173,8 @@ uint32 SkillOfTrainer(Trainer::Trainer const& trainer);
 bool TrainerMayTeach(Trainer::Trainer const& trainer, uint64 botGuid);
 
 // Teaches a bot its two professions: every spell of their trainers that it may learn now (the first rank at once, higher ranks as its skill allows). Returns
-// how many spells were taught. Not for alts.
+// how many spells were taught. Not for alts. Bot.Professions.RepairPoints (default 1): before each pass the bot's free primary profession points are raised to
+// the number of its professions it still lacks, and a profession still missing after the passes is learned by its first-rank spell directly (logged).
 uint32 Teach(Player& bot);
 }
 
