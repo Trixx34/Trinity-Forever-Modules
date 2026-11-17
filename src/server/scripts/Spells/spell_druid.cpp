@@ -28,6 +28,7 @@
 #include "Containers.h"
 #include "DB2Stores.h"
 #include "GridNotifiersImpl.h"
+#include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "Spell.h"
@@ -3111,8 +3112,27 @@ class spell_dru_yseras_gift_group_heal : public SpellScript
     }
 };
 
+// 414924 - Feral Charge (Cat): "Leap behind an enemy." Its effect 0 is effect 175, which this client uses as a jump to a destination
+// (dest behind the target, Amplitude = speed multiplier, MiscValue / MiscValueB = min / max arc height in tenths, the same fields
+// as SPELL_EFFECT_JUMP_DEST); the core has no handler for 175, so the leap is done here the way Spell::EffectJumpDest does it.
+class spell_dru_classic_feral_charge_cat : public SpellScript
+{
+    SpellCastResult CheckCast()
+    {
+        if (GetCaster()->HasUnitState(UNIT_STATE_ROOT))
+            return SPELL_FAILED_ROOTED;
+        return SPELL_CAST_OK;
+    }
+
+    void Register() override
+    {
+        OnCheckCast += SpellCheckCastFn(spell_dru_classic_feral_charge_cat::CheckCast);
+    }
+};
+
 void AddSC_druid_spell_scripts()
 {
+    RegisterSpellScript(spell_dru_classic_feral_charge_cat);
     RegisterSpellScript(spell_dru_abundance);
     RegisterSpellScript(spell_dru_astral_communion_celestial_alignment);
     RegisterSpellScript(spell_dru_astral_smolder);

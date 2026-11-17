@@ -4504,7 +4504,16 @@ void Spell::finish(SpellCastResult result)
 
     // Stop Attack for some spells
     if (m_spellInfo->HasAttribute(SPELL_ATTR0_CANCELS_AUTO_ATTACK_COMBAT))
+    {
         unitCaster->AttackStop();
+        // Classic Scatter Shot must also stop Auto Shot. AttackStop only
+        // clears the melee victim, leaving the ranged autorepeat running.
+        if (m_spellInfo->Id == 19503 && m_spellInfo->HasAttribute(SPELL_ATTR15_UNK13)
+            && m_spellInfo->SpellFamilyName == SPELLFAMILY_HUNTER && unitCaster->GetClass() == CLASS_HUNTER)
+            if (Spell const* autoShot = unitCaster->GetCurrentSpell(CURRENT_AUTOREPEAT_SPELL))
+                if (autoShot->GetSpellInfo()->Id == 75)
+                    unitCaster->CancelAutoRepeatSpell();
+    }
 }
 
 template<class T>
@@ -6835,6 +6844,7 @@ SpellCastResult Spell::CheckCast(bool strict, int32* param1 /*= nullptr*/, int32
             }
             case SPELL_EFFECT_JUMP:
             case SPELL_EFFECT_JUMP_DEST:
+            case SPELL_EFFECT_JUMP_DEST_3:
             {
                 Unit* unitCaster = m_caster->ToUnit();
                 if (!unitCaster)

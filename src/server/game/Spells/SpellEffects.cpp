@@ -265,7 +265,7 @@ NonDefaultConstructible<SpellEffectHandlerFn> SpellEffectHandlers[TOTAL_SPELL_EF
     &Spell::EffectResurrectWithAura,                        //172 SPELL_EFFECT_RESURRECT_WITH_AURA
     &Spell::EffectUnlockGuildVaultTab,                      //173 SPELL_EFFECT_UNLOCK_GUILD_VAULT_TAB
     &Spell::EffectApplyAura,                                //174 SPELL_EFFECT_APPLY_AURA_ON_PET
-    &Spell::EffectNULL,                                     //175 SPELL_EFFECT_175
+    &Spell::EffectJumpDest,                                 //175 SPELL_EFFECT_JUMP_DEST_3
     &Spell::EffectSanctuary,                                //176 SPELL_EFFECT_SANCTUARY_2
     &Spell::EffectNULL,                                     //177 SPELL_EFFECT_DESPAWN_PERSISTENT_AREA_AURA
     &Spell::EffectUnused,                                   //178 SPELL_EFFECT_178 unused
@@ -2315,6 +2315,15 @@ void Spell::EffectPickPocket()
         const uint32 a = urand(0, creature->GetLevel() / 2);
         const uint32 b = urand(0, player->GetLevel() / 2);
         creature->m_loot->gold = uint32(10 * (a + b) * sWorld->getRate(RATE_DROP_MONEY));
+
+        // Empty pockets (no item rolled and no money: often at low level, where both money rolls can be 0 and the Tirisfal Scarlets'
+        // item chances add up to about 28%): an empty loot opens no window on the client, so the rogue saw nothing happen and the next
+        // try said "already pickpocketed" (Discord 11-16). Say there is no loot instead; the pockets stay picked until the refill.
+        if (creature->m_loot->isLooted())
+        {
+            player->SendLootError(creature->m_loot->GetGUID(), creature->GetGUID(), LOOT_ERROR_NO_LOOT);
+            return;
+        }
     }
     else if (creature->m_loot)
     {

@@ -169,7 +169,7 @@ private:
     std::atomic<bool> _authed;      // also set from the world thread (SetWorldSession), read by Update for the login timeout
     bool _canRequestHotfixes;
 
-    std::unique_ptr<Trinity::Net::IpConnectionLimit::Slot> _ipConnectionSlot;
+    std::unique_ptr<Trinity::Net::IpConnectionLimit::Slot> _ipConnectionSlot;   // given back in OnClose, when the connection closes
     TimePoint _authDeadline;        // closed if not logged in by then (Network.AuthTimeout); TimePoint::max() = no limit
 
     MessageBuffer _headerBuffer;

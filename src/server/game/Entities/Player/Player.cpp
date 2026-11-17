@@ -378,6 +378,12 @@ Player::~Player()
     // it must be unloaded already in PlayerLogout and accessed only for logged in player
     //m_social = nullptr;
 
+    // items still listed for an inventory save forget this player before it goes, so none of them points at it afterwards
+    for (Item* item : m_itemUpdateQueue)
+        if (item)
+            RemoveItemFromUpdateQueueOf(item, this);
+    m_itemUpdateQueue.clear();
+
     // Note: buy back item already deleted from DB when player was saved
     for (uint8 i = 0; i < PLAYER_SLOTS_COUNT; ++i)
         delete m_items[i];
@@ -3148,6 +3154,11 @@ bool Player::AddSpell(uint32 spellId, bool active, bool learning, bool dependent
         castSpell = true;
     else if (spellInfo->HasAttribute(SPELL_ATTR1_CAST_WHEN_LEARNED))
         castSpell = true;
+    // A hidden form spell (AuraEffect::HandleShapeshiftBoosts casts it at every shapeshift into one of its forms) learned while already
+    // in such a form goes on now, as it would at the next shapeshift (Feral Charge 1238122 teaches the Cat Form override 414925)
+    else if (!loading && IsInWorld() && spellInfo->Stances && spellInfo->HasAttribute(SPELL_ATTR0_DO_NOT_DISPLAY_SPELLBOOK_AURA_ICON_COMBAT_LOG))
+        if (ShapeshiftForm const form = GetShapeshiftForm(); form != FORM_NONE)
+            castSpell = (spellInfo->Stances & (UI64LIT(1) << (form - 1))) != 0;
 
     if (castSpell)
     {
@@ -4567,7 +4578,7 @@ bool Player::RefuseHardcoreResurrect()
 {
     // Classic 1.60 Hardcore ruleset realm (Classic.Hardcore = 1): death is permanent, no spirit healer, corpse run or resurrection spell
     // brings the character back, also not on game master accounts. Only staff using the .revive command can (SetHardcoreReviveAllowed).
-    if (IsAlive() || m_hardcoreReviveAllowed || !sConfigMgr->GetBoolDefault("Classic.Hardcore", false))
+    if (IsAlive() || m_hardcoreReviveAllowed || !sWorld->getBoolConfig(CONFIG_CLASSIC_HARDCORE))
         return false;
 
     ChatHandler(GetSession()).SendSysMessage("Hardcore: this character has fallen. Death is permanent on this realm.");
@@ -4638,6 +4649,11 @@ void Player::ResurrectPlayer(float restore_percent, bool applySickness)
 
     // recast lost by death auras of any items held in the inventory
     CastAllObtainSpells();
+
+    // and the equip auras death took: a classic equip spell is often not passive (Onyxia Scale Cloak 22683 has no passive attribute
+    // in the 1.60 data), so RemoveAllAurasOnDeath removed it and nothing cast it again until the item was re-equipped. Every raider
+    // who died once was then open to Shadow Flame's burn 22682 with the cloak still on (BWL Nefarian, dev realm 2026-11-13).
+    CastAllEquipSpellsLostOnDeath();
 
     if (!applySickness)
         return;
@@ -8862,6 +8878,35 @@ void Player::CastAllObtainSpells()
     }
 }
 
+void Player::CastAllEquipSpellsLostOnDeath()
+{
+    for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+    {
+        Item* item = GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+        if (!item || item->IsBroken() || item->GetTemplate()->HasFlag(ITEM_FLAG_LEGACY))
+            continue;
+
+        for (ItemEffectEntry const* effectData : item->GetEffects())
+        {
+            if (effectData->TriggerType != ITEM_SPELLTRIGGER_ON_EQUIP)
+                continue;
+
+            SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(effectData->SpellID, DIFFICULTY_NONE);
+            // passive and death-persistent auras survive death (RemoveAllAurasOnDeath); only the others need casting again
+            if (!spellInfo || spellInfo->IsPassive() || spellInfo->IsDeathPersistent())
+                continue;
+
+            if (effectData->ChrSpecializationID && ChrSpecialization(effectData->ChrSpecializationID) != GetPrimarySpecialization())
+                continue;
+
+            if (HasAura(spellInfo->Id, GetGUID(), item->GetGUID()))
+                continue;
+
+            ApplyEquipSpell(spellInfo, item, true);
+        }
+    }
+}
+
 void Player::ApplyItemObtainSpells(Item* item, bool apply)
 {
     if (item->GetTemplate()->HasFlag(ITEM_FLAG_LEGACY))
@@ -10742,8 +10787,11 @@ bool Player::HasItemTotemCategory(uint32 TotemCategory) const
             return true;
     }
 
+    // Classic 1.60: a profession bag may sit in the reagent bag slot (ITEM_FLAG5_CLASSIC_FITS_REAGENT_BAG_SLOT), and a tool
+    // stored in it (skinning knife, mining pick) still counts, so the bag slots and the reagent bag slot are searched as one range
+    static_assert(uint8(INVENTORY_SLOT_BAG_END) == uint8(REAGENT_BAG_SLOT_START));
     Bag* bag;
-    for (uint8 i = INVENTORY_SLOT_BAG_START; i < INVENTORY_SLOT_BAG_END; ++i)
+    for (uint8 i = INVENTORY_SLOT_BAG_START; i < REAGENT_BAG_SLOT_END; ++i)
     {
         bag = GetBagByPos(i);
         if (bag)
@@ -22032,6 +22080,9 @@ void Player::_SaveInventory(CharacterDatabaseTransaction trans)
         if (!item)
             continue;
 
+        // The item leaves the list before it is saved: saving may delete it (ITEM_REMOVED), and the list is emptied below.
+        RemoveItemFromUpdateQueueOf(item, this);
+
         Bag* container = item->GetContainer();
         if (item->GetState() != ITEM_REMOVED)
         {
@@ -28461,8 +28512,11 @@ void Player::_LoadSkills(PreparedQueryResult result)
         LearnSkillRewardedSpells(skillId, skillValue, race);
 
         // enable parent skill line if missing
+        // Classic 1.60: not from a profession child line (ParentTierIndex 4), that made every profession 300 at login; ranks come
+        // from the rank spells, as in SetSkill
         SkillLineEntry const* skillEntry = sSkillLineStore.LookupEntry(skillId);
-        if (skillEntry->ParentSkillLineID && skillEntry->ParentTierIndex > 0 && int32(GetSkillStep(skillEntry->ParentSkillLineID)) < skillEntry->ParentTierIndex)
+        if (skillEntry->ParentSkillLineID && skillEntry->ParentTierIndex > 0 && !IsClassicProfessionChildSkill(skillEntry)
+            && int32(GetSkillStep(skillEntry->ParentSkillLineID)) < skillEntry->ParentTierIndex)
             if (SkillRaceClassInfoEntry const* rcEntry = sDB2Manager.GetSkillRaceClassInfo(skillEntry->ParentSkillLineID, GetRace(), GetClass()))
                 if (SkillTiersEntry const* tier = sObjectMgr->GetSkillTier(rcEntry->SkillTierID))
                     SetSkill(skillEntry->ParentSkillLineID, skillEntry->ParentTierIndex, std::max<uint16>(GetPureSkillValue(skillEntry->ParentSkillLineID), 1), tier->GetValueForTierIndex(skillEntry->ParentTierIndex - 1));

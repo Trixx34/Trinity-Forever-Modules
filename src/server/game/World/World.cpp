@@ -705,6 +705,7 @@ void World::LoadConfigSettings(bool reload)
         { .Name = "Load.Locales"sv, .DefaultValue = true, .Index = CONFIG_LOAD_LOCALES },
         { .Name = "Classic.MountIndoorsRules"sv, .DefaultValue = true, .Index = CONFIG_CLASSIC_MOUNT_INDOORS_RULES },
         { .Name = "Classic.SecuredBagSlotsForAll"sv, .DefaultValue = true, .Index = CONFIG_CLASSIC_SECURED_BAG_SLOTS_FOR_ALL },
+        { .Name = "Classic.Hardcore"sv, .DefaultValue = false, .Index = CONFIG_CLASSIC_HARDCORE, .Reloadable = false },
     } };
 
     static constexpr ConfigOptionLoadDefinitionArray<uint32, INT_CONFIG_VALUE_COUNT> ints =
@@ -1264,7 +1265,7 @@ void World::LoadConfigSettings(bool reload)
     _gameRules.push_back({ .Rule = ::GameRule(200), .Value = 0.5f });
 
     // Classic 1.60 Hardcore ruleset realm: C_GameRules.IsHardcoreActive() drives the client's Hardcore UI
-    if (sConfigMgr->GetBoolDefault("Classic.Hardcore", false))
+    if (getBoolConfig(CONFIG_CLASSIC_HARDCORE))
         _gameRules.push_back({ .Rule = ::GameRule::HardcoreRuleset, .Value = true });
 
     // PremadeGroupFinderStyle (93) = 2 is in the list above: the client loads its "Vanilla style" group finder

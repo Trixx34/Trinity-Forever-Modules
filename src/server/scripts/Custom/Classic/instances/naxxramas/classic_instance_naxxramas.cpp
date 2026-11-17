@@ -20,6 +20,7 @@
 //          toxic_tunnel_ai, dark_touched_warriorAI, mob_craftsman_omarion, spell_gargoyle_stoneform,
 //          spell_unrelenting_rider_shadow_bolt_volley
 
+#include "Log.h"
 #include "ScriptMgr.h"
 #include "ChatPackets.h"
 #include "Creature.h"
@@ -485,6 +486,15 @@ void classic_instance_naxxramas_InstanceScript::OnCreatureCreate(Creature* pCrea
                 pCreature->DespawnOrUnsummon();
             break;
         }
+        case NPC_STALAGG:
+        case NPC_FEUGEN:
+            // Thaddius's script summons both adds and their coils itself (classic_boss_thaddius.cpp CheckSpawnAdds), as VMaNGOS does; the
+            // world DB still carries a spawn row for each (guid 1592900 Stalagg, 1593000 Feugen), so the room held two of each: two
+            // Stalaggs and two Feugens on different raiders (naxx_thaddius 2026-11-14 1114c).
+            // The spawned ones go; the script's are the encounter.
+            if (!pCreature->IsSummon())
+                pCreature->DespawnOrUnsummon(0s, Seconds(7 * DAY));
+            break;
         default:
             break;
     }
