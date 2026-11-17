@@ -2324,11 +2324,30 @@ Bot.Learn.Talents = 1
 #        Creature entries (beasts, comma separated) a granted pet is picked from; entries with no creature template are ignored.
 #        The default is cats (Savannah Prowler, Moonstalker, Savannah Highmane, Moonstalker Matriarch, Moonstalker Sire).
 #
+#    Bot.Hunter.PetRevive
+#        Default:     1
+#        1 = a hunter bot whose pet is dead (the live pet, or the stored pet with curhealth 0, which is what a pet that died with its owner or before a logout is) casts Revive Pet (982) like a player: out of combat, standing, not mounted, with the mana
+#            (the spell costs a whole base mana pool; a cast that waits for mana, for the bot to stand still or for the cooldown is no failure). The module does the same from the snapshot; the core tries 15 s after it saw the pet dead, then every
+#            Bot.Hunter.PetReviveRetrySec, doubling per failed try up to 15 minutes. 0 = the core never revives (the module still may).
+#
+#    Bot.Hunter.PetCall
+#        Default:     1
+#        1 = a hunter bot with a stored live pet that is not out (dismissed, left behind, the hunter died) casts Call Pet (883) 15 s after it was seen so, with the same retries.
+#            Not while mounted, flying, casting, or when the core resummons the pet itself after a mount or a flight. 0 = off.
+#
+#    Bot.Hunter.PetReviveRetrySec
+#        Default:     30
+#        5 to 3600. The wait after a failed revive or Call Pet try (doubled for each further failure, at most 900 s). A cast that went out and left the pet in the same state
+#        counts as a failed try on the next round.
+#
 #    Bot.Hunter.PetReplaceDead
 #        Default:     0
-#        1 = a hunter bot whose pet is dead (the live pet, or the stored current or active pet with curhealth 0) counts as having no pet for Bot.Hunter.PetGrant:
-#            after Bot.Hunter.PetGraceSec the dead pet is deleted and a new one is given. A dead stored pet stays the current pet, Tame Beast and Call Pet are refused
-#            for it, and bots die about 6 times an hour, so half the hunters of the sim sat with a dead pet. 0 = a dead pet is left as it is.
+#        1 = last resort: a dead pet is deleted and a new one given (Bot.Hunter.PetGrant) when the pet has been dead Bot.Hunter.PetGraceSec seconds AND, with Bot.Hunter.PetRevive on,
+#            the core's revives failed Bot.Hunter.PetReviveFailsBeforeReplace times. A pet that is merely waiting for mana is never deleted. 0 = a dead pet is never deleted.
+#
+#    Bot.Hunter.PetReviveFailsBeforeReplace
+#        Default:     5
+#        0 to 100. Failed revive tries before Bot.Hunter.PetReplaceDead may delete the pet (0 = the grace alone decides). Ignored while Bot.Hunter.PetRevive = 0.
 #
 #    Bot.Hunter.ReviveAutoLearn
 #        Default:     1
@@ -2339,6 +2358,10 @@ Bot.Hunter.PetGrant = 1
 Bot.Hunter.PetGraceSec = 120
 Bot.Hunter.PetEntries = "3425,2069,3243,2071,2237"
 Bot.Hunter.PetReplaceDead = 0
+Bot.Hunter.PetRevive = 1
+Bot.Hunter.PetCall = 1
+Bot.Hunter.PetReviveRetrySec = 30
+Bot.Hunter.PetReviveFailsBeforeReplace = 5
 Bot.Hunter.ReviveAutoLearn = 1
 
 #    Bot.Pet.NoUpkeep
