@@ -143,6 +143,42 @@ TEST_CASE("Craft and gather check only dead and combat, dead first", "[ModuleBot
     CHECK(std::string(AliveIdleGate(false, true, false).reason) == "bot is dead");
 }
 
+TEST_CASE("TeleportCombatGate: out of combat always passes; in combat only with the key, alone, open world, off a transport", "[ModuleBotActionRules]")
+{
+    struct Case
+    {
+        bool combat, key, group, instance, transport;
+        bool allowed;
+        char const* reason;
+    };
+
+    Case const cases[] = {
+        // out of combat: the gate never refuses (the other checks of TeleportAction still apply)
+        { false, false, false, false, false, true, "" },
+        { false, false, true, true, true, true, "" },
+        { false, true, true, true, true, true, "" },
+        // in combat with the key off: today's refusal, word for word
+        { true, false, false, false, false, false, "bot is in combat" },
+        { true, false, true, true, true, false, "bot is in combat" },
+        // in combat with the key on: a solo bot on an open-world map off a transport may be rescued
+        { true, true, false, false, false, true, "" },
+        { true, true, true, false, false, false, "bot is in combat and in a group" },
+        { true, true, false, true, false, false, "bot is in combat in a dungeon, raid, battleground or arena" },
+        { true, true, false, false, true, false, "bot is in combat on a transport" },
+        // several at once: group before instance before transport
+        { true, true, true, true, true, false, "bot is in combat and in a group" },
+        { true, true, false, true, true, false, "bot is in combat in a dungeon, raid, battleground or arena" },
+    };
+
+    for (Case const& c : cases)
+    {
+        StateGateResult const gate = TeleportCombatGate(c.combat, c.key, c.group, c.instance, c.transport);
+        CHECK(gate.allowed == c.allowed);
+        CHECK(std::string(gate.reason) == c.reason);
+        CHECK(gate.status == (c.allowed ? BotActionStatus::kApplied : BotActionStatus::kRefused));
+    }
+}
+
 TEST_CASE("Release spirit refuses alive, ghost, then combat", "[ModuleBotActionRules]")
 {
     CHECK(ReleaseSpiritGate(false, false, false).allowed);

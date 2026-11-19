@@ -1884,6 +1884,14 @@ Bot.Limit.MaxDbQueue = 5000
 #    Bot.Actions.Teleport
 #        Default:     0
 #        1 = a module may teleport the bots it controls to any map position (kTeleport). For scenarios and tests only.
+#            The teleport is refused while the bot is in combat (see Bot.Actions.TeleportInCombat).
+#
+#    Bot.Actions.TeleportInCombat
+#        Default:     0
+#        1 = kTeleport (Bot.Actions.Teleport must be 1) is also applied to a bot in combat, but only when the bot is not in a group or raid,
+#            not on a dungeon, raid, battleground or arena map and not on a transport; otherwise the refusal names the reason. The rescue
+#            teleport of a solo leveling bot that is losing a fight (MOD-Forever-Bots FightRiskRetreat, which stays on its map). The creature
+#            keeps its combat until it leashes. 0 = every teleport in combat is refused (today's behaviour).
 #
 #    Bot.Teleport.GhostNeedsInstance
 #        Default:     0
@@ -2323,6 +2331,7 @@ Bot.Limit.MaxDbQueue = 5000
 #            has) and the weapon proficiencies are learned. 0 = leave them as the core sets them.
 
 Bot.Actions.Teleport = 0
+Bot.Actions.TeleportInCombat = 0
 Bot.Hearth.Enabled = 0
 Bot.Hearth.FallbackTeleport = 0
 Bot.Hearth.GrantStone = 0

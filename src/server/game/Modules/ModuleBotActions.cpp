@@ -1746,7 +1746,8 @@ bool HearthMaskTeleport(Player& bot, uint32 mapId, BotAction const& action, BotA
     return true;
 }
 
-// kTeleport (scenarios): spell_id is the map, dest the position. Off unless Bot.Actions.Teleport is on; refused in combat.
+// kTeleport (scenarios): spell_id is the map, dest the position. Off unless Bot.Actions.Teleport is on; refused in combat, except with
+// Bot.Actions.TeleportInCombat for a bot alone on an open-world map and not on a transport (BotActionRules::TeleportCombatGate).
 BotActionStatus TeleportAction(Player& bot, BotAction const& action, std::string& reason)
 {
     static bool const allowed = sConfigMgr->GetBoolDefault("Bot.Actions.Teleport", false);
@@ -1757,8 +1758,18 @@ BotActionStatus TeleportAction(Player& bot, BotAction const& action, std::string
     }
     if (bot.IsInCombat())
     {
-        reason = "bot is in combat";
-        return BotActionStatus::kRefused;
+        static bool const inCombatAllowed = sConfigMgr->GetBoolDefault("Bot.Actions.TeleportInCombat", false);
+        Map const* const here = bot.GetMap();
+        bool const instanceMap = (here && here->Instanceable()) || bot.InBattleground() || bot.InArena();
+        BotActionRules::StateGateResult const combat =
+            BotActionRules::TeleportCombatGate(true, inCombatAllowed, bot.GetGroup() != nullptr, instanceMap, bot.GetTransport() != nullptr);
+        if (!combat.allowed)
+        {
+            reason = combat.reason;
+            return combat.status;
+        }
+        TC_LOG_INFO("modules.bots", "kTeleport: bot {} teleported in combat (Bot.Actions.TeleportInCombat) from map {} to map {}", bot.GetGUID().ToString(),
+            bot.GetMapId(), action.spell_id);
     }
     uint32 const mapId = action.spell_id;
     if (!MapManager::IsValidMapCoord(mapId, action.dest_x, action.dest_y, action.dest_z))

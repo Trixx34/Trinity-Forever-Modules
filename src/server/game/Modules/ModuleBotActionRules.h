@@ -96,6 +96,24 @@ inline StateGateResult AliveIdleGate(bool alive, bool inCombat, bool inFlight)
     return { true, BotActionStatus::kApplied, "" };
 }
 
+// kTeleport in combat (2026-11-19, Bot.Actions.TeleportInCombat, default 0). A teleport out of combat is never gated here. In combat it is refused unless the key
+// is on, and then only for a bot alone (no group or raid), on an open-world map (not a dungeon, raid, battleground or arena) and not on a transport: the rescue
+// teleport of a solo leveling bot that is losing a fight (MOD-Forever-Bots FightRiskRetreat). Checks in this order: in combat, key, group, instance, transport.
+inline StateGateResult TeleportCombatGate(bool inCombat, bool allowInCombat, bool inGroup, bool instanceMap, bool onTransport)
+{
+    if (!inCombat)
+        return { true, BotActionStatus::kApplied, "" };
+    if (!allowInCombat)
+        return { false, BotActionStatus::kRefused, "bot is in combat" };
+    if (inGroup)
+        return { false, BotActionStatus::kRefused, "bot is in combat and in a group" };
+    if (instanceMap)
+        return { false, BotActionStatus::kRefused, "bot is in combat in a dungeon, raid, battleground or arena" };
+    if (onTransport)
+        return { false, BotActionStatus::kRefused, "bot is in combat on a transport" };
+    return { true, BotActionStatus::kApplied, "" };
+}
+
 // Release the spirit: alive, already a ghost, in combat, in that order.
 inline StateGateResult ReleaseSpiritGate(bool alive, bool ghost, bool inCombat)
 {

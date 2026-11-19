@@ -649,7 +649,8 @@ enum class ActionType : std::uint32_t {
     kLoot = 9,   // loot the corpse named by target_guid: every item the bot may take, and the money (M7). The corpse must be
                  // dead, within 30 yards, and one the bot has the right to loot; an empty or partly looted corpse is not an error.
     kTeleport = 11, // put the bot at (map = spell_id, dest_x, dest_y, dest_z) (scenarios, doc 19). The core refuses it unless
-                    // Bot.Actions.Teleport is on, and refuses it in combat. A bot in a party enters the party's instance.
+                    // Bot.Actions.Teleport is on, and refuses it in combat (Bot.Actions.TeleportInCombat = 1 allows it for a bot alone
+                    // on an open-world map, not on a transport). A bot in a party enters the party's instance.
     kGrant = 12,    // add the item with entry spell_id to the bot's bags, dest_x items (at least 1) (scenarios). Refused unless the core's
                     // Bot.Actions.Grant is on. Followed by a kVendor equip, it dresses a bot for a test.
     kAutoGear = 13, // dress the bot for its level (doc 19): the core picks, for each equipment slot, the best item the bot's class can use at
