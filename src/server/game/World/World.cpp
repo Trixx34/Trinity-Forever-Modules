@@ -112,11 +112,23 @@
 #include "WorldStateMgr.h"
 #include <zlib.h>
 #include <filesystem>
+#include <thread>
 
 TC_GAME_API std::atomic<bool> World::m_stopEvent(false);
 TC_GAME_API uint8 World::m_ExitCode = SHUTDOWN_EXIT_CODE;
 
 TC_GAME_API std::atomic<uint32> World::m_worldLoopCounter(0);
+
+namespace
+{
+    // Set at startup and on every world tick; read by World::IsInWorldThread from any thread.
+    std::atomic<std::thread::id> WorldThreadId{};
+}
+
+bool World::IsInWorldThread()
+{
+    return WorldThreadId.load(std::memory_order_relaxed) == std::this_thread::get_id();
+}
 
 struct PersistentWorldVariable
 {
@@ -1301,6 +1313,8 @@ void World::LoadConfigSettings(bool reload)
 /// Initialize the World
 bool World::SetInitialWorldSettings()
 {
+    WorldThreadId.store(std::this_thread::get_id(), std::memory_order_relaxed);
+
     sLog->SetRealmId(sRealmList->GetCurrentRealmId().Realm);
 
     ///- Server startup begin
@@ -2204,6 +2218,8 @@ void World::LoadAutobroadcasts()
 /// Update the World !
 void World::Update(uint32 diff)
 {
+    WorldThreadId.store(std::this_thread::get_id(), std::memory_order_relaxed);
+
     TC_METRIC_TIMER("world_update_time_total");
     ///- Update the game time and check for shutdown time
     _UpdateGameTime();
