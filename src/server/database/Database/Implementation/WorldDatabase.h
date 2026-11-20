@@ -87,6 +87,8 @@ enum WorldDatabaseStatements : uint32
     WORLD_SEL_GUILD_REWARDS_REQ_ACHIEVEMENTS,
     WORLD_INS_CONDITION,
 
+    WORLD_SEL_AUCTIONHOUSEBOT_MARKET_PRICES,    // SELECT ItemID, UnitPrice FROM auctionhousebot_market_price WHERE UnitPrice > 0
+
     MAX_WORLDDATABASE_STATEMENTS
 };
 
