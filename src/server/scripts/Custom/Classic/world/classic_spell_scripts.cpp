@@ -1623,6 +1623,10 @@ class classic_spell_pal_reckoning_attacks : public AuraScript
     void HandleProc(AuraEffect const* /*aurEff*/, ProcEventInfo& /*eventInfo*/)
     {
         PreventDefaultAction();
+        // Unit::Update swings the queued extra attacks only while a last extra attack spell is set; the add extra attacks effect
+        // sets it when it casts (Spell::cast), this script has to set it itself, or the stacks are used up with no extra attack
+        // (Discord, dumpins 2026-11-17; fix from Karrz1 0.1.38).
+        GetTarget()->SetLastExtraAttackSpell(GetId());
         GetTarget()->AddExtraAttacks(GetStackAmount());
     }
 
@@ -1668,6 +1672,37 @@ class classic_spell_mage_missile_barrage : public AuraScript
     }
 };
 
+// 5143, 5144, 5145, 8416, 8417, 10211, 10212, 25345 - Arcane Missiles, with Missile Barrage 400589 up: "missiles fire every
+// ${$400588w2/10}.1 sec". The buff's effect 1 is a dummy holding the change of the missile period (-500 ms), which nothing read, so
+// the missiles came once a second over the halved channel: two or three missiles instead of five (glacier, Discord 17 Nov). The
+// buff is used up when the channel hits (spell_proc 400589, 2026_11_17_17), after its aura took the shorter period here.
+// (Karrz1 0.1.38)
+class classic_spell_mage_arcane_missiles_barrage : public AuraScript
+{
+    static constexpr uint32 SPELL_MAGE_MISSILE_BARRAGE_BUFF = 400589;
+
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellEffect({ { SPELL_MAGE_MISSILE_BARRAGE_BUFF, EFFECT_1 } });
+    }
+
+    void CalcPeriodic(AuraEffect const* /*aurEff*/, bool& isPeriodic, int32& amplitude)
+    {
+        Unit* caster = GetCaster();
+        if (!isPeriodic || !caster)
+            return;
+
+        if (AuraEffect const* barrage = caster->GetAuraEffect(SPELL_MAGE_MISSILE_BARRAGE_BUFF, EFFECT_1))
+            if (amplitude + barrage->GetAmount() > 0)
+                amplitude += barrage->GetAmount();
+    }
+
+    void Register() override
+    {
+        DoEffectCalcPeriodic += AuraEffectCalcPeriodicFn(classic_spell_mage_arcane_missiles_barrage::CalcPeriodic, EFFECT_0, SPELL_AURA_PERIODIC_TRIGGER_SPELL);
+    }
+};
+
 void AddSC_classic_spell_scripts()
 {
     RegisterSpellScript(classic_spell_warr_gore_drinker);
@@ -1700,6 +1735,7 @@ void AddSC_classic_spell_scripts()
     RegisterSpellScript(classic_spell_pal_reckoning);
     RegisterSpellScript(classic_spell_pal_reckoning_attacks);
     RegisterSpellScript(classic_spell_mage_missile_barrage);
+    RegisterSpellScript(classic_spell_mage_arcane_missiles_barrage);
     RegisterSpellScript(classic_spell_sha_windfury_weapon);
     RegisterSpellScript(classic_spell_grave_touch);
     RegisterSpellScript(classic_spell_proc_chance_from_effect);
