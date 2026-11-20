@@ -733,6 +733,11 @@ void WorldSession::KickPlayer(std::string_view reason)
 {
     TC_LOG_INFO("network.kick", "{} kicked with reason: {}", GetPlayerInfo(), reason);
 
+    // A headless bot session has no socket to close; flag the exit directly so BotSession::Update
+    // logs the bot out and the session manager reaps it (failed logins, GM kick/ban).
+    if (IsBot())
+        forceExit = true;
+
     for (std::shared_ptr<WorldSocket> const& socket : m_Socket)
     {
         if (socket)
