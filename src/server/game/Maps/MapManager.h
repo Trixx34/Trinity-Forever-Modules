@@ -56,6 +56,11 @@ class TC_GAME_API MapManager
         Map* FindMap(uint32 mapId, uint32 instanceId) const;
         uint32 FindInstanceIdForPlayer(uint32 mapId, Player const* player) const;
 
+        // Headless creator for continent (non-instance, non-bg, non-split-by-faction) base maps, for world scripts that act
+        // on a continent before any player is there (Scourge Invasion). Returns nullptr for unknown map ids and for maps
+        // that need a Player context (BG/dungeon/garrison/split-by-faction). (From Karrz1 0.1.38.)
+        Map* PrewarmContinentMap(uint32 mapId);
+
         void Initialize();
         void Update(uint32 diff);
 
