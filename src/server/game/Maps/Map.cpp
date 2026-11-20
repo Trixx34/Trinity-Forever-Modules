@@ -2039,17 +2039,31 @@ bool Map::CheckRespawn(RespawnInfo* info)
             // escort check for creatures only (if the world config boolean is set)
             bool const isEscort = (sWorld->getBoolConfig(CONFIG_RESPAWN_DYNAMIC_ESCORTNPC) && data->spawnGroupData->flags & SPAWNGROUP_FLAG_ESCORTQUESTNPC);
 
+            // A spawn has one body: it does not come back while its corpse still lies there. The respawn delay and the corpse decay
+            // are equal for most creatures (Corpse.Decay.Normal 300 s), and a shorter, scaled respawn made the creature stand up again
+            // beside its own corpse ("the corpse came back to life", Discord 2026-11-09, Dun Morogh). The respawn waits for the corpse
+            // to decay or be removed; the corpse keeps its loot until then. (Karrz1 0.1.38)
+            bool corpseStillThere = false;
             auto range = _creatureBySpawnIdStore.equal_range(info->spawnId);
             for (auto it = range.first; it != range.second; ++it)
             {
                 Creature* creature = it->second;
                 if (!creature->IsAlive())
+                {
+                    if (creature->getDeathState() == CORPSE && !creature->IsSummon())
+                        corpseStillThere = true;
                     continue;
+                }
                 // escort NPCs are allowed to respawn as long as all other instances are already escorting
                 if (isEscort && creature->IsEscorted())
                     continue;
                 alreadyExists = true;
                 break;
+            }
+            if (!alreadyExists && corpseStillThere)
+            {
+                info->respawnTime = GameTime::GetGameTime() + 1; // look again next second
+                return false;
             }
             break;
         }
