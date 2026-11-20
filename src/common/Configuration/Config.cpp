@@ -201,11 +201,18 @@ bool ConfigMgr::LoadAdditionalFile(std::string file, bool keepOnReload, std::str
 
     std::scoped_lock lock(_configLock);
 
-    // A drop-in file has one [section] header, like worldserver.conf. A file without a header keeps its keys at the root,
-    // and reading the first key's value as a section would drop every key of it, so both layouts are accepted.
-    bpt::ptree const& keys = (fullTree.size() == 1 && !fullTree.begin()->second.empty()) ? fullTree.begin()->second : fullTree;
-    for (bpt::ptree::value_type const& child : keys)
-        _config.put_child(bpt::ptree::path_type(child.first, '/'), child.second);
+    // A drop-in file usually has one [section] header, like worldserver.conf, but may have none (keys at the root) or more than
+    // one. Reading the first entry as the section dropped every key of a file without a header, because that entry is a key.
+    // An entry with children is a section, whose keys are merged; an entry without is a key at the root. (Karrz1 0.1.38: also
+    // takes a file with two or more sections, which the one-section check before read as keys.)
+    for (bpt::ptree::value_type const& entry : fullTree)
+    {
+        if (entry.second.empty())
+            _config.put_child(bpt::ptree::path_type(entry.first, '/'), entry.second);
+        else
+            for (bpt::ptree::value_type const& child : entry.second)
+                _config.put_child(bpt::ptree::path_type(child.first, '/'), child.second);
+    }
 
     if (keepOnReload)
         _additionalEntries.push_back({ std::move(file), false });

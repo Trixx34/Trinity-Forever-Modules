@@ -761,6 +761,7 @@ enum RBACPermissions
     // RBAC row must be seeded separately via SQL (see doc/module-system/12-initial-core-changes-scope.md),
     // not included in this pass.
     RBAC_PERM_COMMAND_MODULE                                 = 1001,
+    RBAC_PERM_COMMAND_BUG                                    = 1002, // .bug <text>: a bug report with the player's spot (players too); Karrz uses 1001, which is our module command
     RBAC_PERM_MAX
 };
 
