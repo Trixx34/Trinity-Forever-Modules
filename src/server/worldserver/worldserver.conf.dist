@@ -5753,6 +5753,16 @@ Classic.MountIndoorsRules = 1
 
 Classic.SecuredBagSlotsForAll = 1
 
+#    Classic.FirstTagOwnsMob
+#        Description: Classic mob tagging. The first player or bot to hit a mob owns it, together with their group: only
+#                     they get its loot, experience and quest credit, and the mob shows grey to everyone else. Others can
+#                     still hit it but get nothing (a player who joins the owner's group later shares the tag).
+#                     When off, up to five players or groups that hit a mob all share it (WoW Forever).
+#        Default:     0 - (Disabled, shared tagging)
+#                     1 - (Enabled, the first tag owns the mob)
+
+Classic.FirstTagOwnsMob = 0
+
 #    Classic.ScourgeInvasion
 #        Description: The Scourge Invasion world event (the Naxxramas opening): necropolises attack six zones in turn,
 #                     players kill minions and cultists to bring them down, battles won unlock the Argent Dawn

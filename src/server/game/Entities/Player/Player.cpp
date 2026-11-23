@@ -3238,6 +3238,17 @@ bool Player::AddSpell(uint32 spellId, bool active, bool learning, bool dependent
     }
     else
     {
+        // Classic 1.60: a spell listed under several skill lines is one ability those lines share, so learning it does not open
+        // the lines the player lacks. Languages 1293657 sits under Common 98 and Orcish 109 (AutomaticCharLevel in both): every
+        // character learns it from its own language and was then given the other faction's language at 1/300 through
+        // SkillRaceClassInfo 49 (Orcish for Alliance) or 41 (Common for Horde), both Availability 0. On the official realm
+        // those lines show 0/0 (70938 login sniffs, 18 and 19 Nov 2026). The other such spells are pet abilities.
+        bool const sharedBySkillLines = skill_bounds.first != skill_bounds.second
+            && std::any_of(skill_bounds.first, skill_bounds.second, [first = skill_bounds.first->second->SkillLine](SkillLineAbilityMap::value_type const& ability)
+            {
+                return ability.second->SkillLine != first;
+            });
+
         // not ranked skills
         for (SkillLineAbilityMap::const_iterator _spell_idx = skill_bounds.first; _spell_idx != skill_bounds.second; ++_spell_idx)
         {
@@ -3249,7 +3260,8 @@ bool Player::AddSpell(uint32 spellId, bool active, bool learning, bool dependent
                 continue;
 
             // Runeforging special case
-            if ((_spell_idx->second->GetAcquireMethod() == SkillLineAbilityAcquireMethod::AutomaticCharLevel && !HasSkill(_spell_idx->second->SkillLine)) || ((_spell_idx->second->SkillLine == SKILL_RUNEFORGING) && _spell_idx->second->TrivialSkillLineRankHigh == 0))
+            if ((_spell_idx->second->GetAcquireMethod() == SkillLineAbilityAcquireMethod::AutomaticCharLevel && !sharedBySkillLines && !HasSkill(_spell_idx->second->SkillLine))
+                || ((_spell_idx->second->SkillLine == SKILL_RUNEFORGING) && _spell_idx->second->TrivialSkillLineRankHigh == 0))
             {
                 if (SkillRaceClassInfoEntry const* rcInfo = sDB2Manager.GetSkillRaceClassInfo(_spell_idx->second->SkillLine, GetRace(), GetClass()))
                     LearnDefaultSkill(rcInfo);
@@ -4946,6 +4958,7 @@ void Player::DurabilityRepairAll(bool takeCost, float discountMod, bool guildBan
 
         // We must calculate total repair cost and take money once to avoid spam in the guild bank log and reduce number of transactions in the database
         uint64 totalCost = 0;
+        std::vector<Item*> paidFor;
 
         for (auto const& [item, cost] : itemRepairCostStore)
         {
@@ -4954,13 +4967,16 @@ void Player::DurabilityRepairAll(bool takeCost, float discountMod, bool guildBan
                 break;
 
             totalCost = newTotalCost;
-
-            // Repair item without taking cost. We'll do it later.
-            DurabilityRepair(item->GetPos(), false, 0.f);
+            paidFor.push_back(item);
         }
 
-        // Take money for repairs from the guild bank
-        guild->HandleMemberWithdrawMoney(GetSession(), totalCost, true);
+        // Take the money from the guild bank first and repair only when it was taken. The items were repaired before and the withdraw's
+        // result was not looked at, so a refused withdraw (no repair right, the bank emptied meanwhile) left the repair free.
+        if (paidFor.empty() || !guild->HandleMemberWithdrawMoney(GetSession(), totalCost, true))
+            return;
+
+        for (Item* item : paidFor)
+            DurabilityRepair(item->GetPos(), false, 0.f);
     }
     else
     {
@@ -8706,6 +8722,23 @@ void Player::_ApplyItemBonuses(Item* item, uint8 slot, bool apply)
             SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::ShieldBlock), apply ? int32(GetClassicShieldBlockValue()) : 0);
     }
 
+    // Classic 1.60 (WoW Forever): an armor item's ItemSparse QualityModifier is its green bonus armor (Tree Bark Jacket +60). Ported from
+    // Karrz1 0.1.39 without his m_classicItemArmor bookkeeping, which this tree does not have.
+    if (float const bonusArmor = proto->GetClassicBonusArmor())
+        HandleStatFlatModifier(UNIT_MOD_ARMOR, TOTAL_VALUE, bonusArmor, apply);
+
+    // Classic 1.60 (WoW Forever): a caster weapon's implicit spell power, or healing and damage (ItemTemplate::GetClassicCasterPower)
+    {
+        int32 spellPower = 0, healing = 0, damage = 0;
+        proto->GetClassicCasterPower(itemLevel, spellPower, healing, damage);
+        if (spellPower)
+            ApplySpellPowerBonus(spellPower, apply);
+        if (healing)
+            _ApplyClassicSpellHealingOrDamageMod(ITEM_MOD_SPELL_HEALING_DONE, healing, apply);
+        if (damage)
+            _ApplyClassicSpellHealingOrDamageMod(ITEM_MOD_SPELL_DAMAGE_DONE, damage, apply);
+    }
+
     WeaponAttackType attType = Player::GetAttackBySlot(slot, proto->GetInventoryType());
     if (attType != MAX_ATTACK)
         _ApplyWeaponDamage(slot, item, apply);
@@ -8820,9 +8853,8 @@ void Player::_ApplyWeaponDamage(uint8 slot, Item* item, bool apply)
         return;
 
     float damage = 0.0f;
-    uint32 itemLevel = item->GetItemLevel(this);
     float minDamage, maxDamage;
-    proto->GetDamage(itemLevel, minDamage, maxDamage);
+    item->GetClassicWeaponDamage(this, minDamage, maxDamage);   // Classic 1.60: caster share and QualityModifier (EV-0097)
 
     if (minDamage > 0)
     {
@@ -16023,6 +16055,7 @@ void Player::RewardQuest(Quest const* quest, LootItemType rewardType, uint32 rew
 
     SetQuestCompletedBit(quest_id, true);
 
+    uint64 objectiveMoneyPaid = 0;
     for (QuestObjective const& obj : quest->GetObjectives())
     {
         switch (obj.Type)
@@ -16037,6 +16070,10 @@ void Player::RewardQuest(Quest const* quest, LootItemType rewardType, uint32 rew
             }
             case QUEST_OBJECTIVE_CURRENCY:
                 RemoveCurrency(obj.ObjectID, obj.Amount, CurrencyDestroyReason::QuestTurnin);
+                break;
+            case QUEST_OBJECTIVE_MONEY:                     // pay-money objective (e.g. quest 97179): the money is spent on turn-in
+                ModifyMoney(-int64(obj.Amount));
+                objectiveMoneyPaid += uint64(obj.Amount);
                 break;
         }
     }
@@ -16170,7 +16207,9 @@ void Player::RewardQuest(Quest const* quest, LootItemType rewardType, uint32 rew
         moneyRew = int32(quest->GetRewMoneyMaxLevel() * sWorld->getRate(RATE_DROP_MONEY));
 
     moneyRew += GetQuestMoneyReward(quest);
-    moneyRew -= int32(quest->GetClassicRequiredMoney());    // Classic 1.60: vanilla quests that cost money
+    // Classic 1.60: vanilla quests that cost money. Not charged twice when the quest also has a money objective.
+    if (uint64 classicCost = quest->GetClassicRequiredMoney(); classicCost > objectiveMoneyPaid)
+        moneyRew -= int32(classicCost - objectiveMoneyPaid);
 
     if (moneyRew)
     {
@@ -25458,15 +25497,17 @@ void Player::ReportedAfkBy(Player* reporter)
     if (m_bgData.bgAfkReporter.find(reporter->GetGUID()) == m_bgData.bgAfkReporter.end() && !HasAura(43680) && !HasAura(43681) && reporter->CanReportAfkDueToLimit())
     {
         m_bgData.bgAfkReporter.insert(reporter->GetGUID());
+        // every accepted report is a success for the reporter (before, only the one that applied the debuff was, so the
+        // earlier reports were answered as failed), and the marks are counted before the list is cleared
+        reportAfkResult.NumBlackMarksOnOffender = uint8(m_bgData.bgAfkReporter.size());
+        reportAfkResult.NumPlayersIHaveReported = reporter->m_bgData.bgAfkReportedCount;
+        reportAfkResult.Result = WorldPackets::Battleground::ReportPvPPlayerAFKResult::PVP_REPORT_AFK_SUCCESS;
         // by default 3 players have to complain to apply debuff
         if (m_bgData.bgAfkReporter.size() >= sWorld->getIntConfig(CONFIG_BATTLEGROUND_REPORT_AFK))
         {
             // cast 'Idle' spell
             CastSpell(this, 43680, true);
             m_bgData.bgAfkReporter.clear();
-            reportAfkResult.NumBlackMarksOnOffender = m_bgData.bgAfkReporter.size();
-            reportAfkResult.NumPlayersIHaveReported = reporter->m_bgData.bgAfkReportedCount;
-            reportAfkResult.Result = WorldPackets::Battleground::ReportPvPPlayerAFKResult::PVP_REPORT_AFK_SUCCESS;
         }
     }
 

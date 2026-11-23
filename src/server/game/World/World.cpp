@@ -717,6 +717,7 @@ void World::LoadConfigSettings(bool reload)
         { .Name = "Load.Locales"sv, .DefaultValue = true, .Index = CONFIG_LOAD_LOCALES },
         { .Name = "Classic.MountIndoorsRules"sv, .DefaultValue = true, .Index = CONFIG_CLASSIC_MOUNT_INDOORS_RULES },
         { .Name = "Classic.SecuredBagSlotsForAll"sv, .DefaultValue = true, .Index = CONFIG_CLASSIC_SECURED_BAG_SLOTS_FOR_ALL },
+        { .Name = "Classic.FirstTagOwnsMob"sv, .DefaultValue = false, .Index = CONFIG_CLASSIC_FIRST_TAG_OWNS_MOB },
         { .Name = "Classic.Hardcore"sv, .DefaultValue = false, .Index = CONFIG_CLASSIC_HARDCORE, .Reloadable = false },
     } };
 
@@ -1581,6 +1582,9 @@ bool World::SetInitialWorldSettings()
 
     TC_LOG_INFO("server.loading", "Loading Classic item durability...");      // must be after LoadItemTemplates
     sObjectMgr->LoadClassicItemDurability();
+
+    TC_LOG_INFO("server.loading", "Loading Classic weapon damage...");        // must be after LoadItemTemplates
+    sObjectMgr->LoadClassicItemDamage();
 
     TC_LOG_INFO("misc", "Loading Item Scripts...");                 // must be after LoadItemPrototypes
     sObjectMgr->LoadItemScriptNames();

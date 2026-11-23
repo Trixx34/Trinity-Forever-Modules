@@ -214,6 +214,7 @@ void CharacterDatabaseConnection::DoPrepareStatements()
     PrepareStatement(CHAR_DEL_AUCTION, "DELETE a, ab, ai FROM auctionhouse a LEFT JOIN auction_items ai ON a.id = ai.auctionId LEFT JOIN auction_bidders ab ON a.id = ab.auctionId WHERE a.id = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_UPD_AUCTION_BID, "UPDATE auctionhouse SET bidder = ?, bidAmount = ?, serverFlags = ? WHERE id = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_UPD_AUCTION_EXPIRATION, "UPDATE auctionhouse SET endTime = ? WHERE id = ?", CONNECTION_SYNCH);
+    PrepareStatement(CHAR_UPD_AUCTION_DEPOSIT, "UPDATE auctionhouse SET deposit = ? WHERE id = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_INS_MAIL, "INSERT INTO mail(id, messageType, stationery, mailTemplateId, sender, receiver, subject, body, has_items, expire_time, deliver_time, money, cod, checked) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", CONNECTION_ASYNC);
     PrepareStatement(CHAR_DEL_MAIL_BY_ID, "DELETE FROM mail WHERE id = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_INS_MAIL_ITEM, "INSERT INTO mail_items(mail_id, item_guid, receiver) VALUES (?, ?, ?)", CONNECTION_ASYNC);
