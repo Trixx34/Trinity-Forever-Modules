@@ -1027,6 +1027,12 @@ class TC_GAME_API WorldSession
 
         // Player bots (BotMgr): a session without a socket, owned by BotMgr and never in World's session list.
         bool IsBot() const { return _isBot; }
+        // Classic 1.60 friends (Karrz1 0.1.39): Add Friend on a character, shared by the Battle.net and the in-game friend paths
+        void AddCharacterFriend(ObjectGuid friendGuid, uint32 friendAccountId, uint8 friendRace, std::string const& note);
+        // set by a module: true for a game account of an automated player (a bot pool account); Add Friend makes such a character a character friend
+        using AutomatedAccountCheck = bool (*)(uint32 gameAccountId);
+        static void SetAutomatedAccountCheck(AutomatedAccountCheck check);
+        static bool IsAutomatedAccount(uint32 gameAccountId);
         void SetBot() { _isBot = true; }
         // Loads the character for a bot. BotMgr polls ProcessBotLoginCallbacks() until the player is in the world.
         void BeginBotLogin(ObjectGuid guid);
