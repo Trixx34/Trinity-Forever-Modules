@@ -762,6 +762,10 @@ enum RBACPermissions
     // not included in this pass.
     RBAC_PERM_COMMAND_MODULE                                 = 1001,
     RBAC_PERM_COMMAND_BUG                                    = 1002, // .bug <text>: a bug report with the player's spot (players too); Karrz uses 1001, which is our module command
+    // From Karrz1 0.1.39. His .battletag is 1002, which is .bug here, so it is 1005 on this core (auth 2026_11_19_63 renumbered the same).
+    RBAC_PERM_COMMAND_GM_COMBATLOG                           = 1003, // .gm combatlog: a unit's or group's combat log from any distance (admins)
+    RBAC_PERM_COMMAND_DEATHRECAP                             = 1004, // .deathrecap [name]: text dump of a player's last recorded death
+    RBAC_PERM_COMMAND_BATTLETAG                              = 1005, // .battletag [name]: show or pick the account's BattleTag (players too)
     RBAC_PERM_MAX
 };
 

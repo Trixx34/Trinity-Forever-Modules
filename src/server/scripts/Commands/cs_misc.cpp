@@ -73,6 +73,7 @@ public:
         static ChatCommandTable commandTable =
         {
             { "additem",          HandleAddItemCommand,          rbac::RBAC_PERM_COMMAND_ADDITEM,          Console::No },
+            { "deathrecap",       HandleDeathRecapCommand,       rbac::RBAC_PERM_COMMAND_DEATHRECAP,       Console::No },
             { "additem to",       HandleAddItemToCommand,        rbac::RBAC_PERM_COMMAND_ADDITEM,          Console::No },
             { "additem set",      HandleAddItemSetCommand,       rbac::RBAC_PERM_COMMAND_ADDITEMSET,       Console::No },
             { "appear",           HandleAppearCommand,           rbac::RBAC_PERM_COMMAND_APPEAR,           Console::No },
@@ -501,6 +502,20 @@ public:
             return false;
         }
 
+        // Player accounts have this command (auth 2026_10_08_00) only to bring their own characters that are in the world as
+        // bots. The security check below lets any account act on one of the same level, so without this a player could pull
+        // any other player to him, or move an offline character anywhere.
+        if (AccountMgr::IsPlayerAccount(handler->GetSession()->GetSecurity()))
+        {
+            WorldSession const* targetSession = target ? target->GetSession() : nullptr;
+            if (!targetSession || !targetSession->IsBot() || targetSession->GetAccountId() != handler->GetSession()->GetAccountId())
+            {
+                handler->SendSysMessage(LANG_YOURS_SECURITY_IS_LOW);
+                handler->SetSentErrorMessage(true);
+                return false;
+            }
+        }
+
         if (target)
         {
             std::string nameLink = handler->playerLink(targetName);
@@ -602,6 +617,59 @@ public:
                 targetGuid, nullptr);
         }
 
+        return true;
+    }
+
+    // .deathrecap [name]: the last recorded death of the selected player or of the named player, as plain text lines
+    static bool HandleDeathRecapCommand(ChatHandler* handler, Optional<std::string> playerName)
+    {
+        ObjectGuid victim;
+        std::string name;
+
+        if (playerName)
+        {
+            name = *playerName;
+            normalizePlayerName(name);
+            if (Player* player = ObjectAccessor::FindPlayerByName(name))
+                victim = player->GetGUID();
+            else
+                victim = sCharacterCache->GetCharacterGuidByName(name);
+            if (victim.IsEmpty())
+            {
+                handler->SendSysMessage("No player with that name.");
+                handler->SetSentErrorMessage(true);
+                return false;
+            }
+        }
+        else
+        {
+            Unit* target = handler->getSelectedUnit();
+            if (!target)
+            {
+                handler->SendSysMessage("Select a player or name one: .deathrecap [name]");
+                handler->SetSentErrorMessage(true);
+                return false;
+            }
+            if (!target->IsPlayer())
+            {
+                handler->SendSysMessage("Only players record deaths.");
+                handler->SetSentErrorMessage(true);
+                return false;
+            }
+            victim = target->GetGUID();
+            name = target->GetName();
+        }
+
+        std::vector<std::string> lines = DeathRecap::GetLastDeathLines(victim, 60);
+        if (lines.empty())
+        {
+            handler->PSendSysMessage("No death recording for %s.", name.c_str());
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        for (std::string const& line : lines)
+            handler->SendSysMessage(line);
         return true;
     }
 

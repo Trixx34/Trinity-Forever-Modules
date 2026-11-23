@@ -26,6 +26,7 @@
 #include "CharacterPackets.h"
 #include "ChatPackets.h"
 #include "ClientConfigPackets.h"
+#include "CombatLogWatch.h"
 #include "Containers.h"
 #include "DatabaseEnv.h"
 #include "FriendsService.h"
@@ -687,6 +688,9 @@ void WorldSession::LogoutPlayer(bool save)
 
         // Battle.net friends see us go offline
         BattlenetPresence::OnLogout(this);
+
+        // a GM's combat log watch (.gm combatlog) ends with the GM's logout
+        CombatLogWatch::Stop(_player->GetGUID());
 
         TC_METRIC_EVENT("player_events", "Logout", _player->GetName());
 
