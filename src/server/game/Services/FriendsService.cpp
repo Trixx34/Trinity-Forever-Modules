@@ -571,6 +571,7 @@ uint32 FriendsService::HandleSendInvitation(friends::v2::client::SendInvitationR
     else if (target.has_email())
         invitee = FindAccount(target.email());
     else if (target.has_name())
+    {
         invitee = FindAccount(target.name());
         if (!invitee && target.name().find_first_of("#@") == std::string::npos)
         {
